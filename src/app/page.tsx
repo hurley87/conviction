@@ -1,65 +1,79 @@
-import Image from "next/image";
-
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <main className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-[#06060d] px-6 text-center text-white">
+      {/* ambient glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-1/3 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#3a3f8f] opacity-40 blur-[120px]"
+      />
+
+      <div className="relative z-10 flex flex-col items-center">
+        {/* mark: three chains converging into one balance */}
+        <svg
+          width="120"
+          height="84"
+          viewBox="0 0 120 84"
+          fill="none"
+          className="mb-8"
+          aria-hidden
+        >
+          <defs>
+            <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#6C7BFF" />
+              <stop offset="100%" stopColor="#37E0C8" />
+            </linearGradient>
+          </defs>
+          <g
+            stroke="url(#accent)"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+            fill="none"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            <line x1="18" y1="20" x2="60" y2="58" />
+            <line x1="60" y1="14" x2="60" y2="58" />
+            <line x1="102" y1="20" x2="60" y2="58" />
+          </g>
+          <g fill="#06060d" stroke="url(#accent)" strokeWidth="3.5">
+            <circle cx="18" cy="20" r="8" />
+            <circle cx="60" cy="14" r="8" />
+            <circle cx="102" cy="20" r="8" />
+          </g>
+          <circle cx="60" cy="58" r="13" fill="url(#accent)" />
+        </svg>
+
+        <h1 className="text-5xl font-bold tracking-tight sm:text-7xl">
+          Conviction
+        </h1>
+
+        <p className="mt-6 max-w-xl text-lg text-[#aeb4d6] sm:text-xl">
+          Trade your Solana, Base, and Arbitrum assets from one balance — no
+          bridging. Post the trades you believe in, and let anyone back them
+          from any chain.
+        </p>
+
+        <div className="mt-10 flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            className="rounded-full bg-gradient-to-r from-[#6C7BFF] to-[#37E0C8] px-8 py-3 font-semibold text-[#06060d] transition hover:opacity-90"
           >
-            Documentation
-          </a>
+            Upgrade my wallet
+          </button>
+          <button
+            type="button"
+            className="rounded-full border border-white/15 px-8 py-3 font-semibold text-white transition hover:bg-white/5"
+          >
+            Explore the feed
+          </button>
         </div>
-      </main>
-    </div>
+
+        <p className="mt-12 text-xs font-medium uppercase tracking-[0.3em] text-[#6b7099]">
+          One balance · Any chain · One feed
+        </p>
+      </div>
+
+      <footer className="absolute bottom-6 z-10 text-xs text-[#4a4f74]">
+        Powered by Particle Network Universal Accounts · EIP-7702
+      </footer>
+    </main>
   );
 }
