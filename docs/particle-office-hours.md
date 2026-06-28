@@ -47,7 +47,25 @@ Yes → upgrades agent permission from fund-isolation to cryptographic. No → c
 
 ---
 
+## Funding / onramp (ADR 0015)
+
+### 6. Does funding the EOA auto-reflect in the unified balance?
+> "In 7702 mode the EOA address is the EVM Universal Account address — so if a fiat onramp (or anyone) deposits USDC straight to that EOA, does it **automatically appear in the unified balance** via `getPrimaryAssets()`, with no extra step?"
+
+We use Privy's onramp, which deposits into the embedded EOA. Need a yes/no that this lands in the UA balance.
+
+**Answer:**
+
+### 7. Which onramp asset + chain lands as a Primary Asset?
+> "Which **deliverable asset and chain** should a fiat onramp target so the deposit lands cleanly as a Primary Asset and unifies — e.g. USDC on Arbitrum?"
+
+**Answer:**
+
+---
+
 ## Architecture feedback (spare time)
+
+- **Confirm the real SDK method names** (the PRD used placeholders): unified balance is **`getPrimaryAssets()`** → `totalAmountInUSD` (not `getUniversalBalance`); deposit addresses come from **`getSmartAccountOptions()`** (EVM + Solana) (not `getDepositAddresses`); cross-chain is **`createUniversalTransaction()` + `expectTokens`** (confirmed); withdrawals use **`createTransferTransaction()` → sign `rootHash` → `sendTransaction()`**.
 
 - **Which exact chain/asset pairs have the most reliable UA liquidity right now?** (pick a spine pair that won't be flaky in the demo)
 - **Is a mainnet small-funds demo more reliable than testnet for a cross-chain move, or is your testnet liquidity solid?** (validates ADR 0001; testnet-is-fine would de-risk us)
