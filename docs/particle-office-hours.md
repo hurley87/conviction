@@ -74,10 +74,10 @@ We use Privy's onramp, which deposits into the embedded EOA. Need a yes/no that 
 
 ## Tradeable asset universe (drives the token list + charts)
 
-### 8. Is there a list/endpoint of all assets UA supports as trade source/destination?
-> "Is there an **endpoint or canonical list of every asset UA supports** as a trade source and destination, per chain (Primary Assets plus any supported tokens)? We want to only ever show users tokens they can actually trade via UA — so the in-app token list should be driven by UA's supported set, not an arbitrary list."
+### 8. Is LI.FI the source of the tradeable token list (and does UA route through it)?
+> "Your 7702 demo gets its token list from **LI.FI** (`getTokens()`), which returns thousands of tokens per chain (~4.7k Ethereum, ~1.2k Arbitrum, ~0.9k Base) with `priceUSD` + logos. Is LI.FI the canonical source for what UA can actually trade — i.e. does UA route/source through LI.FI, so LI.FI's per-chain list = the tradeable universe? Anything UA can trade that LI.FI wouldn't list (or vice versa)?"
 
-Decides what assets can appear in convictions/charts. We decorate this set with market-data (CoinGecko/Birdeye); the *tradeable* universe must come from UA.
+The demo answers most of this already: token list + spot prices + logos come from one client-side, 5-min-cached LI.FI call (EVM-only, `ChainType.EVM`), curated to top-50/chain via a priority list. So we likely **don't need CoinGecko/Birdeye for the list or spot price** — only for historical **charts** (LI.FI gives spot, not OHLC). Confirm LI.FI's list reflects UA's actual routable set.
 
 **Answer:**
 
