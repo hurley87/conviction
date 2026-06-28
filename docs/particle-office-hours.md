@@ -63,6 +63,17 @@ We use Privy's onramp, which deposits into the embedded EOA. Need a yes/no that 
 
 ---
 
+## Tradeable asset universe (drives the token list + charts)
+
+### 8. Is there a list/endpoint of all assets UA supports as trade source/destination?
+> "Is there an **endpoint or canonical list of every asset UA supports** as a trade source and destination, per chain (Primary Assets plus any supported tokens)? We want to only ever show users tokens they can actually trade via UA — so the in-app token list should be driven by UA's supported set, not an arbitrary list."
+
+Decides what assets can appear in convictions/charts. We decorate this set with market-data (CoinGecko/Birdeye); the *tradeable* universe must come from UA.
+
+**Answer:**
+
+---
+
 ## Architecture feedback (spare time)
 
 - **Confirm the real SDK method names** (the PRD used placeholders): unified balance is **`getPrimaryAssets()`** → `totalAmountInUSD` (not `getUniversalBalance`); deposit addresses come from **`getSmartAccountOptions()`** (EVM + Solana) (not `getDepositAddresses`); cross-chain is **`createUniversalTransaction()` + `expectTokens`** (confirmed); withdrawals use **`createTransferTransaction()` → sign `rootHash` → `sendTransaction()`**.
