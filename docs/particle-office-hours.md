@@ -2,7 +2,16 @@
 
 Mid-hackathon office hours: technical questions, architecture feedback, troubleshooting across Universal Accounts, EIP-7702, and cross-chain UX.
 
-Ask #1–#3 first — a bad answer to any of those forces a redesign. The five gating questions mirror `docs/adr/0000-particle-gating-questions.md`; capture answers here and fold outcomes back into the ADRs.
+Ask the provider question first (it decides which credentials we even set up), then #1–#3 — a bad answer to any of those forces a redesign. The five gating questions mirror `docs/adr/0000-particle-gating-questions.md`; capture answers here and fold outcomes back into the ADRs.
+
+---
+
+## Ask first of all — can we use only Particle? (ADR 0004, under reconsideration)
+> "Can Particle's social login be the only login we use — both signing the user in and signing the EIP-7702 wallet upgrade — so we don't need a second wallet provider like Privy? Your 7702 demo used Privy to sign the upgrade — is there a Particle-native way to do that step?"
+
+A "yes" drops a whole vendor and skips the Twitter-OAuth setup. The unknown is whether Particle's own login can sign the 7702 upgrade as cleanly as Privy's hook.
+
+**Answer:**
 
 ---
 

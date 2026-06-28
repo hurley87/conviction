@@ -1,5 +1,17 @@
 # Privy is the sole wallet provider, for both onboarding paths
 
+> **Status: under reconsideration (2026-06).** Particle Network ships its own
+> social login, and its docs state Universal Accounts can be created via social
+> logins directly — so Particle Auth may be able to serve as the single
+> provider, dropping Privy entirely and avoiding the Twitter-OAuth setup. The
+> open question is whether Particle Auth can sign the EIP-7702 authorization as
+> cleanly as Privy's `useSign7702Authorization`; notably, Particle's own 7702
+> demo used Privy for exactly that step, which is a yellow flag. This is the
+> top Particle office-hours question (see `docs/particle-office-hours.md`).
+> Switching is cheap: Privy is isolated to `providers.tsx` + the account hook,
+> and the verb layer / UA adapter are provider-agnostic. **Decision below stands
+> until Particle confirms otherwise.**
+
 Both entry paths — "connect your existing EVM wallet" and "social login mints an embedded EOA" — go through **Privy**. Privy handles external-wallet and social-embedded login behind one SDK and exposes an EOA signer the Particle UA SDK consumes; downstream both paths are identical (get an EOA → 7702-upgrade it).
 
 Decisive factor: **Particle's own official EIP-7702 demo signs the 7702 authorization via Privy's `useSign7702Authorization`.** Privy is therefore the reference-grade integration for the single most critical step, not just a compatible option.
