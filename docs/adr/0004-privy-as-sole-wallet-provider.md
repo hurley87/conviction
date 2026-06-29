@@ -1,16 +1,14 @@
 # Privy is the sole wallet provider; onboarding is Twitter social login only
 
-> **Status: under reconsideration (2026-06).** Particle Network ships its own
-> social login, and its docs state Universal Accounts can be created via social
-> logins directly — so Particle Auth may be able to serve as the single
-> provider, dropping Privy entirely and avoiding the Twitter-OAuth setup. The
-> open question is whether Particle Auth can sign the EIP-7702 authorization as
-> cleanly as Privy's `useSign7702Authorization`; notably, Particle's own 7702
-> demo used Privy for exactly that step, which is a yellow flag. This is the
-> top Particle office-hours question (see `docs/particle-office-hours.md`).
-> Switching is cheap: Privy is isolated to `providers.tsx` + the account hook,
-> and the verb layer / UA adapter are provider-agnostic. **Decision below stands
-> until Particle confirms otherwise.**
+> **Status: decided — Privy (2026-06).** We considered Particle's own social
+> login as the single provider, but committed to **Privy**: it is what Particle's
+> official 7702 demo uses to sign the authorization, so it is the lowest-risk,
+> reference-grade path — and Particle presumably chose it for good reasons. We
+> build by mirroring that demo (see `docs/build-guide.md`). Particle Auth as the
+> sole provider stays a possible later simplification (one fewer vendor); the
+> switch is cheap because Privy is isolated to `providers.tsx` + the account hook
+> and the verb layer is provider-agnostic. We may still raise it at office hours,
+> but it no longer gates the build.
 
 Onboarding is **Twitter social login only**: one "Sign in with Twitter" tap mints an embedded EOA we 7702-upgrade in place. The embedded EOA's address is the Universal Account address; the embedded wallet signs the 7702 authorization programmatically from the session, so the upgrade is invisible (signed lazily on the first transaction per Particle's reference). The Twitter handle is the user's feed identity (ADR 0009) — identity, wallet, and 7702 from a single tap.
 
