@@ -1,3 +1,5 @@
+import { AccountPanel } from "@/components/account-panel";
+
 export default function Home() {
   return (
     <main className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-[#06060d] px-6 text-center text-white">
@@ -51,19 +53,8 @@ export default function Home() {
           from any chain.
         </p>
 
-        <div className="mt-10 flex flex-col gap-3 sm:flex-row">
-          <button
-            type="button"
-            className="rounded-full bg-gradient-to-r from-[#6C7BFF] to-[#37E0C8] px-8 py-3 font-semibold text-[#06060d] transition hover:opacity-90"
-          >
-            Upgrade my wallet
-          </button>
-          <button
-            type="button"
-            className="rounded-full border border-white/15 px-8 py-3 font-semibold text-white transition hover:bg-white/5"
-          >
-            Explore the feed
-          </button>
+        <div className="mt-10">
+          <AccountPanel />
         </div>
 
         <p className="mt-12 text-xs font-medium uppercase tracking-[0.3em] text-[#6b7099]">
