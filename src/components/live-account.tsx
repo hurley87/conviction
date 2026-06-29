@@ -5,6 +5,7 @@
 
 import { useConvictionAccount } from "@/hooks/use-conviction-account";
 import { BalanceCard } from "@/components/balance-card";
+import { DepositAddress } from "@/components/deposit-address";
 
 const PRIMARY =
   "rounded-full bg-gradient-to-r from-[#6C7BFF] to-[#37E0C8] px-8 py-3 font-semibold text-[#06060d] transition hover:opacity-90 disabled:opacity-50";
@@ -34,6 +35,7 @@ export function LiveAccount() {
         </p>
       )}
       <BalanceCard totalUsd={a.balance?.totalUsd ?? null} loading={!a.balance} />
+      {a.address && <DepositAddress address={a.address} />}
       <div className="flex flex-col gap-3 sm:flex-row">
         <button
           type="button"
