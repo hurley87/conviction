@@ -6,7 +6,7 @@
 // signature is submitted with the first trade (issue #2). Pending Particle
 // confirmation of the delegate-contract details (docs/adr/0000).
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { getUAClient } from "@/lib/ua";
 import type { UniversalBalance } from "@/lib/verbs/types";
@@ -18,20 +18,24 @@ export function useConvictionAccount() {
   const address = wallets[0]?.address;
   const handle = user?.twitter?.username ?? null;
 
+  // One UA client per owner address — rebuilding it per call would throw away
+  // the SDK account cache the Particle client builds lazily.
+  const ua = useMemo(() => (address ? getUAClient(address) : null), [address]);
+
   const [balance, setBalance] = useState<UniversalBalance | null>(null);
   const [upgraded, setUpgraded] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (!address) return;
+    if (!ua) return;
     // await first so this never setStates synchronously inside an effect.
-    const next = await getUAClient(address).getUniversalBalance();
+    const next = await ua.getUniversalBalance();
     setBalance(next);
-  }, [address]);
+  }, [ua]);
 
   // On connect: persist identity and load the unified balance. setState lives
   // in the promise callback (async), not synchronously in the effect body.
   useEffect(() => {
-    if (!authenticated || !address) return;
+    if (!authenticated || !ua || !address) return;
     if (handle && user?.id) {
       void fetch("/api/users", {
         method: "POST",
@@ -40,8 +44,7 @@ export function useConvictionAccount() {
       }).catch(() => {});
     }
     let active = true;
-    getUAClient(address)
-      .getUniversalBalance()
+    ua.getUniversalBalance()
       .then((next) => {
         if (active) setBalance(next);
       })
@@ -49,14 +52,14 @@ export function useConvictionAccount() {
     return () => {
       active = false;
     };
-  }, [authenticated, address, handle, user?.id]);
+  }, [authenticated, ua, address, handle, user?.id]);
 
   const upgrade = useCallback(async () => {
-    if (!address) return;
-    await getUAClient(address).ensureUpgraded();
+    if (!ua) return;
+    await ua.ensureUpgraded();
     setUpgraded(true);
     await refresh();
-  }, [address, refresh]);
+  }, [ua, refresh]);
 
   return {
     ready,

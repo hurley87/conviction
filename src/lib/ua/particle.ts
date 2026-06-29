@@ -19,6 +19,16 @@ export type ParticleConfig = {
   projectAppUuid: string;
 };
 
+/** Minimal structural surface of the SDK account object we depend on. */
+type ParticleAccount = {
+  getPrimaryAssets(): Promise<RawPrimaryAssets>;
+  getSmartAccountOptions(): Promise<{
+    smartAccountAddress?: string;
+    solanaSmartAccountAddress?: string;
+    ownerAddress: string;
+  }>;
+};
+
 export function createParticleUAClient(config: ParticleConfig): UAClient {
   // Build the SDK account lazily; cache the promise across calls.
   let accountPromise: Promise<unknown> | null = null;
@@ -38,14 +48,7 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
         });
       })();
     }
-    return accountPromise as Promise<{
-      getPrimaryAssets(): Promise<RawPrimaryAssets>;
-      getSmartAccountOptions(): Promise<{
-        smartAccountAddress?: string;
-        solanaSmartAccountAddress?: string;
-        ownerAddress: string;
-      }>;
-    }>;
+    return accountPromise as Promise<ParticleAccount>;
   }
 
   return {

@@ -7,10 +7,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { MockUAClient } from "@/lib/ua/mock";
 import { BalanceCard } from "@/components/balance-card";
+import { PRIMARY } from "@/components/button-styles";
 import type { UniversalBalance } from "@/lib/verbs/types";
-
-const PRIMARY =
-  "rounded-full bg-gradient-to-r from-[#6C7BFF] to-[#37E0C8] px-8 py-3 font-semibold text-[#06060d] transition hover:opacity-90 disabled:opacity-50";
 
 export function MockAccount() {
   const ua = useMemo(() => new MockUAClient(), []);

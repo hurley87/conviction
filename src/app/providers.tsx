@@ -6,15 +6,14 @@
 // still runs locally against the mock (ADR 0014).
 
 import { PrivyProvider } from "@privy-io/react-auth";
+import { PRIVY_APP_ID } from "@/lib/env";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
-
-  if (!appId) return <>{children}</>;
+  if (!PRIVY_APP_ID) return <>{children}</>;
 
   return (
     <PrivyProvider
-      appId={appId}
+      appId={PRIVY_APP_ID}
       config={{
         loginMethods: ["twitter"],
         embeddedWallets: {

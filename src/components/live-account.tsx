@@ -6,11 +6,7 @@
 import { useConvictionAccount } from "@/hooks/use-conviction-account";
 import { BalanceCard } from "@/components/balance-card";
 import { DepositAddress } from "@/components/deposit-address";
-
-const PRIMARY =
-  "rounded-full bg-gradient-to-r from-[#6C7BFF] to-[#37E0C8] px-8 py-3 font-semibold text-[#06060d] transition hover:opacity-90 disabled:opacity-50";
-const GHOST =
-  "rounded-full border border-white/15 px-8 py-3 font-semibold text-white transition hover:bg-white/5";
+import { PRIMARY, GHOST } from "@/components/button-styles";
 
 export function LiveAccount() {
   const a = useConvictionAccount();

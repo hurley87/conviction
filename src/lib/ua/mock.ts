@@ -4,6 +4,7 @@
 
 import type { UAClient, UpgradeResult } from "@/lib/ua/types";
 import type { UniversalBalance, DepositAddresses } from "@/lib/verbs/types";
+import { sumSources } from "@/lib/verbs/map-balance";
 
 export type MockSeed = {
   /** Deposits across ≥2 chains, to mirror the unified-balance demo. */
@@ -24,7 +25,7 @@ export class MockUAClient implements UAClient {
   async getUniversalBalance(): Promise<UniversalBalance> {
     const sources = this.seed.sources ?? DEFAULT_SOURCES;
     return {
-      totalUsd: sources.reduce((s, r) => s + r.usd, 0),
+      totalUsd: sumSources(sources),
       sources,
     };
   }

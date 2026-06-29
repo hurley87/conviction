@@ -33,6 +33,11 @@ export function chainName(chainId: number | undefined): string {
   return CHAIN_NAMES[chainId] ?? `Chain ${chainId}`;
 }
 
+/** Sum a balance's per-source USD values into one unified total. */
+export function sumSources(sources: BalanceSource[]): number {
+  return sources.reduce((acc, s) => acc + s.usd, 0);
+}
+
 /**
  * Flatten the per-asset, per-chain aggregation into one source row per
  * chain+asset, and surface the SDK's authoritative total.
@@ -54,7 +59,7 @@ export function toUniversalBalance(res: RawPrimaryAssets): UniversalBalance {
   }
 
   return {
-    totalUsd: res.totalAmountInUSD ?? sources.reduce((s, r) => s + r.usd, 0),
+    totalUsd: res.totalAmountInUSD ?? sumSources(sources),
     sources,
   };
 }

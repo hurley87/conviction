@@ -6,9 +6,8 @@
 
 import { LiveAccount } from "@/components/live-account";
 import { MockAccount } from "@/components/mock-account";
-
-const LIVE = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID);
+import { IS_LIVE } from "@/lib/env";
 
 export function AccountPanel() {
-  return LIVE ? <LiveAccount /> : <MockAccount />;
+  return IS_LIVE ? <LiveAccount /> : <MockAccount />;
 }
