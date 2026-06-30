@@ -35,6 +35,7 @@ export function useConvictionAccount() {
   const { balance, deposits, refresh } = useUASnapshot(ua);
   const [upgraded, setUpgraded] = useState(false);
   const [isFunding, setIsFunding] = useState(false);
+  const [fundingError, setFundingError] = useState<string | null>(null);
 
   // On connect: persist the user's Twitter handle (ADR 0009).
   useEffect(() => {
@@ -55,6 +56,7 @@ export function useConvictionAccount() {
 
   const addMoney = useCallback(async () => {
     if (!address) return;
+    setFundingError(null);
     setIsFunding(true);
     try {
       await fundWallet({
@@ -66,6 +68,12 @@ export function useConvictionAccount() {
         },
       });
       await refresh();
+    } catch (err) {
+      // Privy throws e.g. "Wallet funding is not enabled" when the onramp is
+      // misconfigured; surface it instead of an uncaught rejection.
+      setFundingError(
+        err instanceof Error ? err.message : "Could not start funding.",
+      );
     } finally {
       setIsFunding(false);
     }
@@ -82,6 +90,7 @@ export function useConvictionAccount() {
     deposits,
     addMoney,
     isFunding,
+    fundingError,
     upgrade,
     upgraded,
   };
