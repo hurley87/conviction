@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MockUAClient } from "@/lib/ua/mock";
 import { BalanceCard } from "@/components/balance-card";
+import { Concierge } from "@/components/concierge";
 import { PRIMARY } from "@/components/button-styles";
 import type { UniversalBalance } from "@/lib/verbs/types";
 
@@ -25,6 +26,7 @@ export function MockAccount() {
         Demo mode
       </span>
       <BalanceCard totalUsd={balance?.totalUsd ?? null} loading={!balance} />
+      {balance && <Concierge ua={ua} balance={balance} />}
       <button
         type="button"
         onClick={async () => {

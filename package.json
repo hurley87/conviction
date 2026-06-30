@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
-    "@particle-network/universal-account-sdk": "^1.1.1",
+    "@particle-network/universal-account-sdk": "^2.0.0-beta.3",
     "@privy-io/react-auth": "^3.32.2",
     "ethers": "^6.17.0",
     "next": "16.2.9",

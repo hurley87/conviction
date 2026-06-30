@@ -3,6 +3,7 @@
 // the SDK (ADR 0014 — the verb layer is the mockable seam).
 
 import type { UniversalBalance, BalanceSource } from "@/lib/verbs/types";
+import { chainName } from "@/lib/verbs/chains";
 
 /** Minimal structural subset of the SDK's IAssetsResponse we depend on. */
 export type RawChainAggregation = {
@@ -18,20 +19,6 @@ export type RawPrimaryAssets = {
   totalAmountInUSD?: number;
   assets?: RawAsset[];
 };
-
-const CHAIN_NAMES: Record<number, string> = {
-  1: "Ethereum",
-  10: "Optimism",
-  56: "BNB Chain",
-  137: "Polygon",
-  8453: "Base",
-  42161: "Arbitrum",
-};
-
-export function chainName(chainId: number | undefined): string {
-  if (chainId == null) return "Unknown";
-  return CHAIN_NAMES[chainId] ?? `Chain ${chainId}`;
-}
 
 /** Sum a balance's per-source USD values into one unified total. */
 export function sumSources(sources: BalanceSource[]): number {

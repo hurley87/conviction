@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { toUniversalBalance, chainName } from "@/lib/verbs/map-balance";
+import { toUniversalBalance } from "@/lib/verbs/map-balance";
+import { chainName } from "@/lib/verbs/chains";
 import { MockUAClient } from "@/lib/ua/mock";
 
 describe("chainName", () => {

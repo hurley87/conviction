@@ -1,15 +1,29 @@
 // Real Universal Account client backed by Particle's SDK in EIP-7702 mode
 // (ADR 0004). The SDK is dynamically imported so it never executes during SSR
 // or the static build — only client-side at call time.
-//
-// Reads (balance, deposit addresses) are fully wired here. The on-chain 7702
-// authorization signature is produced with the owner's signer in the React
-// layer (see useConvictionAccount) and submitted with the first transaction
-// (issue #2); ensureUpgraded() here is a read-side no-op. Pending Particle
-// office-hours confirmation of the exact 7702 config (docs/adr/0000).
 
-import type { UAClient, UpgradeResult } from "@/lib/ua/types";
-import type { UniversalBalance, DepositAddresses } from "@/lib/verbs/types";
+import type {
+  ExecuteTradeParams,
+  QuoteTradeParams,
+  UAClient,
+  UpgradeResult,
+} from "@/lib/ua/types";
+import {
+  buildBuyPayload,
+  defaultTradeConfig,
+  type RawTransaction,
+  userOpsNeeding7702,
+} from "@/lib/ua/trade";
+import { buildReceipt } from "@/lib/verbs/receipt";
+import { shapeQuote, isBelowFloor } from "@/lib/verbs/quote";
+import { narrateResult } from "@/lib/verbs/intent";
+import {
+  FloorAbortError,
+  type TradeQuote,
+  type TradeResult,
+  type UniversalBalance,
+  type DepositAddresses,
+} from "@/lib/verbs/types";
 import { toUniversalBalance, type RawPrimaryAssets } from "@/lib/verbs/map-balance";
 
 export type ParticleConfig = {
@@ -27,12 +41,21 @@ type ParticleAccount = {
     solanaSmartAccountAddress?: string;
     ownerAddress: string;
   }>;
+  createBuyTransaction(
+    payload: { token: { chainId: number; address: string }; amountInUSD: string },
+    tradeConfig?: Record<string, unknown>,
+  ): Promise<RawTransaction>;
+  sendTransaction(
+    transaction: RawTransaction,
+    signature: string,
+    authorizations?: { userOpHash: string; signature: string }[],
+  ): Promise<{ transactionId?: string }>;
 };
 
 export function createParticleUAClient(config: ParticleConfig): UAClient {
-  // Build the SDK account lazily; cache the promise across calls.
   let accountPromise: Promise<unknown> | null = null;
-  async function account() {
+
+  async function account(): Promise<ParticleAccount> {
     if (!accountPromise) {
       accountPromise = (async () => {
         const { UniversalAccount } = await import(
@@ -43,12 +66,21 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
           projectClientKey: config.projectClientKey,
           projectAppUuid: config.projectAppUuid,
           ownerAddress: config.ownerAddress,
-          // Upgrade the existing EOA in place — no new address (ADR 0004).
           smartAccountOptions: { useEIP7702: true },
         });
       })();
     }
     return accountPromise as Promise<ParticleAccount>;
+  }
+
+  async function createTradeTransaction(
+    params: QuoteTradeParams,
+  ): Promise<RawTransaction> {
+    const ua = await account();
+    return ua.createBuyTransaction(
+      buildBuyPayload(params.intent, params.sizeUsd),
+      defaultTradeConfig(params.intent.fromAsset),
+    );
   }
 
   return {
@@ -67,9 +99,85 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
     },
 
     async ensureUpgraded(): Promise<UpgradeResult> {
-      // The 7702 authorization is signed via Privy in the React layer and
-      // submitted with the first transaction (issue #2). Reads need no upgrade.
       return { upgraded: false, alreadyUpgraded: true };
+    },
+
+    async quoteTrade(params: QuoteTradeParams): Promise<TradeQuote> {
+      const raw = await createTradeTransaction(params);
+      const txId = raw.transactionId ?? `quote-${Date.now()}`;
+      return shapeQuote(
+        raw.tokenChanges ?? {},
+        params.intent,
+        params.sizeUsd,
+        txId,
+        raw,
+      );
+    },
+
+    async executeTrade(params: ExecuteTradeParams): Promise<TradeResult> {
+      const { intent, sizeUsd, agreedQuote, signers, receiptSlug } = params;
+      const raw = await createTradeTransaction({ intent, sizeUsd });
+
+      const freshQuote = shapeQuote(
+        raw.tokenChanges ?? {},
+        intent,
+        sizeUsd,
+        raw.transactionId ?? agreedQuote.transactionId,
+        raw,
+      );
+
+      if (isBelowFloor(freshQuote.dollarsOut, agreedQuote.floorUsd)) {
+        throw new FloorAbortError(
+          "The quote moved — please confirm again.",
+          freshQuote,
+        );
+      }
+
+      if (!raw.rootHash) {
+        throw new Error("Transaction missing root hash");
+      }
+
+      const rootHashSig = await signers.signRootHash(raw.rootHash);
+
+      const authorizations: { userOpHash: string; signature: string }[] = [];
+      for (const pending of userOpsNeeding7702(raw.userOps)) {
+        const sig = await signers.sign7702(pending.auth);
+        authorizations.push({
+          userOpHash: pending.userOpHash,
+          signature: sig,
+        });
+      }
+
+      const ua = await account();
+      const result = await ua.sendTransaction(
+        raw,
+        rootHashSig,
+        authorizations,
+      );
+
+      const transactionId =
+        result.transactionId ?? raw.transactionId ?? agreedQuote.transactionId;
+
+      // Amounts come from the executed quote — the SDK's getTransaction status
+      // object does not carry USD totals (it would zero the receipt). Legs come
+      // from the signed transaction's per-chain userOps.
+      const receipt = buildReceipt(
+        receiptSlug,
+        {
+          dollarsIn: freshQuote.dollarsIn,
+          dollarsOut: freshQuote.dollarsOut,
+          feeUsd: freshQuote.feeUsd,
+          sourceChain: freshQuote.sourceChain,
+          destChain: freshQuote.destChain,
+        },
+        raw.userOps,
+      );
+
+      return {
+        transactionId,
+        summary: narrateResult(freshQuote.dollarsIn, freshQuote.dollarsOut),
+        receipt,
+      };
     },
   };
 }
