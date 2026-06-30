@@ -100,6 +100,25 @@ describe("validateIntent", () => {
     );
     expect(result.ok).toBe(false);
   });
+
+  it("rejects a no-op when funds are already cash on the settlement chain", () => {
+    const allCash: UniversalBalance = {
+      totalUsd: 1,
+      sources: [{ chain: "Arbitrum", asset: "USDC", usd: 1 }],
+    };
+    const result = validateIntent({ ...intent, sizeUsd: 0.5 }, allCash);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("already in cash");
+  });
+
+  it("allows cashing out USDC that lives on another chain", () => {
+    const usdcOnBase: UniversalBalance = {
+      totalUsd: 1,
+      sources: [{ chain: "Base", asset: "USDC", usd: 1 }],
+    };
+    const result = validateIntent({ ...intent, sizeUsd: 0.5 }, usdcOnBase);
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe("resolveSizeUsd", () => {

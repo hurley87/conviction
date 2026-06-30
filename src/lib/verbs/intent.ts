@@ -152,6 +152,25 @@ export function validateIntent(
     return { ok: false, error: "That asset isn't supported yet." };
   }
 
+  // No-op guard: if every funded source is already the target asset on the
+  // settlement chain, there's nothing to convert — the SDK would reject this as
+  // a same-token buy (-32683). Surface a friendly message instead.
+  const hasConvertibleFunds = balance.sources.some(
+    (s) =>
+      s.usd > 0 &&
+      !(s.chain === intent.destChain && assetMatches(s.asset, intent.toAsset)),
+  );
+  if (!hasConvertibleFunds) {
+    const label =
+      intent.toAsset === "cash"
+        ? "in cash"
+        : `held as ${intent.toAsset.toUpperCase()}`;
+    return {
+      ok: false,
+      error: `Your money is already ${label} — there's nothing to move.`,
+    };
+  }
+
   const sizeUsd = resolveSizeUsd(intent, balance);
   if (sizeUsd <= 0) {
     return { ok: false, error: "Please specify a positive amount." };
