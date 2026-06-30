@@ -21,6 +21,14 @@ const ASSETS: Record<ProductAsset, AssetInfo> = {
   sol: { uaTokenType: "sol", matchSymbols: ["SOL"] },
 };
 
+/** True when a string is one of the known product assets. */
+export function isProductAsset(value: unknown): value is ProductAsset {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(ASSETS, value)
+  );
+}
+
 /** Map product asset to UA SUPPORTED_TOKEN_TYPE string. */
 export function toUaTokenType(asset: ProductAsset): string {
   return ASSETS[asset]?.uaTokenType ?? "usdc";
@@ -29,4 +37,24 @@ export function toUaTokenType(asset: ProductAsset): string {
 /** True when a balance symbol satisfies the requested product asset. */
 export function assetMatches(symbol: string, product: ProductAsset): boolean {
   return ASSETS[product]?.matchSymbols.includes(symbol.toUpperCase()) ?? false;
+}
+
+/** Primary ticker for feed token display (LI.FI lookup). */
+export function productAssetPrimarySymbol(asset: ProductAsset): string {
+  const symbols: Record<ProductAsset, string> = {
+    cash: "USDC",
+    usdc: "USDC",
+    usdt: "USDT",
+    eth: "ETH",
+    btc: "WBTC",
+    sol: "SOL",
+  };
+  return symbols[asset];
+}
+
+/** Ordered candidate symbols for resolving an asset to a LI.FI token. */
+export function assetLookupSymbols(asset: ProductAsset): string[] {
+  const primary = productAssetPrimarySymbol(asset).toUpperCase();
+  const matches = ASSETS[asset]?.matchSymbols ?? [];
+  return [primary, ...matches.filter((symbol) => symbol !== primary)];
 }

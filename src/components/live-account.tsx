@@ -47,7 +47,9 @@ export function LiveAccount() {
           </p>
         )}
       </div>
-      {ua && a.balance && <Concierge ua={ua} balance={a.balance} />}
+      {ua && a.balance && (
+        <Concierge ua={ua} balance={a.balance} handle={a.handle} />
+      )}
       {a.deposits && <DepositAddress deposits={a.deposits} />}
       <div className="flex flex-col gap-3 sm:flex-row">
         <button
