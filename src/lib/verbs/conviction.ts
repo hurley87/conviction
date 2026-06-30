@@ -8,6 +8,7 @@ import type {
   TradeIntent,
   TradeQuote,
 } from "@/lib/verbs/types";
+import { isProductAsset } from "@/lib/verbs/assets";
 
 export type BuildConvictionInput = {
   handle: string;
@@ -38,19 +39,6 @@ export function buildConviction({
     backedBy: [],
     ...(receiptSlug ? { receiptSlug } : {}),
   };
-}
-
-const PRODUCT_ASSETS = new Set<ProductAsset>([
-  "cash",
-  "eth",
-  "usdc",
-  "usdt",
-  "btc",
-  "sol",
-]);
-
-function isProductAsset(value: unknown): value is ProductAsset {
-  return typeof value === "string" && PRODUCT_ASSETS.has(value as ProductAsset);
 }
 
 /** Map a completed trade into conviction trade metadata. */

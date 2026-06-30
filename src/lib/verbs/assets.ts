@@ -21,6 +21,14 @@ const ASSETS: Record<ProductAsset, AssetInfo> = {
   sol: { uaTokenType: "sol", matchSymbols: ["SOL"] },
 };
 
+/** True when a string is one of the known product assets. */
+export function isProductAsset(value: unknown): value is ProductAsset {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(ASSETS, value)
+  );
+}
+
 /** Map product asset to UA SUPPORTED_TOKEN_TYPE string. */
 export function toUaTokenType(asset: ProductAsset): string {
   return ASSETS[asset]?.uaTokenType ?? "usdc";
@@ -42,4 +50,11 @@ export function productAssetPrimarySymbol(asset: ProductAsset): string {
     sol: "SOL",
   };
   return symbols[asset];
+}
+
+/** Ordered candidate symbols for resolving an asset to a LI.FI token. */
+export function assetLookupSymbols(asset: ProductAsset): string[] {
+  const primary = productAssetPrimarySymbol(asset).toUpperCase();
+  const matches = ASSETS[asset]?.matchSymbols ?? [];
+  return [primary, ...matches.filter((symbol) => symbol !== primary)];
 }

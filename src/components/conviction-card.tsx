@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Sparkline } from "@/components/sparkline";
 import { TokenChip } from "@/components/token-chip";
-import { formatUsd } from "@/lib/format";
+import { formatUsd, formatTimestamp } from "@/lib/format";
 import type { ConvictionEntry } from "@/lib/verbs/types";
 
 type ConvictionCardProps = {
@@ -37,7 +37,7 @@ export function ConvictionCard({ entry }: ConvictionCardProps) {
         <div>
           <p className="text-sm font-semibold text-white">@{entry.handle}</p>
           <p className="mt-1 text-xs text-[#6b7099]">
-            {new Date(entry.createdAt).toLocaleString()}
+            {formatTimestamp(entry.createdAt)}
           </p>
         </div>
         <Sparkline series={series} />

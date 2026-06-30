@@ -14,6 +14,14 @@ type LiFiTokensState = {
   error: string | null;
 };
 
+function toErrorState(e: unknown): LiFiTokensState {
+  return {
+    tokens: [],
+    loading: false,
+    error: e instanceof Error ? e.message : "Failed to load tokens",
+  };
+}
+
 export function useLiFiTokens() {
   const [state, setState] = useState<LiFiTokensState>({
     tokens: [],
@@ -27,11 +35,7 @@ export function useLiFiTokens() {
       const tokens = await fetchLiFiTokens(force);
       setState({ tokens, loading: false, error: null });
     } catch (e) {
-      setState({
-        tokens: [],
-        loading: false,
-        error: e instanceof Error ? e.message : "Failed to load tokens",
-      });
+      setState(toErrorState(e));
     }
   }, []);
 
@@ -40,18 +44,10 @@ export function useLiFiTokens() {
 
     void fetchLiFiTokens()
       .then((tokens) => {
-        if (!cancelled) {
-          setState({ tokens, loading: false, error: null });
-        }
+        if (!cancelled) setState({ tokens, loading: false, error: null });
       })
       .catch((e) => {
-        if (!cancelled) {
-          setState({
-            tokens: [],
-            loading: false,
-            error: e instanceof Error ? e.message : "Failed to load tokens",
-          });
-        }
+        if (!cancelled) setState(toErrorState(e));
       });
 
     return () => {

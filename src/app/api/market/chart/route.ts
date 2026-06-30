@@ -1,20 +1,7 @@
 // Server-cached sparkline endpoint for feed charts (issue #4).
 
 import { getSparkline } from "@/lib/market-data";
-import type { ProductAsset } from "@/lib/verbs/types";
-
-const PRODUCT_ASSETS = new Set<ProductAsset>([
-  "cash",
-  "eth",
-  "usdc",
-  "usdt",
-  "btc",
-  "sol",
-]);
-
-function isProductAsset(value: string): value is ProductAsset {
-  return PRODUCT_ASSETS.has(value as ProductAsset);
-}
+import { isProductAsset } from "@/lib/verbs/assets";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

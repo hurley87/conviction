@@ -4,7 +4,7 @@
 import { createClient, getTokens, ChainType } from "@lifi/sdk";
 import type { Token } from "@lifi/types";
 import { ARBITRUM_CHAIN_ID, BASE_CHAIN_ID } from "@/lib/verbs/chains";
-import { productAssetPrimarySymbol } from "@/lib/verbs/assets";
+import { assetLookupSymbols } from "@/lib/verbs/assets";
 import type { ProductAsset } from "@/lib/verbs/types";
 
 export type FeedToken = {
@@ -94,20 +94,10 @@ export function findTokenForAsset(
   tokens: FeedToken[],
   asset: ProductAsset,
 ): FeedToken | undefined {
-  const primary = productAssetPrimarySymbol(asset).toUpperCase();
-  const match = tokens.find((t) => t.symbol.toUpperCase() === primary);
-  if (match) return match;
-
-  if (asset === "cash") {
-    return tokens.find((t) => t.symbol.toUpperCase() === "USDC");
+  for (const symbol of assetLookupSymbols(asset)) {
+    const match = tokens.find((t) => t.symbol.toUpperCase() === symbol);
+    if (match) return match;
   }
-  if (asset === "btc") {
-    return tokens.find((t) => ["WBTC", "BTC"].includes(t.symbol.toUpperCase()));
-  }
-  if (asset === "eth") {
-    return tokens.find((t) => ["ETH", "WETH"].includes(t.symbol.toUpperCase()));
-  }
-
   return undefined;
 }
 
