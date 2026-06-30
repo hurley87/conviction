@@ -2,10 +2,7 @@
 // token, gas, or bridge vocabulary (the no-vocabulary UI rule). Chain/asset
 // names live only in the opt-in receipt surface.
 
-const usd = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
+import { formatUsd } from "@/lib/format";
 
 export function BalanceCard({
   totalUsd,
@@ -23,7 +20,7 @@ export function BalanceCard({
         {loading || totalUsd == null ? (
           <span className="text-[#4a4f74]">—</span>
         ) : (
-          usd.format(totalUsd)
+          formatUsd(totalUsd)
         )}
       </p>
     </div>

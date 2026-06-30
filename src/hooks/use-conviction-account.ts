@@ -7,7 +7,11 @@
 // confirmation of the delegate-contract details (docs/adr/0000).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
+import {
+  usePrivy,
+  useWallets,
+  getEmbeddedConnectedWallet,
+} from "@privy-io/react-auth";
 import { getUAClient } from "@/lib/ua";
 import type { UniversalBalance } from "@/lib/verbs/types";
 
@@ -15,7 +19,10 @@ export function useConvictionAccount() {
   const { ready, authenticated, user, login, logout } = usePrivy();
   const { wallets } = useWallets();
 
-  const address = wallets[0]?.address;
+  // Privy's useWallets() returns every connected wallet, including injected
+  // browser extensions (MetaMask, etc.). We always want the embedded wallet
+  // tied to the social login, not whichever extension happens to be connected.
+  const address = getEmbeddedConnectedWallet(wallets)?.address;
   const handle = user?.twitter?.username ?? null;
 
   // One UA client per owner address — rebuilding it per call would throw away
