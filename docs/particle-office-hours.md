@@ -17,10 +17,17 @@ No longer gating — we committed to Privy (mirrors your reference demo). Ask on
 
 ## Ask first (a "no" changes the build)
 
-### 1. Solana support — biggest scope swing (ADR 0002)
+### 1. Solana support — biggest scope swing (ADR 0002) — ✅ CONFIRMED
 > "On your network, can a Universal Account use **Solana as a source and destination** in a cross-chain trade? Does `getSmartAccountOptions()` return **both an EVM and a Solana deposit address that unify into one balance**? Mainnet-only or also testnet?"
 
 Decides whether the headline is "SOL → USDC on Arbitrum" or an EVM-only fallback. If no, Solana is cut with no structural loss.
+
+**Answer (verified empirically, mainnet, 2026-06-29):** `getSmartAccountOptions()` returns both an EVM address (= the owner EOA) and a `solanaSmartAccountAddress`. A real **USDC-on-Solana deposit landed in the unified balance** with no extra step. So Solana-as-**source** works end-to-end — the SOL→Arbitrum headline is viable, not just the EVM fallback. Still to confirm with Particle: Solana as a *destination*, and the custody/withdrawal model (see 1b).
+
+### 1b. Solana custody / withdrawal model (ADR 0002)
+> "The UA Solana address is derived/operated by Particle (the owner key is secp256k1 and can't sign Solana ed25519 directly). What's the **signing/custody model** for that Solana account, and can a user **withdraw** Solana funds to an external Solana address — or are they only usable as a cross-chain *source* inside UA operations?"
+
+Bears on the "non-custodial" framing: the EVM leg is the user's key (7702), but the Solana leg leans on Particle's infra.
 
 **Answer:**
 
@@ -58,12 +65,12 @@ Yes → upgrades agent permission from fund-isolation to cryptographic. No → c
 
 ## Funding / onramp (ADR 0015)
 
-### 6. Does funding the EOA auto-reflect in the unified balance?
+### 6. Does funding the EOA auto-reflect in the unified balance? — ✅ CONFIRMED
 > "In 7702 mode the EOA address is the EVM Universal Account address — so if a fiat onramp (or anyone) deposits USDC straight to that EOA, does it **automatically appear in the unified balance** via `getPrimaryAssets()`, with no extra step?"
 
 We use Privy's onramp, which deposits into the embedded EOA. Need a yes/no that this lands in the UA balance.
 
-**Answer:**
+**Answer (verified, mainnet, 2026-06-29):** Yes. A direct USDC deposit to the address — on **both** the EVM EOA and the UA Solana address — appeared in the unified balance via `getPrimaryAssets()` with no extra step.
 
 ### 7. Which onramp asset + chain lands as a Primary Asset?
 > "Which **deliverable asset and chain** should a fiat onramp target so the deposit lands cleanly as a Primary Asset and unifies — e.g. USDC on Arbitrum?"
