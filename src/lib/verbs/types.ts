@@ -55,7 +55,8 @@ export type TradeQuote = {
   dollarsOut: number;
   feeUsd: number;
   etaSeconds: number;
-  /** Minimum received floor passed to expectTokens (quoted out − 1%). */
+  /** Minimum received floor (quoted out − 1%); enforced at the SDK via
+   * slippageBps and re-checked before execution (ADR 0011). */
   floorUsd: number;
   /** Internal — used for receipt, not shown on confirm card. */
   sourceChain: string;

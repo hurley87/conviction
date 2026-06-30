@@ -1,24 +1,24 @@
 // Map UA transaction results to receipt legs with explorer links (ADR 0013).
 
-import { ARBITRUM_CHAIN_ID, chainName, explorerUrl } from "@/lib/verbs/chains";
-import { parseUsd, type RawTokenChanges } from "@/lib/verbs/quote";
+import { chainName, explorerUrl } from "@/lib/verbs/chains";
 import { formatUsd } from "@/lib/format";
 import type { Receipt, ReceiptLeg } from "@/lib/verbs/types";
 
-/** Minimal structural subset of a completed UA transaction. */
-export type RawCompletedTx = {
-  transactionId?: string;
-  userOps?: {
-    chainId: number;
-    userOpHash?: string;
-  }[];
-  tokenChanges?: RawTokenChanges;
+/** Per-chain userOps from a UA transaction (carry the explorer-linkable hash). */
+export type RawUserOps = { chainId: number; userOpHash?: string }[] | undefined;
+
+/** Net amounts for the receipt — sourced from the executed quote, since the
+ * SDK's getTransaction status object does not carry the USD totals. */
+export type ReceiptAmounts = {
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  sourceChain: string;
+  destChain: string;
 };
 
 /** Build receipt legs from per-chain userOp hashes. */
-export function legsFromUserOps(
-  userOps: RawCompletedTx["userOps"],
-): ReceiptLeg[] {
+export function legsFromUserOps(userOps: RawUserOps): ReceiptLeg[] {
   if (!userOps?.length) return [];
   return userOps
     .filter((op) => op.userOpHash)
@@ -39,27 +39,24 @@ export function buildReceiptSummary(
   return `${formatUsd(dollarsIn)} from ${sourceChain} → ${formatUsd(dollarsOut)} USDC on ${destChain}`;
 }
 
-/** Assemble a full Receipt from a completed UA transaction. */
+/** Assemble a full Receipt from the executed quote's amounts + per-chain legs. */
 export function buildReceipt(
   slug: string,
-  tx: RawCompletedTx,
+  amounts: ReceiptAmounts,
+  userOps: RawUserOps,
 ): Receipt {
-  const changes = tx.tokenChanges ?? {};
-  const dollarsIn = parseUsd(changes.totalDecrAmountInUSD);
-  const dollarsOut = parseUsd(changes.totalIncrAmountInUSD);
-  const feeUsd = parseUsd(changes.totalFeeInUSD);
-  const sourceChain = chainName(changes.decr?.[0]?.token?.chainId);
-  const destChain = chainName(
-    changes.incr?.[0]?.token?.chainId ?? ARBITRUM_CHAIN_ID,
-  );
-
   return {
     slug,
-    legs: legsFromUserOps(tx.userOps),
-    summary: buildReceiptSummary(dollarsIn, dollarsOut, sourceChain, destChain),
-    dollarsIn,
-    dollarsOut,
-    feeUsd,
+    legs: legsFromUserOps(userOps),
+    summary: buildReceiptSummary(
+      amounts.dollarsIn,
+      amounts.dollarsOut,
+      amounts.sourceChain,
+      amounts.destChain,
+    ),
+    dollarsIn: amounts.dollarsIn,
+    dollarsOut: amounts.dollarsOut,
+    feeUsd: amounts.feeUsd,
   };
 }
 

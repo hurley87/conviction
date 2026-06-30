@@ -35,6 +35,10 @@ describe("MockUAClient trade verbs (ADR 0014)", () => {
     expect(result.receipt.summary).toContain("Base");
     expect(result.receipt.summary).toContain("Arbitrum");
     expect(result.summary.toLowerCase()).toContain("done");
+    // Receipt reflects real amounts from the executed quote (not zeros).
+    expect(result.receipt.dollarsIn).toBeGreaterThan(0);
+    expect(result.receipt.dollarsOut).toBeGreaterThan(0);
+    expect(result.receipt.feeUsd).toBeGreaterThan(0);
   });
 
   it("executeTrade aborts and re-quotes when fill is below the floor", async () => {

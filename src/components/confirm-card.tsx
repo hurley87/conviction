@@ -50,6 +50,14 @@ export function ConfirmCard({
         </div>
       </div>
 
+      {quote.dollarsIn > 0 && quote.feeUsd / quote.dollarsIn > 0.05 && (
+        <div className="mt-4 rounded-lg border border-amber-400/20 bg-amber-400/[0.06] p-3 text-xs leading-relaxed text-amber-200/90">
+          Heads up — the fee is {formatUsd(quote.feeUsd)}, about{" "}
+          {Math.round((quote.feeUsd / quote.dollarsIn) * 100)}% of this move.
+          Larger moves cost proportionally less.
+        </div>
+      )}
+
       <div className="mt-6 flex flex-col gap-3 sm:flex-row">
         <button
           type="button"

@@ -9,7 +9,7 @@ import type {
   UpgradeResult,
 } from "@/lib/ua/types";
 import {
-  buildExpectTokens,
+  buildBuyPayload,
   defaultTradeConfig,
   type RawTransaction,
   userOpsNeeding7702,
@@ -41,12 +41,8 @@ type ParticleAccount = {
     solanaSmartAccountAddress?: string;
     ownerAddress: string;
   }>;
-  createUniversalTransaction(
-    payload: {
-      chainId: number;
-      expectTokens: { type: string; amount: string }[];
-      transactions: unknown[];
-    },
+  createBuyTransaction(
+    payload: { token: { chainId: number; address: string }; amountInUSD: string },
     tradeConfig?: Record<string, unknown>,
   ): Promise<RawTransaction>;
   sendTransaction(
@@ -54,7 +50,6 @@ type ParticleAccount = {
     signature: string,
     authorizations?: { userOpHash: string; signature: string }[],
   ): Promise<{ transactionId?: string }>;
-  getTransaction(transactionId: string): Promise<RawTransaction>;
 };
 
 export function createParticleUAClient(config: ParticleConfig): UAClient {
@@ -82,12 +77,8 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
     params: QuoteTradeParams,
   ): Promise<RawTransaction> {
     const ua = await account();
-    const { expectTokens, chainId } = buildExpectTokens(
-      params.intent,
-      params.sizeUsd,
-    );
-    return ua.createUniversalTransaction(
-      { chainId, expectTokens, transactions: [] },
+    return ua.createBuyTransaction(
+      buildBuyPayload(params.intent, params.sizeUsd),
       defaultTradeConfig(params.intent.fromAsset),
     );
   }
@@ -167,14 +158,20 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
       const transactionId =
         result.transactionId ?? raw.transactionId ?? agreedQuote.transactionId;
 
-      let completed: RawTransaction = raw;
-      try {
-        completed = await ua.getTransaction(transactionId);
-      } catch {
-        // Fall back to the signed transaction payload if polling fails.
-      }
-
-      const receipt = buildReceipt(receiptSlug, completed);
+      // Amounts come from the executed quote — the SDK's getTransaction status
+      // object does not carry USD totals (it would zero the receipt). Legs come
+      // from the signed transaction's per-chain userOps.
+      const receipt = buildReceipt(
+        receiptSlug,
+        {
+          dollarsIn: freshQuote.dollarsIn,
+          dollarsOut: freshQuote.dollarsOut,
+          feeUsd: freshQuote.feeUsd,
+          sourceChain: freshQuote.sourceChain,
+          destChain: freshQuote.destChain,
+        },
+        raw.userOps,
+      );
 
       return {
         transactionId,

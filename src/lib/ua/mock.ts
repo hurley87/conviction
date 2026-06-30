@@ -161,7 +161,17 @@ export class MockUAClient implements UAClient {
       await signers.signRootHash(raw.rootHash);
     }
 
-    const receipt = buildReceipt(receiptSlug, raw);
+    const receipt = buildReceipt(
+      receiptSlug,
+      {
+        dollarsIn: freshQuote.dollarsIn,
+        dollarsOut: freshQuote.dollarsOut,
+        feeUsd: freshQuote.feeUsd,
+        sourceChain: freshQuote.sourceChain,
+        destChain: freshQuote.destChain,
+      },
+      raw.userOps,
+    );
 
     return {
       transactionId: txId,

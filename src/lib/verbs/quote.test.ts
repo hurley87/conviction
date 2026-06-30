@@ -4,6 +4,7 @@ import {
   isBelowFloor,
   shapeQuote,
   formatEta,
+  extractFeeUsd,
   DEFAULT_FLOOR_TOLERANCE,
 } from "@/lib/verbs/quote";
 import type { TradeIntent } from "@/lib/verbs/types";
@@ -50,6 +51,90 @@ describe("shapeQuote", () => {
     expect(quote.floorUsd).toBeCloseTo(24.88 * 0.99);
     expect(quote.sourceChain).toBe("Base");
     expect(quote.destChain).toBe("Arbitrum");
+  });
+
+  it("prefers the SDK feeQuotes breakdown over a zeroed total fee", () => {
+    const quote = shapeQuote(
+      {
+        totalDecrAmountInUSD: "0.66",
+        totalIncrAmountInUSD: "0.50",
+        totalFeeInUSD: "0.00",
+        decr: [{ token: { chainId: 8453 } }],
+      },
+      intent,
+      0.5,
+      "tx-fee",
+      { feeQuotes: [{ fees: { totals: { feeTokenAmountInUSD: "0.16" } } }] },
+    );
+    expect(quote.feeUsd).toBe(0.16);
+  });
+
+  it("falls back to the in/out delta when no fee data is present", () => {
+    const quote = shapeQuote(
+      {
+        totalDecrAmountInUSD: "0.66",
+        totalIncrAmountInUSD: "0.50",
+        decr: [{ token: { chainId: 8453 } }],
+      },
+      intent,
+      0.5,
+      "tx-delta",
+      {},
+    );
+    expect(quote.feeUsd).toBeCloseTo(0.16);
+  });
+});
+
+describe("parseUsd hex decoding", () => {
+  it("decodes the SDK's 1e18-scaled hex USD amounts", () => {
+    // 0x2c68af0bb13ffff === $0.20 (verified against the live SDK).
+    const quote = shapeQuote(
+      {
+        totalDecrAmountInUSD: "0x2c68af0bb13ffff",
+        totalIncrAmountInUSD: "0x2c3f5a84fa6bb89",
+        decr: [{ token: { chainId: 42161 } }],
+      },
+      { toAsset: "eth", destChain: "Arbitrum" },
+      0.2,
+      "tx-hex",
+      { feeQuotes: [{ fees: { totals: { feeTokenAmountInUSD: "0x833368fff0d9a0" } } }] },
+    );
+    expect(quote.dollarsIn).toBeCloseTo(0.2, 4);
+    expect(quote.dollarsOut).toBeCloseTo(0.1993, 3);
+    expect(quote.feeUsd).toBeCloseTo(0.0369, 3);
+  });
+});
+
+describe("extractFeeUsd", () => {
+  it("reads the aggregate fee from feeQuotes totals", () => {
+    expect(
+      extractFeeUsd({
+        feeQuotes: [{ fees: { totals: { feeTokenAmountInUSD: "0.16" } } }],
+      }),
+    ).toBe(0.16);
+  });
+
+  it("sums the fee subfields when no aggregate is given", () => {
+    expect(
+      extractFeeUsd({
+        feeQuotes: [
+          {
+            fees: {
+              totals: {
+                gasFeeTokenAmountInUSD: "0.10",
+                transactionServiceFeeTokenAmountInUSD: "0.04",
+                transactionLPFeeTokenAmountInUSD: "0.02",
+              },
+            },
+          },
+        ],
+      }),
+    ).toBeCloseTo(0.16);
+  });
+
+  it("returns undefined when there is no fee data", () => {
+    expect(extractFeeUsd({})).toBeUndefined();
+    expect(extractFeeUsd(null)).toBeUndefined();
   });
 });
 

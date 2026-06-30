@@ -31,8 +31,50 @@ export function isBelowFloor(freshOut: number, floorUsd: number): boolean {
 
 export function parseUsd(value: string | undefined, fallback = 0): number {
   if (value == null || value === "") return fallback;
+  // The UA SDK returns USD amounts as hex-encoded bignums scaled by 1e18
+  // (e.g. "0x2c68af0bb13ffff" === $0.20). parseFloat would read these as 0,
+  // which silently zeroed every fee and amount. Decimal strings (mock/tests)
+  // are parsed directly.
+  if (value.startsWith("0x")) {
+    try {
+      return Number(BigInt(value)) / 1e18;
+    } catch {
+      return fallback;
+    }
+  }
   const n = parseFloat(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/** Per-quote fee breakdown from the SDK's feeQuotes (IFeeTotals). */
+export type RawFeeTotals = {
+  feeTokenAmountInUSD?: string;
+  gasFeeTokenAmountInUSD?: string;
+  transactionFeeTokenAmountInUSD?: string;
+  transactionServiceFeeTokenAmountInUSD?: string;
+  transactionLPFeeTokenAmountInUSD?: string;
+};
+export type RawTxFees = {
+  feeQuotes?: { fees?: { totals?: RawFeeTotals } }[];
+};
+
+/**
+ * Pull the authoritative total fee (gas + LP + service) from the SDK
+ * transaction's feeQuotes, or undefined if not present. Cross-chain fees are
+ * roughly fixed, so this is what makes a tiny move's true cost visible.
+ */
+export function extractFeeUsd(rawTx: unknown): number | undefined {
+  const totals = (rawTx as RawTxFees | null | undefined)?.feeQuotes?.[0]?.fees
+    ?.totals;
+  if (!totals) return undefined;
+  const aggregate = parseUsd(totals.feeTokenAmountInUSD);
+  if (aggregate > 0) return aggregate;
+  const summed =
+    parseUsd(totals.gasFeeTokenAmountInUSD) +
+    parseUsd(totals.transactionFeeTokenAmountInUSD) +
+    parseUsd(totals.transactionServiceFeeTokenAmountInUSD) +
+    parseUsd(totals.transactionLPFeeTokenAmountInUSD);
+  return summed > 0 ? summed : undefined;
 }
 
 /** Infer source chain from the SDK's decr token changes. */
@@ -55,7 +97,13 @@ export function shapeQuote(
     changes.totalIncrAmountInUSD,
     dollarsIn * 0.995,
   );
-  const feeUsd = parseUsd(changes.totalFeeInUSD, Math.max(0, dollarsIn - dollarsOut));
+  // Prefer the SDK's authoritative fee breakdown; fall back to the reported
+  // total, then to the in/out delta — never silently show $0 when it cost money.
+  let feeUsd = extractFeeUsd(rawTransaction);
+  if (feeUsd == null) {
+    const reported = parseUsd(changes.totalFeeInUSD);
+    feeUsd = reported > 0 ? reported : Math.max(0, dollarsIn - dollarsOut);
+  }
   const floorUsd = computeFloor(dollarsOut);
 
   return {

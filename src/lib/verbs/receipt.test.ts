@@ -42,23 +42,27 @@ describe("buildReceiptSummary", () => {
 });
 
 describe("buildReceipt", () => {
-  it("assembles a full receipt from a completed tx", () => {
-    const receipt = buildReceipt("abc123", {
-      userOps: [
+  it("assembles a full receipt from quote amounts + per-chain legs", () => {
+    const receipt = buildReceipt(
+      "abc123",
+      {
+        dollarsIn: 25,
+        dollarsOut: 24.95,
+        feeUsd: 0.05,
+        sourceChain: "Base",
+        destChain: "Arbitrum",
+      },
+      [
         { chainId: 8453, userOpHash: "0xsource" },
         { chainId: 42161, userOpHash: "0xdest" },
       ],
-      tokenChanges: {
-        totalDecrAmountInUSD: "25.00",
-        totalIncrAmountInUSD: "24.95",
-        totalFeeInUSD: "0.05",
-        decr: [{ token: { chainId: 8453 } }],
-        incr: [{ token: { chainId: 42161 } }],
-      },
-    });
+    );
     expect(receipt.slug).toBe("abc123");
     expect(receipt.legs).toHaveLength(2);
     expect(receipt.dollarsIn).toBe(25);
     expect(receipt.dollarsOut).toBe(24.95);
+    expect(receipt.feeUsd).toBe(0.05);
+    expect(receipt.summary).toContain("Base");
+    expect(receipt.summary).toContain("Arbitrum");
   });
 });
