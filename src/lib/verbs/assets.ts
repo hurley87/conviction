@@ -30,3 +30,16 @@ export function toUaTokenType(asset: ProductAsset): string {
 export function assetMatches(symbol: string, product: ProductAsset): boolean {
   return ASSETS[product]?.matchSymbols.includes(symbol.toUpperCase()) ?? false;
 }
+
+/** Primary ticker for feed token display (LI.FI lookup). */
+export function productAssetPrimarySymbol(asset: ProductAsset): string {
+  const symbols: Record<ProductAsset, string> = {
+    cash: "USDC",
+    usdc: "USDC",
+    usdt: "USDT",
+    eth: "ETH",
+    btc: "WBTC",
+    sol: "SOL",
+  };
+  return symbols[asset];
+}

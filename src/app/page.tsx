@@ -60,6 +60,13 @@ export default function Home() {
         <p className="mt-12 text-xs font-medium uppercase tracking-[0.3em] text-[#6b7099]">
           One balance · Any chain · One feed
         </p>
+
+        <a
+          href="/feed"
+          className="mt-4 text-sm text-[#6C7BFF] hover:underline"
+        >
+          See the feed →
+        </a>
       </div>
 
       <footer className="absolute bottom-6 z-10 text-xs text-[#4a4f74]">

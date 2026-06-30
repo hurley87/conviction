@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useConciergeCore } from "@/hooks/use-concierge-core";
 import { useLiveTradeSigners } from "@/hooks/use-live-trade-signers";
 import { ConfirmCard } from "@/components/confirm-card";
+import { PostConviction } from "@/components/post-conviction";
 import { ReceiptView } from "@/components/receipt-view";
 import { PRIMARY } from "@/components/button-styles";
 import { IS_LIVE } from "@/lib/env";
@@ -18,12 +19,14 @@ function ConciergePanel({
   ua,
   balance,
   signers,
+  handle,
 }: {
   ua: UAClient;
   balance: UniversalBalance;
   signers: TradeSigners;
+  handle: string | null;
 }) {
-  const c = useConciergeCore(ua, balance, signers);
+  const c = useConciergeCore(ua, balance, signers, handle);
   const [input, setInput] = useState("");
 
   const permalink =
@@ -95,11 +98,21 @@ function ConciergePanel({
       )}
 
       {c.phase === "done" && c.receipt && (
-        <ReceiptView
-          receipt={c.receipt}
-          permalink={permalink}
-          onDismiss={c.reset}
-        />
+        <>
+          <ReceiptView
+            receipt={c.receipt}
+            permalink={permalink}
+            onDismiss={c.reset}
+          />
+          {handle && (
+            <PostConviction
+              onPost={c.postConviction}
+              onSkip={c.skipConviction}
+              posting={c.convictionPhase === "posting"}
+              posted={c.convictionPhase === "posted"}
+            />
+          )}
+        </>
       )}
     </div>
   );
@@ -109,26 +122,37 @@ function ConciergePanel({
 export function LiveConcierge({
   ua,
   balance,
+  handle,
 }: {
   ua: UAClient;
   balance: UniversalBalance;
+  handle: string | null;
 }) {
   const signers = useLiveTradeSigners();
-  return <ConciergePanel ua={ua} balance={balance} signers={signers} />;
+  return (
+    <ConciergePanel ua={ua} balance={balance} signers={signers} handle={handle} />
+  );
 }
 
 /** Mock/demo path — no Privy hooks (ADR 0014). */
 export function Concierge({
   ua,
   balance,
+  handle = "demo-trader",
 }: {
   ua: UAClient;
   balance: UniversalBalance;
+  handle?: string | null;
 }) {
   if (IS_LIVE) {
-    return <LiveConcierge ua={ua} balance={balance} />;
+    return <LiveConcierge ua={ua} balance={balance} handle={handle} />;
   }
   return (
-    <ConciergePanel ua={ua} balance={balance} signers={mockTradeSigners} />
+    <ConciergePanel
+      ua={ua}
+      balance={balance}
+      signers={mockTradeSigners}
+      handle={handle}
+    />
   );
 }

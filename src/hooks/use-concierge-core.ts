@@ -14,6 +14,7 @@ import {
   type TradeSigners,
   type UniversalBalance,
 } from "@/lib/verbs/types";
+import { tradeToConvictionTrade } from "@/lib/verbs/conviction";
 
 export type ConciergeMessage = {
   role: "user" | "assistant";
@@ -29,10 +30,13 @@ export type ConciergePhase =
   | "done"
   | "error";
 
+export type ConvictionPhase = "idle" | "posting" | "posted";
+
 export function useConciergeCore(
   ua: UAClient | null,
   balance: UniversalBalance | null,
   signers: TradeSigners,
+  handle: string | null,
 ) {
   const [messages, setMessages] = useState<ConciergeMessage[]>([
     {
@@ -46,6 +50,8 @@ export function useConciergeCore(
   const [pendingSizeUsd, setPendingSizeUsd] = useState<number | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [convictionPhase, setConvictionPhase] =
+    useState<ConvictionPhase>("idle");
 
   const appendMessage = useCallback((msg: ConciergeMessage) => {
     setMessages((prev) => [...prev, msg]);
@@ -117,6 +123,7 @@ export function useConciergeCore(
 
       setReceipt(result.receipt);
       setPhase("done");
+      setConvictionPhase("idle");
       appendMessage({ role: "assistant", text: result.summary });
 
       void fetch("/api/receipts", {
@@ -157,7 +164,72 @@ export function useConciergeCore(
     setPendingSizeUsd(null);
     setReceipt(null);
     setError(null);
+    setConvictionPhase("idle");
   }, []);
+
+  const postConviction = useCallback(
+    async (thesis: string) => {
+      if (
+        !handle ||
+        !pendingIntent ||
+        pendingSizeUsd == null ||
+        !receipt ||
+        !pendingQuote
+      ) {
+        return;
+      }
+
+      const trimmed = thesis.trim();
+      if (!trimmed) return;
+
+      setConvictionPhase("posting");
+      const trade = tradeToConvictionTrade(
+        pendingIntent,
+        pendingQuote,
+        pendingSizeUsd,
+        receipt,
+      );
+
+      try {
+        const res = await fetch("/api/convictions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            handle,
+            thesis: trimmed,
+            trade,
+            receiptSlug: receipt.slug,
+          }),
+        });
+        if (!res.ok) {
+          throw new Error("Failed to post conviction");
+        }
+        setConvictionPhase("posted");
+        appendMessage({
+          role: "assistant",
+          text: "Your conviction is live on the feed.",
+        });
+      } catch {
+        setConvictionPhase("idle");
+        appendMessage({
+          role: "assistant",
+          text: "Couldn't post your conviction — try again from the feed later.",
+        });
+      }
+    },
+    [
+      handle,
+      pendingIntent,
+      pendingSizeUsd,
+      receipt,
+      pendingQuote,
+      appendMessage,
+    ],
+  );
+
+  const skipConviction = useCallback(() => {
+    reset();
+  }, [reset]);
 
   return {
     messages,
@@ -165,10 +237,16 @@ export function useConciergeCore(
     pendingQuote,
     receipt,
     error,
+    convictionPhase,
     submitText,
     confirmTrade,
     cancelConfirm,
     reset,
+    postConviction,
+    skipConviction,
     canTrade: Boolean(ua && balance && balance.totalUsd > 0),
+    canPostConviction: Boolean(
+      handle && phase === "done" && receipt && convictionPhase !== "posted",
+    ),
   };
 }

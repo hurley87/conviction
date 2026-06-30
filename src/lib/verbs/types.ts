@@ -87,6 +87,28 @@ export type TradeResult = {
   receipt: Receipt;
 };
 
+/** Trade metadata attached to a conviction feed entry. */
+export type ConvictionTrade = {
+  fromAsset: ProductAsset;
+  fromChain: string;
+  toAsset: ProductAsset;
+  toChain: DestChain;
+  /** Presentation-only size (ADR 0003); not the copy amount. */
+  sizeUsd: number;
+};
+
+/** A posted trade + thesis on the public feed (PRD). */
+export type ConvictionEntry = {
+  entryId: string;
+  /** Denormalized feed identity (ADR 0009). */
+  handle: string;
+  thesis: string;
+  trade: ConvictionTrade;
+  createdAt: string;
+  backedBy: string[];
+  receiptSlug?: string;
+};
+
 /** Floor abort — execution re-quotes below the agreed floor (ADR 0011). */
 export class FloorAbortError extends Error {
   constructor(
