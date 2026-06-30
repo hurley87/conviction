@@ -3,8 +3,8 @@ import { FUNDING_TARGET } from "@/lib/funding";
 import { MockUAClient } from "@/lib/ua/mock";
 
 describe("FUNDING_TARGET", () => {
-  it("targets USDC on Base for UA unification (ADR 0015)", () => {
-    expect(FUNDING_TARGET).toEqual({ chainId: 8453, asset: "USDC" });
+  it("targets USDC on Arbitrum for UA unification (ADR 0015)", () => {
+    expect(FUNDING_TARGET).toEqual({ chainId: 42161, asset: "USDC" });
   });
 });
 
