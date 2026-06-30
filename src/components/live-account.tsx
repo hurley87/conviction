@@ -6,6 +6,7 @@
 import { useMemo } from "react";
 import { useConvictionAccount } from "@/hooks/use-conviction-account";
 import { BalanceCard } from "@/components/balance-card";
+import { AddMoneyButton } from "@/components/add-money-button";
 import { Concierge } from "@/components/concierge";
 import { DepositAddress } from "@/components/deposit-address";
 import { PRIMARY, GHOST } from "@/components/button-styles";
@@ -38,8 +39,9 @@ export function LiveAccount() {
         </p>
       )}
       <BalanceCard totalUsd={a.balance?.totalUsd ?? null} loading={!a.balance} />
+      <AddMoneyButton onAdd={a.addMoney} isFunding={a.isFunding} />
       {ua && a.balance && <Concierge ua={ua} balance={a.balance} />}
-      {a.address && <DepositAddress address={a.address} />}
+      {a.deposits && <DepositAddress deposits={a.deposits} />}
       <div className="flex flex-col gap-3 sm:flex-row">
         <button
           type="button"

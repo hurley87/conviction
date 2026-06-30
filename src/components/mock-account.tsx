@@ -4,21 +4,19 @@
 // balance and the upgrade action are demoable without Privy/Particle keys
 // (ADR 0014). Replaced by LiveAccount once NEXT_PUBLIC_PRIVY_APP_ID is set.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { MockUAClient } from "@/lib/ua/mock";
+import { useUASnapshot } from "@/hooks/use-ua-snapshot";
 import { BalanceCard } from "@/components/balance-card";
+import { AddMoneyButton } from "@/components/add-money-button";
 import { Concierge } from "@/components/concierge";
+import { DepositAddress } from "@/components/deposit-address";
 import { PRIMARY } from "@/components/button-styles";
-import type { UniversalBalance } from "@/lib/verbs/types";
 
 export function MockAccount() {
   const ua = useMemo(() => new MockUAClient(), []);
-  const [balance, setBalance] = useState<UniversalBalance | null>(null);
+  const { balance, deposits } = useUASnapshot(ua);
   const [upgraded, setUpgraded] = useState(false);
-
-  useEffect(() => {
-    void ua.getUniversalBalance().then(setBalance);
-  }, [ua]);
 
   return (
     <div className="flex flex-col items-center gap-6">
@@ -26,7 +24,9 @@ export function MockAccount() {
         Demo mode
       </span>
       <BalanceCard totalUsd={balance?.totalUsd ?? null} loading={!balance} />
+      <AddMoneyButton onAdd={() => {}} disabled />
       {balance && <Concierge ua={ua} balance={balance} />}
+      {deposits && <DepositAddress deposits={deposits} />}
       <button
         type="button"
         onClick={async () => {

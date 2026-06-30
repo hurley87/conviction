@@ -11,13 +11,16 @@ import {
   usePrivy,
   useWallets,
   getEmbeddedConnectedWallet,
+  useFundWallet,
 } from "@privy-io/react-auth";
 import { getUAClient } from "@/lib/ua";
-import type { UniversalBalance } from "@/lib/verbs/types";
+import { useUASnapshot } from "@/hooks/use-ua-snapshot";
+import { FUNDING_TARGET } from "@/lib/funding";
 
 export function useConvictionAccount() {
   const { ready, authenticated, user, login, logout } = usePrivy();
   const { wallets } = useWallets();
+  const { fundWallet } = useFundWallet();
 
   // Privy's useWallets() returns every connected wallet, including injected
   // browser extensions (MetaMask, etc.). We always want the embedded wallet
@@ -29,37 +32,19 @@ export function useConvictionAccount() {
   // the SDK account cache the Particle client builds lazily.
   const ua = useMemo(() => (address ? getUAClient(address) : null), [address]);
 
-  const [balance, setBalance] = useState<UniversalBalance | null>(null);
+  const { balance, deposits, refresh } = useUASnapshot(ua);
   const [upgraded, setUpgraded] = useState(false);
+  const [isFunding, setIsFunding] = useState(false);
 
-  const refresh = useCallback(async () => {
-    if (!ua) return;
-    // await first so this never setStates synchronously inside an effect.
-    const next = await ua.getUniversalBalance();
-    setBalance(next);
-  }, [ua]);
-
-  // On connect: persist identity and load the unified balance. setState lives
-  // in the promise callback (async), not synchronously in the effect body.
+  // On connect: persist the user's Twitter handle (ADR 0009).
   useEffect(() => {
-    if (!authenticated || !ua || !address) return;
-    if (handle && user?.id) {
-      void fetch("/api/users", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ privyId: user.id, handle, address }),
-      }).catch(() => {});
-    }
-    let active = true;
-    ua.getUniversalBalance()
-      .then((next) => {
-        if (active) setBalance(next);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [authenticated, ua, address, handle, user?.id]);
+    if (!authenticated || !address || !handle || !user?.id) return;
+    void fetch("/api/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ privyId: user.id, handle, address }),
+    }).catch(() => {});
+  }, [authenticated, address, handle, user?.id]);
 
   const upgrade = useCallback(async () => {
     if (!ua) return;
@@ -67,6 +52,24 @@ export function useConvictionAccount() {
     setUpgraded(true);
     await refresh();
   }, [ua, refresh]);
+
+  const addMoney = useCallback(async () => {
+    if (!address) return;
+    setIsFunding(true);
+    try {
+      await fundWallet({
+        address,
+        options: {
+          chain: { id: FUNDING_TARGET.chainId },
+          asset: FUNDING_TARGET.asset,
+          defaultFundingMethod: "card",
+        },
+      });
+      await refresh();
+    } finally {
+      setIsFunding(false);
+    }
+  }, [address, fundWallet, refresh]);
 
   return {
     ready,
@@ -76,6 +79,9 @@ export function useConvictionAccount() {
     handle,
     address,
     balance,
+    deposits,
+    addMoney,
+    isFunding,
     upgrade,
     upgraded,
   };
