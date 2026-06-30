@@ -9,3 +9,8 @@ const usd = new Intl.NumberFormat("en-US", {
 export function formatUsd(n: number): string {
   return usd.format(n);
 }
+
+// Short form of a blockchain address for display: 0x1234…cdef.
+export function truncateAddress(addr: string): string {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
