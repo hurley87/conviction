@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Feed } from "@/components/feed";
+import { FeedBoard } from "@/components/feed-board";
 import { listConvictions } from "@/lib/convictions";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +31,7 @@ export default async function FeedPage() {
         </p>
 
         <div className="mt-10">
-          <Feed convictions={convictions} />
+          <FeedBoard convictions={convictions} />
         </div>
       </div>
     </main>

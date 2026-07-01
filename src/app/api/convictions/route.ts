@@ -1,6 +1,6 @@
-// Conviction feed API (issue #4): post + list.
+// Conviction feed API (issue #4): post + list + back.
 
-import { saveConviction, listConvictions } from "@/lib/convictions";
+import { addBacker, saveConviction, listConvictions } from "@/lib/convictions";
 import {
   buildConviction,
   parseConvictionTrade,
@@ -50,4 +50,32 @@ export async function POST(request: Request) {
 
   const persisted = await saveConviction(entry);
   return Response.json({ entryId: entry.entryId, persisted });
+}
+
+export async function PATCH(request: Request) {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "invalid JSON" }, { status: 400 });
+  }
+
+  const payload = body as { entryId?: unknown; handle?: unknown };
+
+  if (typeof payload.entryId !== "string" || !payload.entryId.trim()) {
+    return Response.json({ error: "entryId required" }, { status: 400 });
+  }
+  if (typeof payload.handle !== "string" || !payload.handle.trim()) {
+    return Response.json({ error: "handle required" }, { status: 400 });
+  }
+
+  const backedBy = await addBacker(
+    payload.entryId.trim(),
+    payload.handle.trim(),
+  );
+  if (!backedBy) {
+    return Response.json({ error: "conviction not found" }, { status: 404 });
+  }
+
+  return Response.json({ backedBy });
 }
