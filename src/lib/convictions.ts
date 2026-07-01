@@ -4,6 +4,7 @@
 import "server-only";
 import { SEED_CONVICTION } from "@/lib/conviction-seed";
 import { getSql } from "@/lib/db";
+import { appendBacker } from "@/lib/verbs/conviction";
 import type { ConvictionEntry } from "@/lib/verbs/types";
 
 const memoryStore = new Map<string, ConvictionEntry>();
@@ -119,6 +120,44 @@ export async function listConvictions(
     LIMIT ${limit}
   `;
   return (rows as Parameters<typeof rowToEntry>[0][]).map(rowToEntry);
+}
+
+/** Append a backer's handle to a conviction entry. Returns updated backedBy or null if missing. */
+export async function addBacker(
+  entryId: string,
+  handle: string,
+): Promise<string[] | null> {
+  const trimmed = handle.trim();
+  if (!trimmed) return null;
+
+  const sql = getSql();
+  if (!sql) {
+    ensureMemorySeed();
+    const entry = memoryStore.get(entryId);
+    if (!entry) return null;
+    const updated = appendBacker(entry.backedBy, trimmed);
+    entry.backedBy = updated;
+    memoryStore.set(entryId, entry);
+    return updated;
+  }
+
+  await ensureSchema(sql);
+  const updated = await sql`
+    UPDATE convictions
+    SET backed_by = array_append(backed_by, ${trimmed})
+    WHERE entry_id = ${entryId}
+      AND NOT (${trimmed} = ANY(backed_by))
+    RETURNING backed_by
+  `;
+  if (updated.length > 0) {
+    return (updated[0] as { backed_by: string[] }).backed_by;
+  }
+
+  const existing = await sql`
+    SELECT backed_by FROM convictions WHERE entry_id = ${entryId}
+  `;
+  if (existing.length === 0) return null;
+  return (existing[0] as { backed_by: string[] }).backed_by;
 }
 
 /** Test helper — reset in-memory store between tests. */

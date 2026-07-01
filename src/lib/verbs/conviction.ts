@@ -67,6 +67,13 @@ function inferFromAsset(toAsset: ProductAsset): ProductAsset {
   return "cash";
 }
 
+/** Append a backer's handle to backedBy, deduping. */
+export function appendBacker(backedBy: string[], handle: string): string[] {
+  const trimmed = handle.trim();
+  if (!trimmed || backedBy.includes(trimmed)) return backedBy;
+  return [...backedBy, trimmed];
+}
+
 /** Validate a conviction trade payload from the API. */
 export function parseConvictionTrade(
   trade: unknown,

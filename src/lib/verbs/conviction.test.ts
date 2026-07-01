@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildConviction,
   generateConvictionEntryId,
+  appendBacker,
   parseConvictionTrade,
   tradeToConvictionTrade,
 } from "@/lib/verbs/conviction";
@@ -87,6 +88,20 @@ describe("tradeToConvictionTrade", () => {
       toChain: "Arbitrum",
       sizeUsd: 25,
     });
+  });
+});
+
+describe("appendBacker", () => {
+  it("appends a handle", () => {
+    expect(appendBacker(["alice"], "bob")).toEqual(["alice", "bob"]);
+  });
+
+  it("dedupes handles", () => {
+    expect(appendBacker(["alice", "bob"], "bob")).toEqual(["alice", "bob"]);
+  });
+
+  it("ignores empty handles", () => {
+    expect(appendBacker(["alice"], "  ")).toEqual(["alice"]);
   });
 });
 
