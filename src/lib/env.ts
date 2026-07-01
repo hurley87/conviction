@@ -15,3 +15,6 @@ export const IS_LIVE = Boolean(PRIVY_APP_ID);
  * ADR 0014). Server-only var — never inlined into the client bundle.
  */
 export const IS_LLM_PARSING = Boolean(process.env.AI_GATEWAY_API_KEY);
+
+/** Model id used for all LLM parsing/summarization via the AI Gateway. */
+export const LLM_MODEL = "anthropic/claude-haiku-4-5";

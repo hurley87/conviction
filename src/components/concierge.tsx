@@ -34,10 +34,12 @@ function ConciergePanel({
       ? `${window.location.origin}/r/${c.receipt.slug}`
       : undefined;
 
+  const inputDisabled = c.phase === "executing" || c.phase === "quoting";
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const text = input.trim();
-    if (!text || c.phase === "executing" || c.phase === "quoting") return;
+    if (!text || inputDisabled) return;
     setInput("");
     void c.submitText(text);
   };
@@ -69,17 +71,13 @@ function ConciergePanel({
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Move $25 to cash…"
-              disabled={
-                !c.canTrade || c.phase === "executing" || c.phase === "quoting"
-              }
+              placeholder="Move $25 to cash… or summarize the feed"
+              disabled={inputDisabled}
               className="flex-1 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white placeholder:text-[#4a4f74] focus:border-[#6C7BFF]/50 focus:outline-none"
             />
             <button
               type="submit"
-              disabled={
-                !c.canTrade || c.phase === "executing" || c.phase === "quoting"
-              }
+              disabled={inputDisabled}
               className={`${PRIMARY} px-5 py-2 text-sm`}
             >
               Send

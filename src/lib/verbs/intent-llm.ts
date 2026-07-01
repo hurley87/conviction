@@ -15,10 +15,8 @@ import {
   PARSER_ASSETS,
   parseIntentHeuristic,
 } from "@/lib/verbs/intent";
-import { IS_LLM_PARSING } from "@/lib/env";
+import { IS_LLM_PARSING, LLM_MODEL } from "@/lib/env";
 import type { ParseResult, ProductAsset, TradeIntent } from "@/lib/verbs/types";
-
-const MODEL = "anthropic/claude-haiku-4-5";
 
 const SYSTEM = `You convert a person's plain-English money request into a constrained trade intent for a dollars-first app. The settlement is always cash on Arbitrum; you only decide the asset(s) and amount.
 
@@ -81,7 +79,7 @@ export async function parseIntentLLM(text: string): Promise<ParseResult> {
 
   try {
     const { object } = await generateObject({
-      model: MODEL,
+      model: LLM_MODEL,
       schema: SCHEMA,
       system: SYSTEM,
       prompt: text,

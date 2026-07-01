@@ -5,6 +5,10 @@
 import { useCallback, useState } from "react";
 import type { UAClient } from "@/lib/ua";
 import {
+  isFeedSummaryRequest,
+  type FeedSummary,
+} from "@/lib/verbs/feed-summary";
+import {
   parseIntentHeuristic,
   pickSettlementChain,
   validateIntent,
@@ -64,7 +68,7 @@ export function useConciergeCore(
   const [messages, setMessages] = useState<ConciergeMessage[]>([
     {
       role: "assistant",
-      text: "What would you like to do? For example: \"Move $25 to cash\" or \"Convert half my ETH to cash\".",
+      text: 'What would you like to do? For example: "Move $25 to cash", "Convert half my ETH to cash", or "Summarize the feed".',
     },
   ]);
   const [phase, setPhase] = useState<ConciergePhase>("idle");
@@ -81,11 +85,44 @@ export function useConciergeCore(
     setMessages((prev) => [...prev, msg]);
   }, []);
 
+  const summarizeFeed = useCallback(async () => {
+    setError(null);
+    appendMessage({ role: "assistant", text: "Reading the feed…" });
+    try {
+      const res = await fetch("/api/summarize-feed");
+      if (!res.ok) throw new Error("Couldn't read the feed.");
+      const data = (await res.json()) as FeedSummary;
+      appendMessage({ role: "assistant", text: data.digest });
+      if (data.flaggedEntries.length > 0) {
+        const lines = data.flaggedEntries
+          .map((f) => `@${f.handle} — ${f.reason}`)
+          .join("\n");
+        appendMessage({
+          role: "assistant",
+          text: `Worth a closer look:\n${lines}`,
+        });
+      }
+      setPhase("idle");
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : "Couldn't summarize the feed.";
+      setPhase("error");
+      setError(msg);
+      appendMessage({ role: "assistant", text: msg });
+    }
+  }, [appendMessage]);
+
   const submitText = useCallback(
     async (text: string) => {
-      if (!ua || !balance) return;
       setError(null);
       appendMessage({ role: "user", text });
+
+      if (isFeedSummaryRequest(text)) {
+        await summarizeFeed();
+        return;
+      }
+
+      if (!ua || !balance) return;
 
       // A clarifying reply (e.g. "half") only makes sense alongside the original
       // request (e.g. "buy ETH") — carry the prior text forward and re-parse.
@@ -135,7 +172,7 @@ export function useConciergeCore(
         appendMessage({ role: "assistant", text: msg });
       }
     },
-    [ua, balance, appendMessage, clarifyContext],
+    [ua, balance, appendMessage, clarifyContext, summarizeFeed],
   );
 
   const confirmTrade = useCallback(async () => {
@@ -276,6 +313,7 @@ export function useConciergeCore(
     error,
     convictionPhase,
     submitText,
+    summarizeFeed,
     confirmTrade,
     cancelConfirm,
     reset,
