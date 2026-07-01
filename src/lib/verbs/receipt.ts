@@ -1,8 +1,9 @@
 // Map UA transaction results to receipt legs with explorer links (ADR 0013).
 
 import { chainName, explorerUrl } from "@/lib/verbs/chains";
+import { productAssetPrimarySymbol } from "@/lib/verbs/assets";
 import { formatUsd } from "@/lib/format";
-import type { Receipt, ReceiptLeg } from "@/lib/verbs/types";
+import type { ProductAsset, Receipt, ReceiptLeg } from "@/lib/verbs/types";
 
 /** Per-chain userOps from a UA transaction (carry the explorer-linkable hash). */
 export type RawUserOps = { chainId: number; userOpHash?: string }[] | undefined;
@@ -15,6 +16,10 @@ export type ReceiptAmounts = {
   feeUsd: number;
   sourceChain: string;
   destChain: string;
+  /** Destination product asset — fallback when the on-chain symbol is absent. */
+  toAsset: ProductAsset;
+  /** The token actually received on-chain (e.g. "wstETH"), when known. */
+  receivedSymbol?: string;
 };
 
 /** Build receipt legs from per-chain userOp hashes. */
@@ -29,14 +34,16 @@ export function legsFromUserOps(userOps: RawUserOps): ReceiptLeg[] {
     }));
 }
 
-/** Plain net summary for the receipt (ADR 0013). */
+/** Plain net summary for the receipt (ADR 0013). Shows the real destination
+ * token symbol (e.g. USDC for cash), not a generic label. */
 export function buildReceiptSummary(
   dollarsIn: number,
   dollarsOut: number,
   sourceChain: string,
   destChain: string,
+  destSymbol: string,
 ): string {
-  return `${formatUsd(dollarsIn)} from ${sourceChain} → ${formatUsd(dollarsOut)} USDC on ${destChain}`;
+  return `${formatUsd(dollarsIn)} from ${sourceChain} → ${formatUsd(dollarsOut)} ${destSymbol} on ${destChain}`;
 }
 
 /** Assemble a full Receipt from the executed quote's amounts + per-chain legs. */
@@ -53,6 +60,7 @@ export function buildReceipt(
       amounts.dollarsOut,
       amounts.sourceChain,
       amounts.destChain,
+      amounts.receivedSymbol ?? productAssetPrimarySymbol(amounts.toAsset),
     ),
     dollarsIn: amounts.dollarsIn,
     dollarsOut: amounts.dollarsOut,

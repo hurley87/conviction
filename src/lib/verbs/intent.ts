@@ -2,17 +2,27 @@
 // Fully mockable for CI (ADR 0014); a real LLM can front this seam later.
 
 import type {
+  DestChain,
   ParseResult,
   ProductAsset,
   TradeIntent,
   UniversalBalance,
   ValidationResult,
 } from "@/lib/verbs/types";
-import { assetMatches } from "@/lib/verbs/assets";
+import {
+  assetMatches,
+  productAssetPrimarySymbol,
+  toUaTokenType,
+} from "@/lib/verbs/assets";
+import {
+  SETTLEMENT_CHAINS,
+  destChainId,
+  tokenAddress,
+} from "@/lib/verbs/chains";
 import { formatUsd } from "@/lib/format";
 
-const DEFAULT_DEST_CHAIN = "Arbitrum" as const;
-const DEFAULT_TO_ASSET: ProductAsset = "cash";
+export const DEFAULT_DEST_CHAIN = "Arbitrum" as const;
+export const DEFAULT_TO_ASSET: ProductAsset = "cash";
 
 const ASSET_ALIASES: Record<string, ProductAsset> = {
   cash: "cash",
@@ -38,8 +48,11 @@ const SUPPORTED_ASSETS = new Set<ProductAsset>([
   "sol",
 ]);
 
-const CLARIFY_AMOUNT =
+export const CLARIFY_AMOUNT =
   "How much — all of it, or a set amount? For example: \"$25\" or \"half\".";
+
+/** Product assets the parser is allowed to emit (ADR 0012 constrained set). */
+export const PARSER_ASSETS: ProductAsset[] = [...SUPPORTED_ASSETS];
 
 /** Map free text to a product asset label, or undefined if not found. */
 export function parseAssetWord(text: string): ProductAsset | undefined {
@@ -86,8 +99,20 @@ function parseFromAsset(text: string): ProductAsset | undefined {
 }
 
 function parseToAsset(text: string): ProductAsset {
+  // "buy/get ETH", "buy 0.5 of ETH" — the asset being acquired is the dest.
+  const buyMatch = text.match(
+    /\b(?:buy|buying|get|acquire|purchase)\s+(?:[\d.,]+\s+)?(?:of\s+)?(?:my\s+)?(\w+)/i,
+  );
+  if (buyMatch) {
+    const asset = parseAssetWord(buyMatch[1]!);
+    if (asset) return asset;
+  }
+
+  // "to/into/for/on <asset>" names the destination — "spend half on ETH",
+  // "move $25 to cash". ("on" stays out of parseFromAsset, so "cash in" /
+  // "sell on" don't get misread as a buy.)
   const toMatch = text.match(
-    /\b(?:to|into|for)\s+(?:my\s+)?(\w+)/i,
+    /\b(?:to|into|for|on)\s+(?:my\s+)?(\w+)/i,
   );
   if (toMatch) {
     const asset = parseAssetWord(toMatch[1]!);
@@ -98,10 +123,11 @@ function parseToAsset(text: string): ProductAsset {
 }
 
 /**
- * Map plain English to a constrained intent or a single clarifying question.
+ * Deterministic plain-English → intent parser. Fully offline and the CI test
+ * target (ADR 0014); also the fallback when the LLM gateway is unavailable.
  * Never silently infers "all" when amount is missing (ADR 0012).
  */
-export function parseIntent(text: string): ParseResult {
+export function parseIntentHeuristic(text: string): ParseResult {
   const trimmed = text.trim();
   if (!trimmed) {
     return { kind: "clarify", question: CLARIFY_AMOUNT };
@@ -127,13 +153,68 @@ export function parseIntent(text: string): ParseResult {
   return { kind: "intent", intent };
 }
 
-/** Resolve intent size to a concrete USD amount against the live balance. */
+/**
+ * Choose the chain a trade should settle on. Cash stays on Arbitrum (ADR 0005 —
+ * the canonical cash location). A crypto buy settles on the supported chain that
+ * holds the most convertible funds, so we don't bridge just to swap; falls back
+ * to Arbitrum when nothing is funded on a candidate chain.
+ */
+export function pickSettlementChain(
+  toAsset: ProductAsset,
+  balance: UniversalBalance,
+): DestChain {
+  if (toAsset === "cash") return DEFAULT_DEST_CHAIN;
+
+  const uaTokenType = toUaTokenType(toAsset);
+  const candidates = SETTLEMENT_CHAINS.filter((c) =>
+    tokenAddress(uaTokenType, destChainId(c)),
+  );
+  if (candidates.length === 0) return DEFAULT_DEST_CHAIN;
+
+  let best = candidates.includes(DEFAULT_DEST_CHAIN)
+    ? DEFAULT_DEST_CHAIN
+    : candidates[0]!;
+  let bestUsd = 0;
+  for (const chain of candidates) {
+    const usd = balance.sources
+      .filter((s) => s.chain === chain)
+      .reduce((acc, s) => acc + s.usd, 0);
+    if (usd > bestUsd) {
+      bestUsd = usd;
+      best = chain;
+    }
+  }
+  return best;
+}
+
+/** Sum the USD held in a specific product asset across all chains. */
+function assetSliceUsd(
+  balance: UniversalBalance,
+  asset: ProductAsset,
+): number {
+  return balance.sources
+    .filter((s) => assetMatches(s.asset, asset))
+    .reduce((acc, s) => acc + s.usd, 0);
+}
+
+/**
+ * Resolve intent size to a concrete USD amount against the live balance. A
+ * fraction applies to the *source asset* when one is named ("half my ETH" = half
+ * of the ETH held), otherwise to the whole unified balance ("half" = half of
+ * everything).
+ */
 export function resolveSizeUsd(
   intent: TradeIntent,
   balance: UniversalBalance,
 ): number {
   if (intent.sizeUsd != null) return intent.sizeUsd;
-  if (intent.fraction != null) return balance.totalUsd * intent.fraction;
+  if (intent.fraction != null) {
+    const base =
+      intent.fromAsset != null
+        ? assetSliceUsd(balance, intent.fromAsset)
+        : balance.totalUsd;
+    return base * intent.fraction;
+  }
   return 0;
 }
 
@@ -150,6 +231,13 @@ export function validateIntent(
   }
   if (intent.fromAsset && !SUPPORTED_ASSETS.has(intent.fromAsset)) {
     return { ok: false, error: "That asset isn't supported yet." };
+  }
+
+  // The target must have a known address on the settlement chain. Catches
+  // assets like SOL (not an EVM chain) before quoting, with a friendly message
+  // instead of a jargon error from the trade builder.
+  if (!tokenAddress(toUaTokenType(intent.toAsset), destChainId(intent.destChain))) {
+    return { ok: false, error: "That destination isn't supported yet." };
   }
 
   // No-op guard: if every funded source is already the target asset on the
@@ -183,9 +271,7 @@ export function validateIntent(
   }
 
   if (intent.fromAsset) {
-    const sourceUsd = balance.sources
-      .filter((s) => assetMatches(s.asset, intent.fromAsset!))
-      .reduce((acc, s) => acc + s.usd, 0);
+    const sourceUsd = assetSliceUsd(balance, intent.fromAsset);
     if (sourceUsd <= 0) {
       return { ok: false, error: "You don't hold any of that asset." };
     }
@@ -200,7 +286,14 @@ export function validateIntent(
   return { ok: true, intent, sizeUsd };
 }
 
-/** Plain-English narration for a completed trade (no chain/token jargon). */
-export function narrateResult(dollarsIn: number, dollarsOut: number): string {
-  return `Done — ${formatUsd(dollarsIn)} moved. You now have ${formatUsd(dollarsOut)} in cash.`;
+/** Plain-English narration for a completed trade, naming the real token the
+ * user now holds (e.g. USDC for cash). */
+export function narrateResult(
+  dollarsIn: number,
+  dollarsOut: number,
+  toAsset: ProductAsset,
+  receivedSymbol?: string,
+): string {
+  const symbol = receivedSymbol ?? productAssetPrimarySymbol(toAsset);
+  return `Done — ${formatUsd(dollarsIn)} moved. You now have ${formatUsd(dollarsOut)} in ${symbol}.`;
 }

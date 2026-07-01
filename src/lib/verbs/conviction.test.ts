@@ -65,6 +65,7 @@ describe("tradeToConvictionTrade", () => {
         floorUsd: 24.7,
         sourceChain: "Base",
         destChain: "Arbitrum",
+        toAsset: "cash",
         transactionId: "tx-1",
         rawTransaction: {},
       },

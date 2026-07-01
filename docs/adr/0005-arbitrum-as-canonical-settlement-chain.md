@@ -7,3 +7,6 @@ Driven by the Arbitrum "Road to Open House London" bounty, which requires the ap
 ## Consequences
 - The headline reframes from "into USDC on Base" to "into USDC" (settled on Arbitrum) — invisible to users, material to judges.
 - Default-destination logic lives in the verb layer, so both surfaces inherit it.
+
+## Refinement (crypto buys settle where the funds are)
+Cash remains canonical on Arbitrum. But a **crypto buy** (ETH/BTC) settles on whichever supported chain already holds the most convertible funds (`pickSettlementChain` in the verb layer), so we don't pay a bridge fee just to swap USDC→ETH on a chain the money isn't on. Arbitrum stays the fallback when nothing is funded on a candidate chain, so the "runs primarily on Arbitrum" story holds for the canonical cash flow.

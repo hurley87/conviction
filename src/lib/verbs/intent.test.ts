@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseIntent,
+  parseIntentHeuristic as parseIntent,
   validateIntent,
   resolveSizeUsd,
+  pickSettlementChain,
 } from "@/lib/verbs/intent";
 import type { TradeIntent, UniversalBalance } from "@/lib/verbs/types";
 
@@ -54,6 +55,34 @@ describe("parseIntent", () => {
     expect(parseIntent("   ").kind).toBe("clarify");
   });
 
+  it("routes 'buy ETH' to a crypto destination, not cash", () => {
+    const result = parseIntent("buy ETH for $25");
+    expect(result.kind).toBe("intent");
+    if (result.kind !== "intent") return;
+    expect(result.intent.toAsset).toBe("eth");
+    expect(result.intent.sizeUsd).toBe(25);
+  });
+
+  it("parses 'buy <qty> of <asset>' once an amount is supplied", () => {
+    // Mirrors the screenshot flow: "lets buy 0.5 of ETH" then "half".
+    const clarify = parseIntent("lets buy 0.5 of ETH");
+    expect(clarify.kind).toBe("clarify");
+
+    const combined = parseIntent("lets buy 0.5 of ETH half");
+    expect(combined.kind).toBe("intent");
+    if (combined.kind !== "intent") return;
+    expect(combined.intent.toAsset).toBe("eth");
+    expect(combined.intent.fraction).toBe(0.5);
+  });
+
+  it("routes 'spend half on ETH' to a crypto destination", () => {
+    const result = parseIntent("spend half on ETH");
+    expect(result.kind).toBe("intent");
+    if (result.kind !== "intent") return;
+    expect(result.intent.toAsset).toBe("eth");
+    expect(result.intent.fraction).toBe(0.5);
+  });
+
   it("extracts from-asset hints", () => {
     const result = parseIntent("Sell my ETH for $10 cash");
     expect(result.kind).toBe("intent");
@@ -101,6 +130,15 @@ describe("validateIntent", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("accepts 'sell all my ETH' — fraction sizes to the ETH slice, not the total", () => {
+    const result = validateIntent(
+      { toAsset: "cash", fromAsset: "eth", fraction: 1, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.sizeUsd).toBeCloseTo(62.5);
+  });
+
   it("rejects a no-op when funds are already cash on the settlement chain", () => {
     const allCash: UniversalBalance = {
       totalUsd: 1,
@@ -109,6 +147,31 @@ describe("validateIntent", () => {
     const result = validateIntent({ ...intent, sizeUsd: 0.5 }, allCash);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("already in cash");
+  });
+
+  it("allows buying ETH (wired on the settlement chain)", () => {
+    const result = validateIntent(
+      { toAsset: "eth", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("allows buying BTC (wired on the settlement chain)", () => {
+    const result = validateIntent(
+      { toAsset: "btc", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects buying SOL — no address on the EVM settlement chain", () => {
+    const result = validateIntent(
+      { toAsset: "sol", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("isn't supported");
   });
 
   it("allows cashing out USDC that lives on another chain", () => {
@@ -121,6 +184,37 @@ describe("validateIntent", () => {
   });
 });
 
+describe("pickSettlementChain", () => {
+  it("keeps cash on Arbitrum regardless of where funds sit (ADR 0005)", () => {
+    const baseHeavy: UniversalBalance = {
+      totalUsd: 100,
+      sources: [{ chain: "Base", asset: "USDC", usd: 100 }],
+    };
+    expect(pickSettlementChain("cash", baseHeavy)).toBe("Arbitrum");
+  });
+
+  it("buys on Base when that's where the funds are (no bridge)", () => {
+    const baseHeavy: UniversalBalance = {
+      totalUsd: 100,
+      sources: [
+        { chain: "Base", asset: "USDC", usd: 90 },
+        { chain: "Arbitrum", asset: "USDC", usd: 10 },
+      ],
+    };
+    expect(pickSettlementChain("eth", baseHeavy)).toBe("Base");
+  });
+
+  it("buys on Arbitrum when funds are mostly there", () => {
+    // The shared fixture holds more on Arbitrum (180) than Base (62.5).
+    expect(pickSettlementChain("eth", balance)).toBe("Arbitrum");
+  });
+
+  it("defaults to Arbitrum when nothing is funded", () => {
+    const empty: UniversalBalance = { totalUsd: 0, sources: [] };
+    expect(pickSettlementChain("btc", empty)).toBe("Arbitrum");
+  });
+});
+
 describe("resolveSizeUsd", () => {
   it("uses sizeUsd when set", () => {
     expect(
@@ -128,12 +222,31 @@ describe("resolveSizeUsd", () => {
     ).toBe(25);
   });
 
-  it("computes from fraction", () => {
+  it("computes a bare fraction from the whole balance", () => {
     expect(
       resolveSizeUsd(
         { toAsset: "cash", fraction: 0.5, destChain: "Arbitrum" },
         balance,
       ),
     ).toBeCloseTo(121.25);
+  });
+
+  it("applies a fraction to the source asset when one is named", () => {
+    // Fixture holds $62.50 of ETH — "half my ETH" is $31.25, not half of $242.50.
+    expect(
+      resolveSizeUsd(
+        { toAsset: "cash", fromAsset: "eth", fraction: 0.5, destChain: "Arbitrum" },
+        balance,
+      ),
+    ).toBeCloseTo(31.25);
+  });
+
+  it("sizes 'all my ETH' to the full ETH slice", () => {
+    expect(
+      resolveSizeUsd(
+        { toAsset: "cash", fromAsset: "eth", fraction: 1, destChain: "Arbitrum" },
+        balance,
+      ),
+    ).toBeCloseTo(62.5);
   });
 });

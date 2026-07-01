@@ -13,8 +13,18 @@ export type RawTokenChanges = {
   totalIncrAmountInUSD?: string;
   totalFeeInUSD?: string;
   decr?: { token?: { chainId?: number } }[];
-  incr?: { token?: { chainId?: number } }[];
+  incr?: { token?: { chainId?: number; symbol?: string } }[];
 };
+
+/** The token actually received, per the SDK's incr changes (e.g. "wstETH",
+ * "WBTC", "USDC") — the ground truth for the receipt label. Undefined when the
+ * SDK doesn't report a symbol (e.g. the mock), in which case callers fall back
+ * to the product asset's canonical symbol. */
+export function inferReceivedSymbol(
+  changes: RawTokenChanges,
+): string | undefined {
+  return changes.incr?.[0]?.token?.symbol || undefined;
+}
 
 /** Compute the minimum-received floor from quoted output (ADR 0011). */
 export function computeFloor(
@@ -114,6 +124,8 @@ export function shapeQuote(
     floorUsd,
     sourceChain: inferSourceChain(changes),
     destChain: intent.destChain as DestChain,
+    toAsset: intent.toAsset,
+    receivedSymbol: inferReceivedSymbol(changes),
     transactionId,
     rawTransaction,
   };

@@ -4,17 +4,40 @@
 
 import { useCallback, useState } from "react";
 import type { UAClient } from "@/lib/ua";
-import { parseIntent, validateIntent } from "@/lib/verbs/intent";
+import {
+  parseIntentHeuristic,
+  pickSettlementChain,
+  validateIntent,
+} from "@/lib/verbs/intent";
 import { generateReceiptSlug } from "@/lib/verbs/receipt";
+import { tradeToConvictionTrade } from "@/lib/verbs/conviction";
 import {
   FloorAbortError,
+  type ParseResult,
   type Receipt,
   type TradeIntent,
   type TradeQuote,
   type TradeSigners,
   type UniversalBalance,
 } from "@/lib/verbs/types";
-import { tradeToConvictionTrade } from "@/lib/verbs/conviction";
+
+/**
+ * Parse text via the server LLM endpoint, falling back to the deterministic
+ * parser if the request fails — so a gateway outage never blocks a trade.
+ */
+async function parseText(text: string): Promise<ParseResult> {
+  try {
+    const res = await fetch("/api/parse-intent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error("parse failed");
+    return (await res.json()) as ParseResult;
+  } catch {
+    return parseIntentHeuristic(text);
+  }
+}
 
 export type ConciergeMessage = {
   role: "user" | "assistant";
@@ -50,6 +73,7 @@ export function useConciergeCore(
   const [pendingSizeUsd, setPendingSizeUsd] = useState<number | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [clarifyContext, setClarifyContext] = useState<string | null>(null);
   const [convictionPhase, setConvictionPhase] =
     useState<ConvictionPhase>("idle");
 
@@ -63,14 +87,25 @@ export function useConciergeCore(
       setError(null);
       appendMessage({ role: "user", text });
 
-      const parsed = parseIntent(text);
+      // A clarifying reply (e.g. "half") only makes sense alongside the original
+      // request (e.g. "buy ETH") — carry the prior text forward and re-parse.
+      const combined = clarifyContext ? `${clarifyContext} ${text}` : text;
+      const parsed = await parseText(combined);
       if (parsed.kind === "clarify") {
+        setClarifyContext(combined);
         setPhase("clarify");
         appendMessage({ role: "assistant", text: parsed.question });
         return;
       }
+      setClarifyContext(null);
 
-      const validation = validateIntent(parsed.intent, balance);
+      // Settle where the funds already are so a buy doesn't bridge (cash stays
+      // on Arbitrum, ADR 0005).
+      const intent = {
+        ...parsed.intent,
+        destChain: pickSettlementChain(parsed.intent.toAsset, balance),
+      };
+      const validation = validateIntent(intent, balance);
       if (!validation.ok) {
         setPhase("error");
         setError(validation.error);
@@ -100,7 +135,7 @@ export function useConciergeCore(
         appendMessage({ role: "assistant", text: msg });
       }
     },
-    [ua, balance, appendMessage],
+    [ua, balance, appendMessage, clarifyContext],
   );
 
   const confirmTrade = useCallback(async () => {
@@ -153,6 +188,7 @@ export function useConciergeCore(
     setPendingQuote(null);
     setPendingIntent(null);
     setPendingSizeUsd(null);
+    setClarifyContext(null);
     setPhase("idle");
     appendMessage({ role: "assistant", text: "No problem — cancelled." });
   }, [appendMessage]);
@@ -164,6 +200,7 @@ export function useConciergeCore(
     setPendingSizeUsd(null);
     setReceipt(null);
     setError(null);
+    setClarifyContext(null);
     setConvictionPhase("idle");
   }, []);
 

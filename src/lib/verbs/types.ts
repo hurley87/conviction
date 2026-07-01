@@ -24,8 +24,10 @@ export type DepositAddresses = {
   solana: string | null;
 };
 
-/** Supported destination chain names (ADR 0005). */
-export type DestChain = "Arbitrum";
+/** Supported settlement chain names. Cash settles on Arbitrum (ADR 0005); a
+ * crypto buy settles on whichever supported chain holds the funds, to avoid
+ * bridge fees. */
+export type DestChain = "Arbitrum" | "Base";
 
 /** Product asset labels the parser maps to UA token types. */
 export type ProductAsset = "cash" | "eth" | "usdc" | "usdt" | "btc" | "sol";
@@ -61,6 +63,11 @@ export type TradeQuote = {
   /** Internal — used for receipt, not shown on confirm card. */
   sourceChain: string;
   destChain: DestChain;
+  /** Destination product asset — the fallback receipt token label. */
+  toAsset: ProductAsset;
+  /** The token actually received on-chain (e.g. "wstETH"), when the SDK reports
+   * it. Preferred over toAsset for the receipt label. */
+  receivedSymbol?: string;
   /** Opaque SDK transaction payload for execute. */
   transactionId: string;
   rawTransaction: unknown;
