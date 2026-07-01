@@ -2,6 +2,8 @@
 // chain id. Both the balance mapper and the receipt builder read from here so a
 // new chain is added in exactly one place (ADR 0013).
 
+import type { DestChain } from "@/lib/verbs/types";
+
 /** Base mainnet — common deposit/source chain. */
 export const BASE_CHAIN_ID = 8453;
 /** Arbitrum mainnet — canonical settlement chain (ADR 0005). */
@@ -38,7 +40,33 @@ const TOKEN_ADDRESSES: Record<string, Record<number, string>> = {
     [BASE_CHAIN_ID]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     [ARBITRUM_CHAIN_ID]: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
   },
+  // Buy targets, per Particle's SUPPORTED_PRIMARY_TOKENS. ETH is native (zero
+  // address) on both chains; BTC is WBTC. Wired on Base + Arbitrum so a buy can
+  // settle wherever the funds already are (no bridge). Solana isn't an EVM
+  // chain, so SOL has no address here and stays untradeable.
+  eth: {
+    [BASE_CHAIN_ID]: "0x0000000000000000000000000000000000000000",
+    [ARBITRUM_CHAIN_ID]: "0x0000000000000000000000000000000000000000",
+  },
+  btc: {
+    [BASE_CHAIN_ID]: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+    [ARBITRUM_CHAIN_ID]: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",
+  },
 };
+
+/** Settlement chains we can build trades on, in default-preference order
+ * (Arbitrum first, per ADR 0005). */
+export const SETTLEMENT_CHAINS: DestChain[] = ["Arbitrum", "Base"];
+
+const DEST_CHAIN_IDS: Record<DestChain, number> = {
+  Arbitrum: ARBITRUM_CHAIN_ID,
+  Base: BASE_CHAIN_ID,
+};
+
+/** Chain id for a settlement chain name. */
+export function destChainId(dest: DestChain): number {
+  return DEST_CHAIN_IDS[dest];
+}
 
 /** Resolve a UA token type + chain id to a known contract address, if any. */
 export function tokenAddress(

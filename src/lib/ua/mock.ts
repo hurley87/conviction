@@ -169,13 +169,20 @@ export class MockUAClient implements UAClient {
         feeUsd: freshQuote.feeUsd,
         sourceChain: freshQuote.sourceChain,
         destChain: freshQuote.destChain,
+        toAsset: freshQuote.toAsset,
+        receivedSymbol: freshQuote.receivedSymbol,
       },
       raw.userOps,
     );
 
     return {
       transactionId: txId,
-      summary: narrateResult(freshQuote.dollarsIn, freshQuote.dollarsOut),
+      summary: narrateResult(
+        freshQuote.dollarsIn,
+        freshQuote.dollarsOut,
+        freshQuote.toAsset,
+        freshQuote.receivedSymbol,
+      ),
       receipt,
     };
   }

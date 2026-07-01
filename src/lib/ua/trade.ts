@@ -2,13 +2,14 @@
 
 import type { ProductAsset, TradeIntent } from "@/lib/verbs/types";
 import { DEFAULT_FLOOR_TOLERANCE, type RawTokenChanges } from "@/lib/verbs/quote";
-import { ARBITRUM_CHAIN_ID, tokenAddress } from "@/lib/verbs/chains";
+import { destChainId, tokenAddress } from "@/lib/verbs/chains";
 import { toUaTokenType } from "@/lib/verbs/assets";
 
 /** Buy payload for createBuyTransaction — bounds the trade to amountInUSD so
- * the SDK doesn't sweep the whole balance (the empty-transactions bug). */
+ * the SDK doesn't sweep the whole balance (the empty-transactions bug). Settles
+ * on the intent's chosen chain (see pickSettlementChain). */
 export function buildBuyPayload(intent: TradeIntent, sizeUsd: number) {
-  const chainId = ARBITRUM_CHAIN_ID;
+  const chainId = destChainId(intent.destChain);
   const uaTokenType = toUaTokenType(intent.toAsset);
   const address = tokenAddress(uaTokenType, chainId);
   if (!address) {
@@ -19,6 +20,28 @@ export function buildBuyPayload(intent: TradeIntent, sizeUsd: number) {
   return {
     token: { chainId, address },
     amountInUSD: sizeUsd.toFixed(2),
+  };
+}
+
+/** A sell/convert: turning a specific held token (not cash) into the target.
+ * The SDK rejects offloading a primary token via createBuyTransaction — these
+ * must go through createConvertTransaction ("the Convert function"). */
+export function isSellIntent(intent: TradeIntent): boolean {
+  return intent.fromAsset != null && intent.fromAsset !== "cash";
+}
+
+/** Convert payload for createConvertTransaction — used to sell a primary token
+ * (e.g. ETH) back to the destination (e.g. cash/USDC). `expectToken.amount` is
+ * the sized dollar figure; for a stablecoin destination that's ~1:1 with token
+ * units. The source token is directed via defaultTradeConfig(fromAsset)'s
+ * usePrimaryTokens. */
+export function buildConvertPayload(intent: TradeIntent, sizeUsd: number) {
+  return {
+    chainId: destChainId(intent.destChain),
+    expectToken: {
+      type: toUaTokenType(intent.toAsset),
+      amount: sizeUsd.toFixed(2),
+    },
   };
 }
 

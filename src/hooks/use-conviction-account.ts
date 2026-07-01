@@ -37,6 +37,22 @@ export function useConvictionAccount() {
   const [isFunding, setIsFunding] = useState(false);
   const [fundingError, setFundingError] = useState<string | null>(null);
 
+  // Reflect the account's real on-chain 7702 status, so "Wallet ready" survives
+  // reloads instead of resetting to "Upgrade my wallet" every load.
+  useEffect(() => {
+    if (!authenticated || !address) return;
+    let cancelled = false;
+    void fetch(`/api/wallet-status?address=${address}`)
+      .then((r) => r.json())
+      .then((d: { upgraded?: boolean }) => {
+        if (!cancelled && d.upgraded) setUpgraded(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [authenticated, address]);
+
   // On connect: persist the user's Twitter handle (ADR 0009).
   useEffect(() => {
     if (!authenticated || !address || !handle || !user?.id) return;

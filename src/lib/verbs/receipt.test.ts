@@ -32,12 +32,19 @@ describe("legsFromUserOps", () => {
 });
 
 describe("buildReceiptSummary", () => {
-  it("produces a plain net summary", () => {
-    const summary = buildReceiptSummary(25, 24.95, "Base", "Arbitrum");
+  it("produces a plain net summary with the destination token", () => {
+    const summary = buildReceiptSummary(25, 24.95, "Base", "Arbitrum", "USDC");
     expect(summary).toContain("Base");
     expect(summary).toContain("Arbitrum");
     expect(summary).toContain("$25.00");
     expect(summary).toContain("$24.95");
+    expect(summary).toContain("USDC");
+  });
+
+  it("shows a non-cash destination token", () => {
+    const summary = buildReceiptSummary(0.5, 0.46, "Arbitrum", "Arbitrum", "ETH");
+    expect(summary).toContain("ETH");
+    expect(summary).not.toContain("USDC");
   });
 });
 
@@ -51,6 +58,7 @@ describe("buildReceipt", () => {
         feeUsd: 0.05,
         sourceChain: "Base",
         destChain: "Arbitrum",
+        toAsset: "cash",
       },
       [
         { chainId: 8453, userOpHash: "0xsource" },
@@ -64,5 +72,24 @@ describe("buildReceipt", () => {
     expect(receipt.feeUsd).toBe(0.05);
     expect(receipt.summary).toContain("Base");
     expect(receipt.summary).toContain("Arbitrum");
+    expect(receipt.summary).toContain("USDC");
+  });
+
+  it("labels with the real on-chain token when the SDK reports it", () => {
+    const receipt = buildReceipt(
+      "eth1",
+      {
+        dollarsIn: 0.5,
+        dollarsOut: 0.46,
+        feeUsd: 0.04,
+        sourceChain: "Arbitrum",
+        destChain: "Arbitrum",
+        toAsset: "eth",
+        receivedSymbol: "wstETH",
+      },
+      [{ chainId: 42161, userOpHash: "0xdest" }],
+    );
+    // Reflects what actually settled, not the product-level "ETH".
+    expect(receipt.summary).toContain("wstETH");
   });
 });

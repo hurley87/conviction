@@ -10,7 +10,9 @@ import type {
 } from "@/lib/ua/types";
 import {
   buildBuyPayload,
+  buildConvertPayload,
   defaultTradeConfig,
+  isSellIntent,
   type RawTransaction,
   userOpsNeeding7702,
 } from "@/lib/ua/trade";
@@ -45,6 +47,10 @@ type ParticleAccount = {
     payload: { token: { chainId: number; address: string }; amountInUSD: string },
     tradeConfig?: Record<string, unknown>,
   ): Promise<RawTransaction>;
+  createConvertTransaction(
+    payload: { chainId: number; expectToken: { type: string; amount: string } },
+    tradeConfig?: Record<string, unknown>,
+  ): Promise<RawTransaction>;
   sendTransaction(
     transaction: RawTransaction,
     signature: string,
@@ -77,9 +83,18 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
     params: QuoteTradeParams,
   ): Promise<RawTransaction> {
     const ua = await account();
+    const { intent, sizeUsd } = params;
+    // Selling a primary token (e.g. ETH → cash) must use the convert method;
+    // the SDK rejects it via createBuyTransaction (ADR 0004).
+    if (isSellIntent(intent)) {
+      return ua.createConvertTransaction(
+        buildConvertPayload(intent, sizeUsd),
+        defaultTradeConfig(intent.fromAsset),
+      );
+    }
     return ua.createBuyTransaction(
-      buildBuyPayload(params.intent, params.sizeUsd),
-      defaultTradeConfig(params.intent.fromAsset),
+      buildBuyPayload(intent, sizeUsd),
+      defaultTradeConfig(intent.fromAsset),
     );
   }
 
@@ -169,13 +184,20 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
           feeUsd: freshQuote.feeUsd,
           sourceChain: freshQuote.sourceChain,
           destChain: freshQuote.destChain,
+          toAsset: freshQuote.toAsset,
+          receivedSymbol: freshQuote.receivedSymbol,
         },
         raw.userOps,
       );
 
       return {
         transactionId,
-        summary: narrateResult(freshQuote.dollarsIn, freshQuote.dollarsOut),
+        summary: narrateResult(
+          freshQuote.dollarsIn,
+          freshQuote.dollarsOut,
+          freshQuote.toAsset,
+          freshQuote.receivedSymbol,
+        ),
         receipt,
       };
     },
