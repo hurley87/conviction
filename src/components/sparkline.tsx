@@ -37,7 +37,7 @@ export function Sparkline({
     .join(" ");
 
   const trendUp = series[series.length - 1]! >= series[0]!;
-  const stroke = trendUp ? "#37E0C8" : "#f8728b";
+  const stroke = trendUp ? "#059669" : "#ef4444";
 
   return (
     <svg

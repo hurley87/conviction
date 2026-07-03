@@ -1,15 +1,16 @@
 "use client";
 
 // Plain-English concierge chat surface (issue #2). No chain/token jargon in
-// the main flow — confirm card and receipt are separate surfaces.
+// the main flow — confirm card and receipt are separate surfaces. Renders
+// inside the ConciergeBubble panel, which owns the card chrome and header.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useConciergeCore } from "@/hooks/use-concierge-core";
 import { useLiveTradeSigners } from "@/hooks/use-live-trade-signers";
 import { ConfirmCard } from "@/components/confirm-card";
 import { PostConviction } from "@/components/post-conviction";
 import { ReceiptView } from "@/components/receipt-view";
-import { PRIMARY } from "@/components/button-styles";
+import { PRIMARY_LIGHT } from "@/components/button-styles";
 import { IS_LIVE } from "@/lib/env";
 import type { UAClient } from "@/lib/ua";
 import { mockTradeSigners } from "@/lib/ua/mock";
@@ -28,6 +29,7 @@ function ConciergePanel({
 }) {
   const c = useConciergeCore(ua, balance, signers, handle);
   const [input, setInput] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const permalink =
     typeof window !== "undefined" && c.receipt
@@ -35,6 +37,11 @@ function ConciergePanel({
       : undefined;
 
   const inputDisabled = c.phase === "executing" || c.phase === "quoting";
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [c.messages.length, c.phase]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,72 +52,76 @@ function ConciergePanel({
   };
 
   return (
-    <div className="flex w-full max-w-md flex-col gap-4">
-      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-left backdrop-blur">
-        <p className="text-xs font-medium uppercase tracking-[0.25em] text-[#6b7099]">
-          Concierge
-        </p>
-        <ul className="mt-3 max-h-48 space-y-3 overflow-y-auto">
-          {c.messages.map((m, i) => (
-            <li
-              key={`${m.role}-${i}`}
-              className={
-                m.role === "user"
-                  ? "text-right text-sm text-white"
-                  : "text-left text-sm text-[#aeb4d6]"
-              }
-            >
-              {m.text}
-            </li>
-          ))}
-        </ul>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        ref={scrollRef}
+        className="flex-1 space-y-2 overflow-y-auto px-4 py-3"
+      >
+        {c.messages.map((m, i) => (
+          <p
+            key={`${m.role}-${i}`}
+            className={
+              m.role === "user"
+                ? "ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-blue-600 px-3 py-2 text-sm text-white"
+                : "mr-auto w-fit max-w-[85%] rounded-2xl rounded-bl-md bg-zinc-100 px-3 py-2 text-sm text-zinc-700"
+            }
+          >
+            {m.text}
+          </p>
+        ))}
 
-        {c.phase !== "confirm" && c.phase !== "done" && (
-          <form onSubmit={handleSubmit} className="mt-4 flex gap-2">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Move $25 to cash… or summarize the feed"
-              disabled={inputDisabled}
-              className="flex-1 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white placeholder:text-[#4a4f74] focus:border-[#6C7BFF]/50 focus:outline-none"
+        {(c.phase === "confirm" || c.phase === "executing") &&
+          c.pendingQuote && (
+            <div className="pt-1">
+              <ConfirmCard
+                quote={c.pendingQuote}
+                executing={c.phase === "executing"}
+                onConfirm={() => void c.confirmTrade()}
+                onCancel={c.cancelConfirm}
+              />
+            </div>
+          )}
+
+        {c.phase === "done" && c.receipt && (
+          <div className="space-y-2 pt-1">
+            <ReceiptView
+              receipt={c.receipt}
+              permalink={permalink}
+              onDismiss={c.reset}
             />
-            <button
-              type="submit"
-              disabled={inputDisabled}
-              className={`${PRIMARY} px-5 py-2 text-sm`}
-            >
-              Send
-            </button>
-          </form>
+            {handle && (
+              <PostConviction
+                onPost={c.postConviction}
+                onSkip={c.skipConviction}
+                posting={c.convictionPhase === "posting"}
+                posted={c.convictionPhase === "posted"}
+              />
+            )}
+          </div>
         )}
       </div>
 
-      {(c.phase === "confirm" || c.phase === "executing") && c.pendingQuote && (
-        <ConfirmCard
-          quote={c.pendingQuote}
-          executing={c.phase === "executing"}
-          onConfirm={() => void c.confirmTrade()}
-          onCancel={c.cancelConfirm}
-        />
-      )}
-
-      {c.phase === "done" && c.receipt && (
-        <>
-          <ReceiptView
-            receipt={c.receipt}
-            permalink={permalink}
-            onDismiss={c.reset}
+      {c.phase !== "confirm" && c.phase !== "done" && (
+        <form
+          onSubmit={handleSubmit}
+          className="flex gap-2 border-t border-zinc-100 p-3"
+        >
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Move $25 to cash… or summarize the feed"
+            disabled={inputDisabled}
+            className="flex-1 rounded-full border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none"
           />
-          {handle && (
-            <PostConviction
-              onPost={c.postConviction}
-              onSkip={c.skipConviction}
-              posting={c.convictionPhase === "posting"}
-              posted={c.convictionPhase === "posted"}
-            />
-          )}
-        </>
+          <button
+            type="submit"
+            disabled={inputDisabled}
+            className={`${PRIMARY_LIGHT} px-4 py-2 text-sm`}
+          >
+            Send
+          </button>
+        </form>
       )}
     </div>
   );

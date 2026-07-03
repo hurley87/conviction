@@ -12,12 +12,14 @@ export default async function ReceiptPage({
   if (!receipt) notFound();
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-[#06060d] px-6 py-12 text-white">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-white px-6 py-12 text-zinc-900">
       <div className="mb-6 text-center">
         <h1 className="text-2xl font-bold tracking-tight">Conviction</h1>
-        <p className="mt-1 text-sm text-[#6b7099]">Trade receipt</p>
+        <p className="mt-1 text-sm text-zinc-500">Trade receipt</p>
       </div>
-      <ReceiptView receipt={receipt} />
+      <div className="w-full max-w-md">
+        <ReceiptView receipt={receipt} />
+      </div>
     </main>
   );
 }

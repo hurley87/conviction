@@ -1,14 +1,20 @@
 // Conviction feed API (issue #4): post + list + back.
 
-import { addBacker, saveConviction, listConvictions } from "@/lib/convictions";
+import { addBacker, saveConviction, listConvictions, listConvictionsByHandle } from "@/lib/convictions";
 import {
   buildConviction,
   parseConvictionTrade,
 } from "@/lib/verbs/conviction";
 
-export async function GET() {
-  const convictions = await listConvictions();
-  return Response.json({ convictions });
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const handle = searchParams.get("handle");
+
+  const convictions = handle
+    ? await listConvictionsByHandle(handle)
+    : await listConvictions();
+
+  return Response.json({ entries: convictions });
 }
 
 export async function POST(request: Request) {

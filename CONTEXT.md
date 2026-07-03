@@ -9,7 +9,7 @@ The chain-abstracted account. In EIP-7702 mode it is the user's own EVM EOA, upg
 _Avoid_: smart wallet, smart account, new account
 
 **Unified balance**:
-The user's assets across all chains, shown and spendable as a single USD number.
+The user's assets across all chains, shown and spendable as a single USD number. The Home dashboard also surfaces per-asset breakdown (symbol, balance, price, portfolio %) in a wallet-style view.
 _Avoid_: total, portfolio, aggregate balance
 
 **Spine**:

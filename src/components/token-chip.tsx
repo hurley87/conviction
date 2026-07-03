@@ -29,18 +29,18 @@ export function TokenChip({ asset }: TokenChipProps) {
           className="rounded-full"
         />
       ) : (
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-[10px] font-semibold uppercase text-[#aeb4d6]">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-[10px] font-semibold uppercase text-zinc-500">
           {label.slice(0, 3)}
         </span>
       )}
       <div className="text-left">
-        <p className="text-sm font-semibold text-white">{name}</p>
+        <p className="text-sm font-semibold text-zinc-900">{name}</p>
         {loading ? (
-          <p className="text-xs text-[#6b7099]">Loading price…</p>
+          <p className="text-xs text-zinc-400">Loading price…</p>
         ) : token?.priceUSD != null ? (
-          <p className="text-xs text-[#aeb4d6]">{formatUsd(token.priceUSD)}</p>
+          <p className="text-xs text-zinc-500">{formatUsd(token.priceUSD)}</p>
         ) : (
-          <p className="text-xs text-[#6b7099]">{label}</p>
+          <p className="text-xs text-zinc-400">{label}</p>
         )}
       </div>
     </div>

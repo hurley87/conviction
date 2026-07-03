@@ -122,6 +122,32 @@ export async function listConvictions(
   return (rows as Parameters<typeof rowToEntry>[0][]).map(rowToEntry);
 }
 
+export async function listConvictionsByHandle(
+  handle: string,
+  limit = 50,
+): Promise<ConvictionEntry[]> {
+  const sql = getSql();
+  if (!sql) {
+    ensureMemorySeed();
+    return [...memoryStore.values()]
+      .filter((e) => e.handle === handle)
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      )
+      .slice(0, limit);
+  }
+  await ensureSchema(sql);
+  const rows = await sql`
+    SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at
+    FROM convictions
+    WHERE handle = ${handle}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return (rows as Parameters<typeof rowToEntry>[0][]).map(rowToEntry);
+}
+
 /** Append a backer's handle to a conviction entry. Returns updated backedBy or null if missing. */
 export async function addBacker(
   entryId: string,

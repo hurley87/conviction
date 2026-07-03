@@ -3,7 +3,7 @@
 
 import type { Receipt } from "@/lib/verbs/types";
 import { formatUsd } from "@/lib/format";
-import { GHOST } from "@/components/button-styles";
+import { GHOST_LIGHT } from "@/components/button-styles";
 
 export function ReceiptView({
   receipt,
@@ -15,45 +15,45 @@ export function ReceiptView({
   onDismiss?: () => void;
 }) {
   return (
-    <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.04] p-6 text-left backdrop-blur">
-      <p className="text-xs font-medium uppercase tracking-[0.25em] text-[#6b7099]">
+    <div className="w-full rounded-2xl border border-zinc-200 bg-white p-4 text-left">
+      <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
         Receipt
       </p>
 
-      <p className="mt-3 text-sm text-[#aeb4d6]">{receipt.summary}</p>
+      <p className="mt-3 text-sm text-zinc-600">{receipt.summary}</p>
 
       <dl className="mt-4 space-y-2 text-sm">
         <div className="flex justify-between">
-          <dt className="text-[#6b7099]">Spent</dt>
-          <dd className="tabular-nums text-white">
+          <dt className="text-zinc-500">Spent</dt>
+          <dd className="tabular-nums text-zinc-900">
             {formatUsd(receipt.dollarsIn)}
           </dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-[#6b7099]">Received</dt>
-          <dd className="tabular-nums text-[#37E0C8]">
+          <dt className="text-zinc-500">Received</dt>
+          <dd className="tabular-nums text-emerald-600">
             {formatUsd(receipt.dollarsOut)}
           </dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-[#6b7099]">Fee</dt>
-          <dd className="tabular-nums text-[#aeb4d6]">
+          <dt className="text-zinc-500">Fee</dt>
+          <dd className="tabular-nums text-zinc-600">
             {formatUsd(receipt.feeUsd)}
           </dd>
         </div>
       </dl>
 
       {receipt.legs.length > 0 && (
-        <ul className="mt-4 space-y-2 border-t border-white/5 pt-4">
+        <ul className="mt-4 space-y-2 border-t border-zinc-100 pt-4">
           {receipt.legs.map((leg) => (
             <li key={`${leg.chain}-${leg.txHash}`} className="text-sm">
-              <span className="font-medium text-white">{leg.chain}</span>
+              <span className="font-medium text-zinc-900">{leg.chain}</span>
               {" · "}
               <a
                 href={leg.explorerUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[#6C7BFF] underline-offset-2 hover:underline"
+                className="text-blue-600 underline-offset-2 hover:underline"
               >
                 View on explorer
               </a>
@@ -63,11 +63,11 @@ export function ReceiptView({
       )}
 
       {permalink && (
-        <p className="mt-4 text-xs text-[#6b7099]">
+        <p className="mt-4 break-all text-xs text-zinc-500">
           Share:{" "}
           <a
             href={permalink}
-            className="text-[#6C7BFF] underline-offset-2 hover:underline"
+            className="text-blue-600 underline-offset-2 hover:underline"
           >
             {permalink}
           </a>
@@ -75,7 +75,11 @@ export function ReceiptView({
       )}
 
       {onDismiss && (
-        <button type="button" onClick={onDismiss} className={`${GHOST} mt-4`}>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className={`${GHOST_LIGHT} mt-4 px-5 py-2 text-sm`}
+        >
           Done
         </button>
       )}

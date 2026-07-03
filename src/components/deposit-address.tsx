@@ -20,7 +20,7 @@ function CopyableAddress({
 
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <p className="text-xs font-medium uppercase tracking-[0.2em] text-[#6b7099]">
+      <p className="text-xs font-medium uppercase tracking-[0.2em] text-zinc-500">
         {label}
       </p>
       <button
@@ -31,12 +31,14 @@ function CopyableAddress({
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }}
-        className="flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 font-mono text-sm text-[#aeb4d6] transition hover:bg-white/5"
+        className="flex items-center gap-2 rounded-full border border-zinc-200 px-4 py-2 font-mono text-sm text-zinc-700 transition hover:bg-zinc-50"
       >
         {truncateAddress(address)}
-        <span className="text-xs text-[#6b7099]">{copied ? "Copied" : "Copy"}</span>
+        <span className="text-xs text-zinc-400">
+          {copied ? "Copied" : "Copy"}
+        </span>
       </button>
-      <p className="text-xs text-[#4a4f74]">{hint}</p>
+      <p className="text-xs text-zinc-400">{hint}</p>
     </div>
   );
 }
