@@ -12,14 +12,14 @@ type FeedProps = {
 export function Feed({ convictions, backer }: FeedProps) {
   if (convictions.length === 0) {
     return (
-      <p className="text-sm text-[#6b7099]">
+      <p className="text-sm text-zinc-400">
         No convictions yet — make a trade and post your thesis.
       </p>
     );
   }
 
   return (
-    <div className="flex w-full max-w-2xl flex-col gap-4">
+    <div className="flex w-full flex-col gap-4">
       {convictions.map((entry) => (
         <ConvictionCard key={entry.entryId} entry={entry} backer={backer} />
       ))}

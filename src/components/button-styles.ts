@@ -1,8 +1,8 @@
-// Shared button styles for the account panels: the gradient "primary" CTA and
-// the outline "ghost" secondary. Kept here so the live and mock panels stay in
-// visual lockstep.
+// Shared button styles for the light app shell: the solid blue "primary" CTA
+// and the outline "ghost" secondary. Kept here so surfaces stay in visual
+// lockstep.
 
-export const PRIMARY =
-  "rounded-full bg-gradient-to-r from-[#6C7BFF] to-[#37E0C8] px-8 py-3 font-semibold text-[#06060d] transition hover:opacity-90 disabled:opacity-50";
-export const GHOST =
-  "rounded-full border border-white/15 px-8 py-3 font-semibold text-white transition hover:bg-white/5";
+export const PRIMARY_LIGHT =
+  "rounded-full bg-blue-600 px-6 py-2.5 font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50";
+export const GHOST_LIGHT =
+  "rounded-full border border-zinc-300 px-6 py-2.5 font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:opacity-50";

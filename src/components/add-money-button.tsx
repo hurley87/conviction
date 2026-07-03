@@ -1,6 +1,6 @@
 "use client";
 
-import { PRIMARY } from "@/components/button-styles";
+import { PRIMARY_LIGHT } from "@/components/button-styles";
 
 export function AddMoneyButton({
   onAdd,
@@ -18,7 +18,7 @@ export function AddMoneyButton({
       type="button"
       onClick={() => void onAdd()}
       disabled={isDisabled}
-      className={PRIMARY}
+      className={PRIMARY_LIGHT}
     >
       {isFunding ? "Adding money…" : "Add money with a card"}
     </button>

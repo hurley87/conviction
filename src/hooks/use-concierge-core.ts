@@ -203,6 +203,20 @@ export function useConciergeCore(
         headers: { "content-type": "application/json" },
         body: JSON.stringify(result.receipt),
       }).catch(() => {});
+
+      if (handle) {
+        void fetch("/api/activity", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            handle,
+            kind: "trade",
+            summary: result.summary,
+            amountUsd: pendingSizeUsd,
+            receiptSlug: slug,
+          }),
+        }).catch(() => {});
+      }
     } catch (e) {
       if (e instanceof FloorAbortError) {
         setPendingQuote(e.freshQuote);
@@ -219,7 +233,7 @@ export function useConciergeCore(
       setError(msg);
       appendMessage({ role: "assistant", text: msg });
     }
-  }, [ua, pendingQuote, pendingIntent, pendingSizeUsd, signers, appendMessage]);
+  }, [ua, pendingQuote, pendingIntent, pendingSizeUsd, signers, appendMessage, handle]);
 
   const cancelConfirm = useCallback(() => {
     setPendingQuote(null);
