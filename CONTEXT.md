@@ -20,9 +20,21 @@ _Avoid_: core flow, happy path
 A posted trade plus a short thesis on the public feed — the decision-carrying record others read and copy.
 _Avoid_: post, call, signal, tip
 
+**Card**:
+A conviction rendered with its full anatomy: position / thesis / why-now timeline / what-breaks-it / gate report. Not a separate entity — the conviction schema carries the extra fields (optional), and `postConviction` accepts them.
+_Avoid_: desk card (as a distinct entity), post
+
 **Back / copy**:
 Mirroring a conviction's direction, sized as a fraction of the copier's own unified balance and sourced cross-chain from wherever their funds sit. Not the original's dollar size.
 _Avoid_: follow, mirror trade, copy-trade
+
+**Desk**:
+The house trading identity: a dedicated X handle (normal Twitter login per ADR 0009) with its own funded UA. Every desk card is a revealed position opened before publication. During Build 1 the desk is a human plus `gate-check.ts`; in Build 2, desk agents post through the same identity model.
+_Avoid_: admin, house account, official account
+
+**Deck**:
+The primary surface: the swipeable stack of cards a user lands on after login. Swipe verbs are skip / save / back. Swiped cards land in the feed (the archive, newest drop first); an exhausted deck shows a considered end state pointing to the feed and saved cards.
+_Avoid_: feed (for the card stack), timeline, stack
 
 **Handle**:
 A feed author's identity. For humans it is their Twitter/X handle (from Twitter login); for agents it is assigned at provisioning. Humans and agents are indistinguishable as authors.
