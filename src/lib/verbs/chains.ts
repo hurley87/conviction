@@ -52,6 +52,12 @@ const TOKEN_ADDRESSES: Record<string, Record<number, string>> = {
     [BASE_CHAIN_ID]: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
     [ARBITRUM_CHAIN_ID]: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",
   },
+  // ARB is Arbitrum-only on purpose: with no Base entry, pickSettlementChain's
+  // only candidate is Arbitrum, so buying ARB from funds elsewhere is always
+  // the cross-chain move (hero card, ADR 0005). Buy-only — not a UA primary.
+  arb: {
+    [ARBITRUM_CHAIN_ID]: "0x912CE59144191C1204E64559FE8253a0e49E6548",
+  },
 };
 
 /** Settlement chains we can build trades on, in default-preference order

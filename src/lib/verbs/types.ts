@@ -30,7 +30,14 @@ export type DepositAddresses = {
 export type DestChain = "Arbitrum" | "Base";
 
 /** Product asset labels the parser maps to UA token types. */
-export type ProductAsset = "cash" | "eth" | "usdc" | "usdt" | "btc" | "sol";
+export type ProductAsset =
+  | "cash"
+  | "eth"
+  | "usdc"
+  | "usdt"
+  | "btc"
+  | "sol"
+  | "arb";
 
 /** Constrained trade intent schema (ADR 0012). */
 export type TradeIntent = {

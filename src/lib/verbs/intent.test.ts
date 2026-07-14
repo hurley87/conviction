@@ -25,6 +25,21 @@ describe("parseIntent", () => {
     expect(result.intent.destChain).toBe("Arbitrum");
   });
 
+  it("parses 'buy ARB for $5' as an ARB buy (hero card phrasing)", () => {
+    const result = parseIntent("buy ARB for $5");
+    expect(result.kind).toBe("intent");
+    if (result.kind !== "intent") return;
+    expect(result.intent.toAsset).toBe("arb");
+    expect(result.intent.sizeUsd).toBe(5);
+  });
+
+  it("does not read the chain word 'Arbitrum' as the ARB token", () => {
+    const result = parseIntent("Move $25 to cash on Arbitrum");
+    expect(result.kind).toBe("intent");
+    if (result.kind !== "intent") return;
+    expect(result.intent.toAsset).toBe("cash");
+  });
+
   it("parses explicit 'all' fraction", () => {
     const result = parseIntent("Move all to cash");
     expect(result.kind).toBe("intent");
@@ -165,6 +180,32 @@ describe("validateIntent", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("allows buying ARB (wired on Arbitrum, the hero card)", () => {
+    const result = validateIntent(
+      { toAsset: "arb", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects selling ARB — buy-only, not a UA primary token", () => {
+    const result = validateIntent(
+      { fromAsset: "arb", toAsset: "cash", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("only be bought");
+  });
+
+  it("rejects converting another asset into ARB — buy with cash instead", () => {
+    const result = validateIntent(
+      { fromAsset: "eth", toAsset: "arb", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("with cash instead");
+  });
+
   it("rejects buying SOL — no address on the EVM settlement chain", () => {
     const result = validateIntent(
       { toAsset: "sol", sizeUsd: 25, destChain: "Arbitrum" },
@@ -212,6 +253,17 @@ describe("pickSettlementChain", () => {
   it("defaults to Arbitrum when nothing is funded", () => {
     const empty: UniversalBalance = { totalUsd: 0, sources: [] };
     expect(pickSettlementChain("btc", empty)).toBe("Arbitrum");
+  });
+
+  it("buying ARB settles on Arbitrum even when the funds sit on Base (the money shot)", () => {
+    const baseHeavy: UniversalBalance = {
+      totalUsd: 100,
+      sources: [
+        { chain: "Base", asset: "USDC", usd: 90 },
+        { chain: "Arbitrum", asset: "USDC", usd: 10 },
+      ],
+    };
+    expect(pickSettlementChain("arb", baseHeavy)).toBe("Arbitrum");
   });
 });
 

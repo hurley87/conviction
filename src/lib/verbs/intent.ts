@@ -11,6 +11,7 @@ import type {
 } from "@/lib/verbs/types";
 import {
   assetMatches,
+  isBuyOnlyAsset,
   productAssetPrimarySymbol,
   toUaTokenType,
 } from "@/lib/verbs/assets";
@@ -37,6 +38,9 @@ const ASSET_ALIASES: Record<string, ProductAsset> = {
   bitcoin: "btc",
   sol: "sol",
   solana: "sol",
+  // Deliberately no "arbitrum" alias — that word names the chain in phrases
+  // like "cash on Arbitrum" and must not be read as the ARB token.
+  arb: "arb",
 };
 
 const SUPPORTED_ASSETS = new Set<ProductAsset>([
@@ -46,6 +50,7 @@ const SUPPORTED_ASSETS = new Set<ProductAsset>([
   "usdt",
   "btc",
   "sol",
+  "arb",
 ]);
 
 export const CLARIFY_AMOUNT =
@@ -231,6 +236,21 @@ export function validateIntent(
   }
   if (intent.fromAsset && !SUPPORTED_ASSETS.has(intent.fromAsset)) {
     return { ok: false, error: "That asset isn't supported yet." };
+  }
+
+  // Buy-only assets (e.g. ARB) aren't UA primary tokens: they can't fund a
+  // trade (usePrimaryTokens) or be a convert destination (expectToken.type).
+  if (intent.fromAsset && isBuyOnlyAsset(intent.fromAsset)) {
+    return {
+      ok: false,
+      error: `${intent.fromAsset.toUpperCase()} can only be bought for now, not sold.`,
+    };
+  }
+  if (intent.fromAsset && isBuyOnlyAsset(intent.toAsset)) {
+    return {
+      ok: false,
+      error: `Buy ${intent.toAsset.toUpperCase()} with cash instead — converting another asset into it isn't supported yet.`,
+    };
   }
 
   // The target must have a known address on the settlement chain. Catches
