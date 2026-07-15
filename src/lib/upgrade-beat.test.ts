@@ -52,7 +52,6 @@ describe("upgrade beat persistence", () => {
 
     expect(hasSeenUpgradeBeat(address, storage)).toBe(true);
     expect(shouldRevealUpgradeBeat(address, storage)).toBe(false);
-    // Same address, different casing
     expect(shouldRevealUpgradeBeat(address.toUpperCase(), storage)).toBe(false);
   });
 

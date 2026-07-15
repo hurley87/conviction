@@ -1,58 +1,49 @@
 "use client";
 
 // Once-only upgrade-in-place beat visibility (issue #19). Derived from
-// localStorage + dismiss state — no setState-in-effect for the reveal path.
+// localStorage via useSyncExternalStore; gated by the caller on real upgrade.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import {
   markUpgradeBeatSeen,
+  notifyUpgradeBeatStorageChanged,
   shouldRevealUpgradeBeat,
-  type StorageLike,
+  subscribeUpgradeBeatStorage,
 } from "@/lib/upgrade-beat";
 
-function browserStorage(): StorageLike | null {
-  if (typeof window === "undefined") return null;
+function readShouldReveal(address: string | null | undefined): boolean {
+  if (typeof window === "undefined" || !address) return false;
   try {
-    return window.localStorage;
+    return shouldRevealUpgradeBeat(address, window.localStorage);
   } catch {
-    return null;
+    return false;
   }
 }
 
+/**
+ * @param address - account address (beat is once-per-address)
+ * @param enabled - typically `authenticated && upgraded` so copy matches Settings
+ */
 export function useUpgradeBeat(
   address: string | null | undefined,
   enabled: boolean,
 ) {
-  // Defer storage reads until after mount to avoid SSR/hydration mismatch.
-  const [clientReady, setClientReady] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  const [beatAddress, setBeatAddress] = useState(address);
+  const unseen = useSyncExternalStore(
+    subscribeUpgradeBeatStorage,
+    () => readShouldReveal(address),
+    () => false,
+  );
 
-  // Sync dismiss reset when the address identity changes (React-allowed
-  // adjust-state-during-render pattern).
-  if (address !== beatAddress) {
-    setBeatAddress(address);
-    setDismissed(false);
-  }
-
-  useEffect(() => {
-    queueMicrotask(() => setClientReady(true));
-  }, []);
-
-  const storage = clientReady ? browserStorage() : null;
-  const showUpgradeBeat =
-    enabled &&
-    Boolean(address) &&
-    storage != null &&
-    !dismissed &&
-    shouldRevealUpgradeBeat(address, storage);
+  const showUpgradeBeat = enabled && Boolean(address) && unseen;
 
   const dismissUpgradeBeat = useCallback(() => {
-    const store = browserStorage();
-    if (address && store) {
-      markUpgradeBeatSeen(address, store);
+    if (!address || typeof window === "undefined") return;
+    try {
+      markUpgradeBeatSeen(address, window.localStorage);
+      notifyUpgradeBeatStorageChanged();
+    } catch {
+      // Storage unavailable — beat may reappear; never block the flow.
     }
-    setDismissed(true);
   }, [address]);
 
   return { showUpgradeBeat, dismissUpgradeBeat };

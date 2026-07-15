@@ -31,6 +31,7 @@ export type CopyConvictionResult = {
   receipt: Receipt;
   summary: string;
   sizeUsd: number;
+  signed7702Auth?: boolean;
 };
 
 /** Size a copy trade: 10% of unified balance by default, capped at COPY_TRADE_CAP_USD. */
@@ -107,6 +108,7 @@ export async function copyConviction(
       receipt: result.receipt,
       summary: result.summary,
       sizeUsd: validation.sizeUsd,
+      signed7702Auth: result.signed7702Auth,
     };
   };
 

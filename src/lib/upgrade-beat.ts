@@ -1,6 +1,5 @@
-// Once-only upgrade-in-place beat (issue #19). Persists per address so the
-// moment appears at most once — at login or after the first 7702 authorization —
-// and never blocks the flow.
+// Once-only upgrade-in-place beat persistence (issue #19). Seen-state is keyed
+// per address so the moment appears at most once and never blocks the flow.
 
 export type StorageLike = {
   getItem(key: string): string | null;
@@ -9,8 +8,8 @@ export type StorageLike = {
 
 export const UPGRADE_BEAT_STORAGE_PREFIX = "conviction:upgrade-beat-seen:";
 
-/** Fired when a real in-place upgrade auth was signed (first trade). */
-export const UPGRADE_IN_PLACE_EVENT = "conviction:upgraded-in-place";
+/** Same-tab notify for useSyncExternalStore subscribers after local writes. */
+export const UPGRADE_BEAT_STORAGE_EVENT = "conviction:upgrade-beat-storage";
 
 export function upgradeBeatStorageKey(address: string): string {
   return `${UPGRADE_BEAT_STORAGE_PREFIX}${address.toLowerCase()}`;
@@ -39,7 +38,17 @@ export function shouldRevealUpgradeBeat(
   return !hasSeenUpgradeBeat(address, storage);
 }
 
-export function emitUpgradedInPlace(): void {
+export function notifyUpgradeBeatStorageChanged(): void {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new Event(UPGRADE_IN_PLACE_EVENT));
+  window.dispatchEvent(new Event(UPGRADE_BEAT_STORAGE_EVENT));
+}
+
+export function subscribeUpgradeBeatStorage(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(UPGRADE_BEAT_STORAGE_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(UPGRADE_BEAT_STORAGE_EVENT, onStoreChange);
+  };
 }

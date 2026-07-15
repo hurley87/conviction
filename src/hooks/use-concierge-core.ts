@@ -64,6 +64,7 @@ export function useConciergeCore(
   balance: UniversalBalance | null,
   signers: TradeSigners,
   handle: string | null,
+  onUpgraded?: () => void,
 ) {
   const [messages, setMessages] = useState<ConciergeMessage[]>([
     {
@@ -197,6 +198,9 @@ export function useConciergeCore(
       setPhase("done");
       setConvictionPhase("idle");
       appendMessage({ role: "assistant", text: result.summary });
+      if (result.signed7702Auth) {
+        onUpgraded?.();
+      }
 
       void fetch("/api/receipts", {
         method: "POST",
@@ -233,7 +237,16 @@ export function useConciergeCore(
       setError(msg);
       appendMessage({ role: "assistant", text: msg });
     }
-  }, [ua, pendingQuote, pendingIntent, pendingSizeUsd, signers, appendMessage, handle]);
+  }, [
+    ua,
+    pendingQuote,
+    pendingIntent,
+    pendingSizeUsd,
+    signers,
+    appendMessage,
+    handle,
+    onUpgraded,
+  ]);
 
   const cancelConfirm = useCallback(() => {
     setPendingQuote(null);

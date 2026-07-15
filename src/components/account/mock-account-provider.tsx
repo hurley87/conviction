@@ -1,14 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   AccountContextProvider,
   type AccountContextValue,
 } from "@/components/account/account-context";
 import { useUASnapshot } from "@/hooks/use-ua-snapshot";
-import { useUpgradeBeat } from "@/hooks/use-upgrade-beat";
 import { MockUAClient } from "@/lib/ua/mock";
-import { UPGRADE_IN_PLACE_EVENT } from "@/lib/upgrade-beat";
 
 const DEMO_HANDLE = "demo-trader";
 const DEMO_PFP =
@@ -19,22 +17,11 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
   const { balance, deposits, refresh } = useUASnapshot(ua);
   const [upgraded, setUpgraded] = useState(false);
 
-  const address = deposits?.evm ?? null;
-  const { showUpgradeBeat, dismissUpgradeBeat } = useUpgradeBeat(address, true);
-
-  useEffect(() => {
-    if (!address) return;
-    const onUpgraded = () => {
-      setUpgraded(true);
-    };
-    window.addEventListener(UPGRADE_IN_PLACE_EVENT, onUpgraded);
-    return () => {
-      window.removeEventListener(UPGRADE_IN_PLACE_EVENT, onUpgraded);
-    };
-  }, [address]);
-
   const noop = useCallback(() => {}, []);
   const asyncNoop = useCallback(async () => {}, []);
+  const markUpgraded = useCallback(() => {
+    setUpgraded(true);
+  }, []);
   const upgrade = useCallback(async () => {
     await ua.ensureUpgraded();
     setUpgraded(true);
@@ -47,32 +34,20 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
       authenticated: true,
       handle: DEMO_HANDLE,
       pfp: DEMO_PFP,
-      address,
+      address: deposits?.evm ?? null,
       balance,
       deposits,
       upgraded,
       isFunding: false,
       fundingError: null,
-      showUpgradeBeat,
       ua,
       login: noop,
       logout: noop,
       addMoney: asyncNoop,
       upgrade,
-      dismissUpgradeBeat,
+      markUpgraded,
     }),
-    [
-      address,
-      deposits,
-      balance,
-      upgraded,
-      showUpgradeBeat,
-      ua,
-      noop,
-      asyncNoop,
-      upgrade,
-      dismissUpgradeBeat,
-    ],
+    [deposits, balance, upgraded, ua, noop, asyncNoop, upgrade, markUpgraded],
   );
 
   return (

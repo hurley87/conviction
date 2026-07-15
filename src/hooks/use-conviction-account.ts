@@ -15,9 +15,7 @@ import {
 } from "@privy-io/react-auth";
 import { getUAClient } from "@/lib/ua";
 import { useUASnapshot } from "@/hooks/use-ua-snapshot";
-import { useUpgradeBeat } from "@/hooks/use-upgrade-beat";
 import { FUNDING_TARGET } from "@/lib/funding";
-import { UPGRADE_IN_PLACE_EVENT } from "@/lib/upgrade-beat";
 
 export function useConvictionAccount() {
   const { ready, authenticated, user, login, logout } = usePrivy();
@@ -38,10 +36,10 @@ export function useConvictionAccount() {
   const [upgraded, setUpgraded] = useState(false);
   const [isFunding, setIsFunding] = useState(false);
   const [fundingError, setFundingError] = useState<string | null>(null);
-  const { showUpgradeBeat, dismissUpgradeBeat } = useUpgradeBeat(
-    address,
-    authenticated,
-  );
+
+  const markUpgraded = useCallback(() => {
+    setUpgraded(true);
+  }, []);
 
   // Reflect the account's real on-chain 7702 status, so "Wallet ready" survives
   // reloads instead of resetting to "Upgrade my wallet" every load.
@@ -56,19 +54,6 @@ export function useConvictionAccount() {
       .catch(() => {});
     return () => {
       cancelled = true;
-    };
-  }, [authenticated, address]);
-
-  // First-tx path: Particle emits when 7702 auth was actually signed.
-  // Beat visibility is derived from localStorage; this only flips upgraded.
-  useEffect(() => {
-    if (!authenticated || !address) return;
-    const onUpgraded = () => {
-      setUpgraded(true);
-    };
-    window.addEventListener(UPGRADE_IN_PLACE_EVENT, onUpgraded);
-    return () => {
-      window.removeEventListener(UPGRADE_IN_PLACE_EVENT, onUpgraded);
     };
   }, [authenticated, address]);
 
@@ -128,7 +113,6 @@ export function useConvictionAccount() {
     fundingError,
     upgrade,
     upgraded,
-    showUpgradeBeat,
-    dismissUpgradeBeat,
+    markUpgraded,
   };
 }
