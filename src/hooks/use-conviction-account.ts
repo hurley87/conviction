@@ -114,5 +114,6 @@ export function useConvictionAccount() {
     upgrade,
     upgraded,
     markUpgraded,
+    refreshBalance: refresh,
   };
 }

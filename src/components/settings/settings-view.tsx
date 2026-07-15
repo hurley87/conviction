@@ -1,15 +1,18 @@
 "use client";
 
 import Image from "next/image";
+import { useState } from "react";
 import { useAccount } from "@/components/account/account-context";
 import { DepositAddress } from "@/components/deposit-address";
 import { AddMoneyButton } from "@/components/add-money-button";
+import { WithdrawalHost } from "@/components/settings/withdrawal-host";
 import { PRIMARY_LIGHT, GHOST_LIGHT } from "@/components/button-styles";
 import { truncateAddress } from "@/lib/format";
 import { IS_LIVE } from "@/lib/env";
 
 export function SettingsView() {
   const account = useAccount();
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
 
   if (!account.ready) {
     return <div className="h-64 animate-pulse rounded-2xl bg-zinc-100" />;
@@ -75,6 +78,20 @@ export function SettingsView() {
             <DepositAddress deposits={account.deposits} />
           ) : (
             <p className="text-sm text-zinc-400">Loading wallets…</p>
+          )}
+        </div>
+        <div className="mt-4">
+          {!withdrawOpen ? (
+            <button
+              type="button"
+              onClick={() => setWithdrawOpen(true)}
+              disabled={!account.ua}
+              className={`${PRIMARY_LIGHT} w-full py-2.5 text-sm disabled:opacity-50`}
+            >
+              Withdraw
+            </button>
+          ) : (
+            <WithdrawalHost onClose={() => setWithdrawOpen(false)} />
           )}
         </div>
       </section>

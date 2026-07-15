@@ -194,3 +194,56 @@ export type TradeSigners = {
     nonce: number;
   }) => Promise<string>;
 };
+
+/** Withdrawable primary assets (Settings → external wallet send). */
+export type WithdrawalAsset = "eth" | "usdc" | "usdt";
+
+/** Validated external-wallet withdrawal request. */
+export type WithdrawalRequest = {
+  asset: WithdrawalAsset;
+  destChain: DestChain;
+  /** Human-readable token amount (e.g. "25.5" USDC, "0.01" ETH). */
+  amount: string;
+  /** Checksummed EVM destination. */
+  destination: string;
+};
+
+/** Jargon-light quote for the withdrawal confirm card. */
+export type WithdrawalQuote = {
+  asset: WithdrawalAsset;
+  destChain: DestChain;
+  amount: string;
+  destination: string;
+  /** Estimated unified-balance debit in USD. */
+  estimatedDebitUsd: number;
+  feeUsd: number;
+  /** Maximum debit the user agreed to; abort execute if exceeded. */
+  maxDebitUsd: number;
+  etaSeconds: number;
+  transactionId: string;
+  rawTransaction: unknown;
+};
+
+export type WithdrawalResult = {
+  transactionId: string;
+  summary: string;
+  estimatedDebitUsd: number;
+  feeUsd: number;
+  asset: WithdrawalAsset;
+  destChain: DestChain;
+  amount: string;
+  destination: string;
+  /** True when this execution signed a first-time in-place upgrade auth. */
+  signed7702Auth?: boolean;
+};
+
+/** Debit/fee moved above the agreed ceiling at execute time. */
+export class WithdrawalStaleQuoteError extends Error {
+  constructor(
+    message: string,
+    public readonly freshQuote: WithdrawalQuote,
+  ) {
+    super(message);
+    this.name = "WithdrawalStaleQuoteError";
+  }
+}

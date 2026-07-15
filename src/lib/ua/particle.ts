@@ -4,7 +4,9 @@
 
 import type {
   ExecuteTradeParams,
+  ExecuteWithdrawalParams,
   QuoteTradeParams,
+  QuoteWithdrawalParams,
   UAClient,
   UpgradeResult,
 } from "@/lib/ua/types";
@@ -20,11 +22,20 @@ import { buildReceipt, inferSpentSymbol } from "@/lib/verbs/receipt";
 import { shapeQuote, isBelowFloor } from "@/lib/verbs/quote";
 import { narrateResult } from "@/lib/verbs/intent";
 import {
+  isAboveMaxDebit,
+  narrateWithdrawal,
+  shapeWithdrawalQuote,
+  withdrawalTokenRef,
+} from "@/lib/verbs/withdrawal";
+import {
   FloorAbortError,
+  WithdrawalStaleQuoteError,
   type TradeQuote,
   type TradeResult,
   type UniversalBalance,
   type DepositAddresses,
+  type WithdrawalQuote,
+  type WithdrawalResult,
 } from "@/lib/verbs/types";
 import { toUniversalBalance, type RawPrimaryAssets } from "@/lib/verbs/map-balance";
 import {
@@ -55,6 +66,11 @@ export type ParticleAccount = WarmUpAccount & {
     payload: { chainId: number; expectToken: { type: string; amount: string } },
     tradeConfig?: Record<string, unknown>,
   ): Promise<RawTransaction>;
+  createTransferTransaction(payload: {
+    token: { chainId: number; address: string };
+    amount: string;
+    receiver: string;
+  }): Promise<RawTransaction>;
   sendTransaction(
     transaction: RawTransaction,
     signature: string,
@@ -133,6 +149,24 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
     return ua.createBuyTransaction(payload, {
       ...defaultTradeConfig(intent.fromAsset),
       tokenPair,
+    });
+  }
+
+  async function createTransferRaw(
+    params: QuoteWithdrawalParams,
+  ): Promise<RawTransaction> {
+    const { request } = params;
+    const token = withdrawalTokenRef(request.asset, request.destChain);
+    if (!token) {
+      throw new Error(
+        `Unsupported withdrawal: ${request.asset} on ${request.destChain}`,
+      );
+    }
+    const ua = await account();
+    return ua.createTransferTransaction({
+      token,
+      amount: request.amount,
+      receiver: request.destination,
     });
   }
 
@@ -240,6 +274,79 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
           freshQuote.receivedSymbol,
         ),
         receipt,
+        signed7702Auth,
+      };
+    },
+
+    async quoteWithdrawal(
+      params: QuoteWithdrawalParams,
+    ): Promise<WithdrawalQuote> {
+      const raw = await createTransferRaw(params);
+      const txId = raw.transactionId ?? `withdraw-quote-${Date.now()}`;
+      return shapeWithdrawalQuote(
+        raw.tokenChanges ?? {},
+        params.request,
+        txId,
+        raw,
+      );
+    },
+
+    async executeWithdrawal(
+      params: ExecuteWithdrawalParams,
+    ): Promise<WithdrawalResult> {
+      const { request, agreedQuote, signers } = params;
+      const raw = await createTransferRaw({ request });
+
+      const freshQuote = shapeWithdrawalQuote(
+        raw.tokenChanges ?? {},
+        request,
+        raw.transactionId ?? agreedQuote.transactionId,
+        raw,
+      );
+
+      if (isAboveMaxDebit(freshQuote.estimatedDebitUsd, agreedQuote.maxDebitUsd)) {
+        throw new WithdrawalStaleQuoteError(
+          "The quote moved — please confirm again.",
+          freshQuote,
+        );
+      }
+
+      if (!raw.rootHash) {
+        throw new Error("Transaction missing root hash");
+      }
+
+      const rootHashSig = await signers.signRootHash(raw.rootHash);
+
+      const authorizations: { userOpHash: string; signature: string }[] = [];
+      for (const pending of userOpsNeeding7702(raw.userOps)) {
+        const sig = await signers.sign7702(pending.auth);
+        authorizations.push({
+          userOpHash: pending.userOpHash,
+          signature: sig,
+        });
+      }
+
+      const signed7702Auth = authorizations.length > 0;
+
+      const ua = await account();
+      const result = await ua.sendTransaction(
+        raw,
+        rootHashSig,
+        authorizations,
+      );
+
+      const transactionId =
+        result.transactionId ?? raw.transactionId ?? agreedQuote.transactionId;
+
+      return {
+        transactionId,
+        summary: narrateWithdrawal(request),
+        estimatedDebitUsd: freshQuote.estimatedDebitUsd,
+        feeUsd: freshQuote.feeUsd,
+        asset: request.asset,
+        destChain: request.destChain,
+        amount: request.amount,
+        destination: request.destination,
         signed7702Auth,
       };
     },

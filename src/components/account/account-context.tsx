@@ -25,6 +25,8 @@ export type AccountContextValue = {
   upgrade: () => Promise<void>;
   /** Optimistic flip after a known in-place upgrade (Settings or first-tx 7702). */
   markUpgraded: () => void;
+  /** Re-fetch unified balance after a trade or withdrawal. */
+  refreshBalance: () => Promise<void>;
 };
 
 const AccountContext = createContext<AccountContextValue | null>(null);

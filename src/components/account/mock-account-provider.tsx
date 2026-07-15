@@ -46,8 +46,19 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
       addMoney: asyncNoop,
       upgrade,
       markUpgraded,
+      refreshBalance: refresh,
     }),
-    [deposits, balance, upgraded, ua, noop, asyncNoop, upgrade, markUpgraded],
+    [
+      deposits,
+      balance,
+      upgraded,
+      ua,
+      noop,
+      asyncNoop,
+      upgrade,
+      markUpgraded,
+      refresh,
+    ],
   );
 
   return (
