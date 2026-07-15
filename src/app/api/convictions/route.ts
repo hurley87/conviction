@@ -1,7 +1,16 @@
-import { addBacker, saveConviction, listConvictions, listConvictionsByHandle } from "@/lib/convictions";
+import {
+  addBacker,
+  saveConviction,
+  listConvictions,
+  listConvictionsByHandle,
+} from "@/lib/convictions";
+import { getReceiptEntryAt } from "@/lib/receipts";
 import {
   buildConviction,
+  buildDeskCard,
+  isDeskCardIntent,
   parseConvictionTrade,
+  parseDeskCardFields,
   parseGateReport,
   parseWhatBreaksIt,
   parseWhyNow,
@@ -59,17 +68,53 @@ export async function POST(request: Request) {
   const gateReport = parseGateReport(payload.gateReport);
   if (gateReport === null) return invalidPayload("gateReport");
 
+  // Desk / TokenRef cards share one builder — no partial anatomy on this path.
+  if (isDeskCardIntent({ trade, whyNow, whatBreaksIt, gateReport })) {
+    const parsed = parseDeskCardFields(body);
+    if (!parsed.ok) {
+      return Response.json({ error: parsed.error }, { status: 400 });
+    }
+
+    const entryAt = await getReceiptEntryAt(parsed.value.receiptSlug);
+    if (!entryAt) {
+      return Response.json({ error: "receipt not found" }, { status: 404 });
+    }
+
+    let entry;
+    try {
+      entry = buildDeskCard({
+        ...parsed.value,
+        entryAt,
+      });
+    } catch (err) {
+      return Response.json(
+        { error: err instanceof Error ? err.message : "invalid desk card" },
+        { status: 400 },
+      );
+    }
+
+    const persisted = await saveConviction(entry);
+    return Response.json({ entryId: entry.entryId, persisted });
+  }
+
+  // Plain conviction — anatomy/TokenRef absent; receipt optional.
   const receiptSlug =
-    typeof payload.receiptSlug === "string" ? payload.receiptSlug : undefined;
+    typeof payload.receiptSlug === "string" && payload.receiptSlug.trim()
+      ? payload.receiptSlug.trim()
+      : undefined;
+
+  if (receiptSlug) {
+    const found = await getReceiptEntryAt(receiptSlug);
+    if (!found) {
+      return Response.json({ error: "receipt not found" }, { status: 404 });
+    }
+  }
 
   const entry = buildConviction({
     handle: payload.handle.trim(),
     thesis: payload.thesis,
     trade,
     receiptSlug,
-    whyNow,
-    whatBreaksIt,
-    gateReport,
   });
 
   const persisted = await saveConviction(entry);

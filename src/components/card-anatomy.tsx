@@ -26,7 +26,7 @@ function GateReportList({ checks }: { checks: GateCheck[] }) {
     <ul className="mt-1 space-y-1.5">
       {checks.map((c) => (
         <li
-          key={c.name}
+          key={c.id ?? c.name}
           className="flex flex-wrap items-baseline gap-x-2 text-xs text-zinc-600"
         >
           <span
@@ -38,7 +38,7 @@ function GateReportList({ checks }: { checks: GateCheck[] }) {
           >
             {c.passed ? "Pass" : "Fail"}
           </span>
-          <span>{c.name}</span>
+          <span>{!c.passed && c.detail ? c.detail : c.name}</span>
           {c.evidenceUrl && (
             <a
               href={c.evidenceUrl}

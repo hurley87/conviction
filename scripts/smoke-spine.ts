@@ -10,6 +10,8 @@
  *   SMOKE_SIZE_USD=5  (default 5 — keep tiny)
  */
 
+import { requireEnv } from "./lib/require-env";
+
 // Standalone tsx scripts don't get Next.js's automatic .env.local loading,
 // so pull it in explicitly before reading any NEXT_PUBLIC_* vars.
 try {
@@ -24,17 +26,10 @@ const REQUIRED_ENV = [
   "NEXT_PUBLIC_PARTICLE_APP_ID",
 ] as const;
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    console.error(`Missing ${name}. Aborting smoke test.`);
-    process.exit(1);
-  }
-  return value;
-}
-
 async function main() {
-  for (const key of REQUIRED_ENV) requireEnv(key);
+  for (const key of REQUIRED_ENV) {
+    requireEnv(key, "Aborting smoke test.");
+  }
 
   const ownerAddress = process.env.SMOKE_OWNER_ADDRESS;
   if (!ownerAddress) {
@@ -59,9 +54,18 @@ async function main() {
   const { createParticleUAClient } = await import("../src/lib/ua/particle");
   const ua = createParticleUAClient({
     ownerAddress,
-    projectId: requireEnv("NEXT_PUBLIC_PARTICLE_PROJECT_ID"),
-    projectClientKey: requireEnv("NEXT_PUBLIC_PARTICLE_CLIENT_KEY"),
-    projectAppUuid: requireEnv("NEXT_PUBLIC_PARTICLE_APP_ID"),
+    projectId: requireEnv(
+      "NEXT_PUBLIC_PARTICLE_PROJECT_ID",
+      "Aborting smoke test.",
+    ),
+    projectClientKey: requireEnv(
+      "NEXT_PUBLIC_PARTICLE_CLIENT_KEY",
+      "Aborting smoke test.",
+    ),
+    projectAppUuid: requireEnv(
+      "NEXT_PUBLIC_PARTICLE_APP_ID",
+      "Aborting smoke test.",
+    ),
   });
 
   const balance = await ua.getUniversalBalance();

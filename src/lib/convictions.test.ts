@@ -7,7 +7,12 @@ import {
   saveConviction,
   resetConvictionsMemoryForTests,
 } from "@/lib/convictions";
-import { buildConviction, hasAnatomy } from "@/lib/verbs/conviction";
+import {
+  buildConviction,
+  buildDeskCard,
+  hasAnatomy,
+  parseConvictionTrade,
+} from "@/lib/verbs/conviction";
 import { isDeckCard } from "@/lib/verbs/deck";
 
 describe("convictions memory store", () => {
@@ -61,6 +66,7 @@ describe("convictions memory store", () => {
         toChain: "Base",
         sizeUsd: 8,
       },
+      receiptSlug: "desk-entry-1",
       whyNow: [
         {
           at: "2026-07-10T09:00:00.000Z",
@@ -99,5 +105,50 @@ describe("convictions memory store", () => {
     const seed = listed.find((e) => e.entryId === SEED_CONVICTION.entryId);
     expect(seed).toBeDefined();
     expect(hasAnatomy(seed!)).toBe(false);
+  });
+
+  it("round-trips desk TokenRef + anatomy via parse → build → save → list", async () => {
+    const rawTrade = {
+      fromAsset: "cash",
+      fromChain: "Arbitrum",
+      toAsset: "token",
+      token: {
+        chainId: 8453,
+        address: "0xSurplusTokenAddress",
+        symbol: "SURPLUS",
+      },
+      toChain: "Base",
+      sizeUsd: 8,
+    };
+    const trade = parseConvictionTrade(rawTrade);
+    expect(trade?.token?.address).toBe("0xSurplusTokenAddress");
+
+    const entry = buildDeskCard({
+      handle: "desk",
+      thesis: "Concrete Base token with full anatomy.",
+      trade: trade!,
+      receiptSlug: "token-entry-1",
+      entryAt: "2026-07-15T10:00:00.000Z",
+      publishedAt: "2026-07-15T10:05:00.000Z",
+      whyNow: [
+        { at: "2026-07-14T12:00:00.000Z", event: "Pool depth cleared gate." },
+      ],
+      whatBreaksIt: "LP unlock cliff.",
+      gateReport: [
+        { name: "UA routability", passed: true },
+        { name: "liquidity depth", passed: true },
+      ],
+    });
+
+    await saveConviction(entry);
+    const listed = await listConvictions();
+    const found = listed.find((e) => e.entryId === entry.entryId);
+
+    expect(found?.trade.token).toEqual(rawTrade.token);
+    expect(found?.receiptSlug).toBe("token-entry-1");
+    expect(found?.whyNow).toEqual(entry.whyNow);
+    expect(found?.whatBreaksIt).toBe(entry.whatBreaksIt);
+    expect(found?.gateReport).toEqual(entry.gateReport);
+    expect(found?.createdAt).toBe("2026-07-15T10:05:00.000Z");
   });
 });

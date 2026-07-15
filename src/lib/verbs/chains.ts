@@ -68,6 +68,14 @@ const TOKEN_ADDRESSES: Record<string, Record<number, string>> = {
  * (Arbitrum first, per ADR 0005). */
 export const SETTLEMENT_CHAINS: DestChain[] = ["Arbitrum", "Base"];
 
+/** True when value is a settlement chain name we can persist on a conviction. */
+export function isDestChain(value: unknown): value is DestChain {
+  return (
+    typeof value === "string" &&
+    (SETTLEMENT_CHAINS as readonly string[]).includes(value)
+  );
+}
+
 const DEST_CHAIN_IDS: Record<DestChain, number> = {
   Arbitrum: ARBITRUM_CHAIN_ID,
   Base: BASE_CHAIN_ID,
