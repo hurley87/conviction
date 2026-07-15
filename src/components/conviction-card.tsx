@@ -8,6 +8,7 @@ import Link from "next/link";
 import { Sparkline } from "@/components/sparkline";
 import { TokenChip } from "@/components/token-chip";
 import { PRIMARY_LIGHT, GHOST_LIGHT } from "@/components/button-styles";
+import { TradePendingStatus } from "@/components/trade-pending";
 import { formatUsd, formatTimestamp } from "@/lib/format";
 import {
   COPY_TRADE_CAP_USD,
@@ -165,21 +166,25 @@ function BackButton({
         <p className="mt-2 text-xs text-red-500">{state.error}</p>
       )}
 
-      {!hasBacked && (
+      {!hasBacked && isBacking && (
+        <div className="mt-3">
+          <TradePendingStatus />
+        </div>
+      )}
+
+      {!hasBacked && !isBacking && (
         <div className="mt-3 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => handleBack()}
-              disabled={isBacking}
               className={`${PRIMARY_LIGHT} px-5 py-2 text-sm`}
             >
-              {isBacking ? "Backing…" : "Back this"}
+              Back this
             </button>
             <button
               type="button"
               onClick={() => setAdvancedOpen((o) => !o)}
-              disabled={isBacking}
               className={`${GHOST_LIGHT} px-4 py-2 text-xs`}
             >
               {advancedOpen ? "Hide" : "Advanced"}
@@ -207,12 +212,11 @@ function BackButton({
                 value={overrideInput}
                 onChange={(e) => setOverrideInput(e.target.value)}
                 placeholder="Custom amount ($)"
-                disabled={isBacking}
                 className="w-36 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none"
               />
               <button
                 type="submit"
-                disabled={isBacking || !overrideInput}
+                disabled={!overrideInput}
                 className={`${GHOST_LIGHT} px-4 py-2 text-xs`}
               >
                 Back custom amount

@@ -5,6 +5,7 @@ import { formatEta } from "@/lib/verbs/quote";
 import { formatUsd } from "@/lib/format";
 import type { TradeQuote } from "@/lib/verbs/types";
 import { PRIMARY_LIGHT, GHOST_LIGHT } from "@/components/button-styles";
+import { TradePendingStatus } from "@/components/trade-pending";
 
 export function ConfirmCard({
   quote,
@@ -58,24 +59,28 @@ export function ConfirmCard({
         </div>
       )}
 
-      <div className="mt-5 flex gap-2">
-        <button
-          type="button"
-          onClick={onConfirm}
-          disabled={executing}
-          className={`${PRIMARY_LIGHT} flex-1 py-2 text-sm`}
-        >
-          {executing ? "Moving…" : "Confirm"}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={executing}
-          className={`${GHOST_LIGHT} px-4 py-2 text-sm`}
-        >
-          Cancel
-        </button>
-      </div>
+      {executing ? (
+        <div className="mt-5">
+          <TradePendingStatus />
+        </div>
+      ) : (
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={onConfirm}
+            className={`${PRIMARY_LIGHT} flex-1 py-2 text-sm`}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            className={`${GHOST_LIGHT} px-4 py-2 text-sm`}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   );
 }
