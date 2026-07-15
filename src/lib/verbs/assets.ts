@@ -6,10 +6,13 @@
 import type { ProductAsset } from "@/lib/verbs/types";
 
 type AssetInfo = {
-  /** UA SUPPORTED_TOKEN_TYPE string. */
+  /** UA SUPPORTED_TOKEN_TYPE string (or our own key for buy-only tokens). */
   uaTokenType: string;
   /** Balance symbols (uppercase) that satisfy this product. */
   matchSymbols: string[];
+  /** Not a UA primary token: valid as a buy target (createBuyTransaction takes
+   * its address directly) but can't fund a trade or be a convert destination. */
+  buyOnly?: true;
 };
 
 const ASSETS: Record<ProductAsset, AssetInfo> = {
@@ -19,6 +22,10 @@ const ASSETS: Record<ProductAsset, AssetInfo> = {
   eth: { uaTokenType: "eth", matchSymbols: ["ETH", "WETH"] },
   btc: { uaTokenType: "btc", matchSymbols: ["BTC", "WBTC"] },
   sol: { uaTokenType: "sol", matchSymbols: ["SOL"] },
+  arb: { uaTokenType: "arb", matchSymbols: ["ARB"], buyOnly: true },
+  // Sentinel for a concrete TokenRef on the intent; never buyable through this
+  // table (buildBuyPayload uses the ref's address directly).
+  token: { uaTokenType: "token", matchSymbols: [], buyOnly: true },
 };
 
 /** True when a string is one of the known product assets. */
@@ -32,6 +39,11 @@ export function isProductAsset(value: unknown): value is ProductAsset {
 /** Map product asset to UA SUPPORTED_TOKEN_TYPE string. */
 export function toUaTokenType(asset: ProductAsset): string {
   return ASSETS[asset]?.uaTokenType ?? "usdc";
+}
+
+/** True when an asset can only be bought, never sold or converted into. */
+export function isBuyOnlyAsset(asset: ProductAsset): boolean {
+  return ASSETS[asset]?.buyOnly === true;
 }
 
 /** True when a balance symbol satisfies the requested product asset. */
@@ -48,6 +60,9 @@ export function productAssetPrimarySymbol(asset: ProductAsset): string {
     eth: "ETH",
     btc: "WBTC",
     sol: "SOL",
+    arb: "ARB",
+    // Last-resort label; callers with a TokenRef prefer its symbol.
+    token: "TOKEN",
   };
   return symbols[asset];
 }

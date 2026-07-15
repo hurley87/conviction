@@ -70,9 +70,8 @@ describe("buildConvertPayload", () => {
 });
 
 describe("defaultTradeConfig", () => {
-  it("enables universal gas and a 1% slippage floor", () => {
+  it("sets a 1% slippage floor (gas abstraction is always-on in SDK v2)", () => {
     const config = defaultTradeConfig();
-    expect(config.universalGas).toBe(true);
     expect(config.slippageBps).toBe(100);
     expect(config.usePrimaryTokens).toBeUndefined();
   });
@@ -80,5 +79,27 @@ describe("defaultTradeConfig", () => {
   it("constrains the source token when selling a specific asset", () => {
     const config = defaultTradeConfig("eth");
     expect(config.usePrimaryTokens).toEqual(["eth"]);
+  });
+});
+
+describe("buildBuyPayload with a concrete TokenRef", () => {
+  it("uses the ref's chain and address verbatim, bypassing the table", () => {
+    const payload = buildBuyPayload(
+      {
+        toAsset: "token",
+        token: {
+          chainId: 8453,
+          address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+          symbol: "SURPLUS",
+        },
+        destChain: "Base",
+      },
+      5,
+    );
+    expect(payload.token).toEqual({
+      chainId: 8453,
+      address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+    });
+    expect(payload.amountInUSD).toBe("5.00");
   });
 });

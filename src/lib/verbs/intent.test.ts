@@ -25,6 +25,21 @@ describe("parseIntent", () => {
     expect(result.intent.destChain).toBe("Arbitrum");
   });
 
+  it("parses 'buy ARB for $5' as an ARB buy (hero card phrasing)", () => {
+    const result = parseIntent("buy ARB for $5");
+    expect(result.kind).toBe("intent");
+    if (result.kind !== "intent") return;
+    expect(result.intent.toAsset).toBe("arb");
+    expect(result.intent.sizeUsd).toBe(5);
+  });
+
+  it("does not read the chain word 'Arbitrum' as the ARB token", () => {
+    const result = parseIntent("Move $25 to cash on Arbitrum");
+    expect(result.kind).toBe("intent");
+    if (result.kind !== "intent") return;
+    expect(result.intent.toAsset).toBe("cash");
+  });
+
   it("parses explicit 'all' fraction", () => {
     const result = parseIntent("Move all to cash");
     expect(result.kind).toBe("intent");
@@ -157,12 +172,46 @@ describe("validateIntent", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("allows buying BTC (wired on the settlement chain)", () => {
+  it("allows buying BTC on Base (its only routable settlement chain)", () => {
+    const result = validateIntent(
+      { toAsset: "btc", sizeUsd: 25, destChain: "Base" },
+      balance,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects buying BTC on Arbitrum — no warm-up router coverage there", () => {
     const result = validateIntent(
       { toAsset: "btc", sizeUsd: 25, destChain: "Arbitrum" },
       balance,
     );
+    expect(result.ok).toBe(false);
+  });
+
+  it("ARB passes static validation (fails at quote time with no-route — the gate-kill candidate)", () => {
+    const result = validateIntent(
+      { toAsset: "arb", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
     expect(result.ok).toBe(true);
+  });
+
+  it("rejects selling ARB — buy-only, not a UA primary token", () => {
+    const result = validateIntent(
+      { fromAsset: "arb", toAsset: "cash", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("only be bought");
+  });
+
+  it("rejects converting another asset into ARB — buy with cash instead", () => {
+    const result = validateIntent(
+      { fromAsset: "eth", toAsset: "arb", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("with cash instead");
   });
 
   it("rejects buying SOL — no address on the EVM settlement chain", () => {
@@ -172,6 +221,53 @@ describe("validateIntent", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("isn't supported");
+  });
+
+  const SURPLUS = {
+    chainId: 8453,
+    address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+    symbol: "SURPLUS",
+  };
+
+  it("allows a concrete-token buy (deck card) with no product-table entry", () => {
+    const result = validateIntent(
+      { toAsset: "token", token: SURPLUS, sizeUsd: 5, destChain: "Base" },
+      balance,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a concrete token on a chain we can't settle on", () => {
+    const pepeOnEthereum = { chainId: 1, address: "0x6982…", symbol: "PEPE" };
+    const result = validateIntent(
+      { toAsset: "token", token: pepeOnEthereum, sizeUsd: 5, destChain: "Base" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("can't settle on yet");
+  });
+
+  it("rejects converting another asset into a concrete token", () => {
+    const result = validateIntent(
+      {
+        fromAsset: "eth",
+        toAsset: "token",
+        token: SURPLUS,
+        sizeUsd: 5,
+        destChain: "Base",
+      },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("with cash instead");
+  });
+
+  it("rejects the token sentinel without a TokenRef attached", () => {
+    const result = validateIntent(
+      { toAsset: "token", sizeUsd: 5, destChain: "Base" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
   });
 
   it("allows cashing out USDC that lives on another chain", () => {
@@ -211,7 +307,22 @@ describe("pickSettlementChain", () => {
 
   it("defaults to Arbitrum when nothing is funded", () => {
     const empty: UniversalBalance = { totalUsd: 0, sources: [] };
-    expect(pickSettlementChain("btc", empty)).toBe("Arbitrum");
+    expect(pickSettlementChain("eth", empty)).toBe("Arbitrum");
+  });
+
+  it("BTC settles on Base — its only wired chain", () => {
+    expect(pickSettlementChain("btc", balance)).toBe("Base");
+  });
+
+  it("an ARB buy would settle on Arbitrum, its only wired chain", () => {
+    const baseHeavy: UniversalBalance = {
+      totalUsd: 100,
+      sources: [
+        { chain: "Base", asset: "USDC", usd: 90 },
+        { chain: "Arbitrum", asset: "USDC", usd: 10 },
+      ],
+    };
+    expect(pickSettlementChain("arb", baseHeavy)).toBe("Arbitrum");
   });
 });
 

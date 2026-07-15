@@ -46,11 +46,21 @@ export function copyTradeSizeUsd(
 }
 
 /** Build a trade intent that copies the conviction's direction, settling on the
- * chain that best matches the backer's funded balance — not the original's. */
+ * chain that best matches the backer's funded balance — not the original's.
+ * A concrete-token conviction re-targets the exact token (same address, same
+ * chain — the token defines where it settles), still sourcing from wherever
+ * the backer's funds sit. */
 export function copyIntent(
   trade: ConvictionTrade,
   balance: UniversalBalance,
 ): TradeIntent {
+  if (trade.token) {
+    return {
+      toAsset: "token",
+      token: trade.token,
+      destChain: trade.toChain,
+    };
+  }
   const intent: TradeIntent = {
     toAsset: trade.toAsset,
     destChain: pickSettlementChain(trade.toAsset, balance),

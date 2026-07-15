@@ -77,6 +77,31 @@ describe("copyIntent", () => {
     );
     expect(intent.fromAsset).toBeUndefined();
   });
+
+  it("re-targets a concrete-token conviction exactly (same token, its chain)", () => {
+    const surplus = {
+      chainId: 8453,
+      address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+      symbol: "SURPLUS",
+    };
+    const intent = copyIntent(
+      {
+        fromAsset: "cash",
+        fromChain: "Arbitrum",
+        toAsset: "token",
+        token: surplus,
+        toChain: "Base",
+        sizeUsd: 100,
+      },
+      BALANCE_242,
+    );
+    expect(intent.toAsset).toBe("token");
+    expect(intent.token).toEqual(surplus);
+    // The token defines settlement — Base — even though the backer's funds
+    // are mostly on Arbitrum (that's what makes the copy cross-chain).
+    expect(intent.destChain).toBe("Base");
+    expect(intent.fromAsset).toBeUndefined();
+  });
 });
 
 describe("copyConviction", () => {

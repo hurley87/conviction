@@ -56,6 +56,7 @@ export function tradeToConvictionTrade(
     fromAsset,
     fromChain,
     toAsset: intent.toAsset,
+    ...(intent.token ? { token: intent.token } : {}),
     toChain: intent.destChain,
     sizeUsd,
   };

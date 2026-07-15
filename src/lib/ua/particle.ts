@@ -43,6 +43,14 @@ type ParticleAccount = {
     solanaSmartAccountAddress?: string;
     ownerAddress: string;
   }>;
+  warmUpToken(token: {
+    chainId: number;
+    address: string;
+  }): Promise<{ router?: unknown | null } | null>;
+  getTokenPair(token: {
+    chainId: number;
+    address: string;
+  }): Promise<{ pair?: { address: string; factory: string } } | null>;
   createBuyTransaction(
     payload: { token: { chainId: number; address: string }; amountInUSD: string },
     tradeConfig?: Record<string, unknown>,
@@ -58,25 +66,79 @@ type ParticleAccount = {
   ): Promise<{ transactionId?: string }>;
 };
 
+const WARM_UP_POLLS = 4;
+const WARM_UP_POLL_MS = 3000;
+
+const NO_ROUTE_MESSAGE =
+  "This token has no route through your Universal Account yet, so it can't be bought here.";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function createParticleUAClient(config: ParticleConfig): UAClient {
   let accountPromise: Promise<unknown> | null = null;
+
+  async function sdk() {
+    return import("@particle-network/universal-account-sdk");
+  }
 
   async function account(): Promise<ParticleAccount> {
     if (!accountPromise) {
       accountPromise = (async () => {
-        const { UniversalAccount } = await import(
-          "@particle-network/universal-account-sdk"
-        );
+        const { UniversalAccount, UNIVERSAL_ACCOUNT_VERSION_V2 } = await sdk();
         return new UniversalAccount({
           projectId: config.projectId,
           projectClientKey: config.projectClientKey,
           projectAppUuid: config.projectAppUuid,
-          ownerAddress: config.ownerAddress,
-          smartAccountOptions: { useEIP7702: true },
+          // v2.0.x moved the owner into smartAccountOptions and requires
+          // name + version; the old top-level ownerAddress shape is rejected
+          // by the backend as "Invalid parameters".
+          smartAccountOptions: {
+            name: "UNIVERSAL",
+            version: UNIVERSAL_ACCOUNT_VERSION_V2,
+            ownerAddress: config.ownerAddress,
+            useEIP7702: true,
+          },
         });
       })();
     }
     return accountPromise as Promise<ParticleAccount>;
+  }
+
+  /** True when the token is a plain v2 buy target (a primary of a buyable
+   * type). Everything else needs the warm-up flow. */
+  async function isPlainBuyTarget(token: {
+    chainId: number;
+    address: string;
+  }): Promise<boolean> {
+    const mod = await sdk();
+    const supported = mod.getSupportedToken(token.chainId, token.address);
+    const buyableTypes: string[] =
+      mod.UNIVERSAL_ACCOUNT_VERSION_V2_SUPPORTED_TOKEN_TYPES ?? [];
+    return supported?.type != null && buyableTypes.includes(supported.type);
+  }
+
+  /** UniversalX-style route warm-up for tokens outside the primary set:
+   * warmUpToken registers the route, getTokenPair yields the DEX pair the
+   * buy must be quoted against. A null router means Particle can't route
+   * this token (true for ALL non-primaries on Arbitrum as of 2026-07). */
+  async function warmUpTokenPair(
+    ua: ParticleAccount,
+    token: { chainId: number; address: string },
+  ): Promise<{ address: string; factory: string }> {
+    const warm = await ua.warmUpToken(token);
+    if (!warm?.router) {
+      throw new Error(NO_ROUTE_MESSAGE);
+    }
+    for (let attempt = 0; attempt < WARM_UP_POLLS; attempt++) {
+      const pair = (await ua.getTokenPair(token))?.pair;
+      if (pair?.address) {
+        return { address: pair.address, factory: pair.factory };
+      }
+      await sleep(WARM_UP_POLL_MS);
+    }
+    throw new Error(NO_ROUTE_MESSAGE);
   }
 
   async function createTradeTransaction(
@@ -92,10 +154,15 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
         defaultTradeConfig(intent.fromAsset),
       );
     }
-    return ua.createBuyTransaction(
-      buildBuyPayload(intent, sizeUsd),
-      defaultTradeConfig(intent.fromAsset),
-    );
+    const payload = buildBuyPayload(intent, sizeUsd);
+    if (await isPlainBuyTarget(payload.token)) {
+      return ua.createBuyTransaction(payload, defaultTradeConfig(intent.fromAsset));
+    }
+    const tokenPair = await warmUpTokenPair(ua, payload.token);
+    return ua.createBuyTransaction(payload, {
+      ...defaultTradeConfig(intent.fromAsset),
+      tokenPair,
+    });
   }
 
   return {

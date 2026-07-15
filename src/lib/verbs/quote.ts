@@ -125,7 +125,7 @@ export function shapeQuote(
     sourceChain: inferSourceChain(changes),
     destChain: intent.destChain as DestChain,
     toAsset: intent.toAsset,
-    receivedSymbol: inferReceivedSymbol(changes),
+    receivedSymbol: inferReceivedSymbol(changes) ?? intent.token?.symbol,
     transactionId,
     rawTransaction,
   };

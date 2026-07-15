@@ -86,6 +86,13 @@ We use Privy's onramp, which deposits into the embedded EOA. Need a yes/no that 
 
 The demo answers most of this already: token list + spot prices + logos come from one client-side, 5-min-cached LI.FI call (EVM-only, `ChainType.EVM`), curated to top-50/chain via a priority list. So we likely **don't need CoinGecko/Birdeye for the list or spot price** — only for historical **charts** (LI.FI gives spot, not OHLC). Confirm LI.FI's list reflects UA's actual routable set.
 
+**Answer:** Self-answered 2026-07-14: **LI.FI's list is NOT the routable set on v2.** The v1 demo's backend is deprecated (`-32801`). On SDK 2.0.x the routable universe is: plain `createBuyTransaction` for primary types (eth/usdt/usdc/bnb/sol) + arbitrary tokens via `warmUpToken` → `getTokenPair` → `createBuyTransaction(payload, { tokenPair })`. The router check is the authoritative routability test.
+
+---
+
+### 9. When does the v2 router get non-primary coverage on Arbitrum?
+> "On SDK 2.0.3, `warmUpToken` returns `router: null` for **every** non-primary token on Arbitrum (42161) — ARB, GMX, PENDLE all fail with 'Token metadata not found' at buy time — while the same flow works for arbitrary tokens on Base and Ethereum (verified live 2026-07-14, e.g. DEGEN, PEPE). Is 42161 router coverage on the roadmap? Our hero use case is buying Arbitrum-native tokens (ARB) with cross-chain funds; today we can only settle ETH/USDC/USDT onto Arbitrum."
+
 **Answer:**
 
 ---
