@@ -119,13 +119,14 @@ function parseToAsset(text: string): ProductAsset {
   // "to/into/for/on <asset>" names the destination — "spend half on ETH",
   // "move $25 to cash". ("on" stays out of parseFromAsset, so "cash in" /
   // "sell on" don't get misread as a buy.) Skip chain words — those are
-  // settlement via parseExplicitDestChain, not assets.
+  // settlement via parseExplicitDestChain, not assets. "arb" is the token
+  // only via buy/get phrasing; "on ARB" means the Arbitrum chain.
   const toMatch = text.match(
     /\b(?:to|into|for|on)\s+(?:my\s+)?(\w+)/i,
   );
   if (toMatch) {
     const word = toMatch[1]!.toLowerCase();
-    if (word !== "arbitrum" && word !== "base") {
+    if (word !== "arbitrum" && word !== "base" && word !== "arb") {
       const asset = parseAssetWord(word);
       if (asset) return asset;
     }
@@ -136,19 +137,20 @@ function parseToAsset(text: string): ProductAsset {
 
 const DEST_CHAIN_WORDS: Record<string, DestChain> = {
   arbitrum: "Arbitrum",
+  arb: "Arbitrum",
   base: "Base",
 };
 
 /**
  * Detect an explicit settlement chain in plain English ("on Arbitrum",
- * "settle on Base"). Used for the desk/demo money shot: Base-funded buy of
- * ETH that must land on Arbitrum (ADR 0005 + Particle cross-chain proof).
- * Returns undefined when the user did not name a chain — callers then use
- * pickSettlementChain.
+ * "on ARB", "settle on Base"). Used for the desk/demo money shot: Base-funded
+ * buy of ETH that must land on Arbitrum (ADR 0005 + Particle cross-chain
+ * proof). Returns undefined when the user did not name a chain — callers then
+ * use pickSettlementChain.
  */
 export function parseExplicitDestChain(text: string): DestChain | undefined {
   const match = text.match(
-    /\b(?:settle(?:s|d|ing)?\s+)?(?:on|onto|to)\s+(arbitrum|base)\b/i,
+    /\b(?:settle(?:s|d|ing)?\s+)?(?:on|onto|to)\s+(arbitrum|arb|base)\b/i,
   );
   if (!match) return undefined;
   return DEST_CHAIN_WORDS[match[1]!.toLowerCase()];
