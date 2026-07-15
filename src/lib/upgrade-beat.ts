@@ -1,10 +1,13 @@
 // Once-only upgrade-in-place beat persistence (issue #19). Seen-state is keyed
 // per address so the moment appears at most once and never blocks the flow.
 
-export type StorageLike = {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-};
+import {
+  notifyLocalStorageEvent,
+  subscribeLocalStorageEvent,
+  type StorageLike,
+} from "@/lib/local-storage-store";
+
+export type { StorageLike };
 
 export const UPGRADE_BEAT_STORAGE_PREFIX = "conviction:upgrade-beat-seen:";
 
@@ -39,16 +42,11 @@ export function shouldRevealUpgradeBeat(
 }
 
 export function notifyUpgradeBeatStorageChanged(): void {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new Event(UPGRADE_BEAT_STORAGE_EVENT));
+  notifyLocalStorageEvent(UPGRADE_BEAT_STORAGE_EVENT);
 }
 
-export function subscribeUpgradeBeatStorage(onStoreChange: () => void): () => void {
-  if (typeof window === "undefined") return () => {};
-  window.addEventListener("storage", onStoreChange);
-  window.addEventListener(UPGRADE_BEAT_STORAGE_EVENT, onStoreChange);
-  return () => {
-    window.removeEventListener("storage", onStoreChange);
-    window.removeEventListener(UPGRADE_BEAT_STORAGE_EVENT, onStoreChange);
-  };
+export function subscribeUpgradeBeatStorage(
+  onStoreChange: () => void,
+): () => void {
+  return subscribeLocalStorageEvent(UPGRADE_BEAT_STORAGE_EVENT, onStoreChange);
 }

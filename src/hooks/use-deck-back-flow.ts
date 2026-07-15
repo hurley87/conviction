@@ -1,10 +1,11 @@
 "use client";
 
 // Deck back flow — browse → size → quote → confirm → execute → receipt
-// (issue #22). One discriminated union so impossible states can't exist.
+// (issue #22). Swipe verbs persist so acted-on cards stay off the deck (#24).
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useAccount } from "@/components/account/account-context";
+import { useSwipeState } from "@/hooks/use-swipe-state";
 import {
   DEFAULT_COPY_FRACTION,
   executeQuotedCopy,
@@ -12,6 +13,7 @@ import {
   type QuotedCopy,
 } from "@/lib/verbs/copy";
 import { sizeUsdForFraction } from "@/lib/verbs/deck";
+import { remainingDeckCards } from "@/lib/verbs/swipe-state";
 import { persistCopyResult } from "@/lib/persist-copy-result";
 import type {
   ConvictionEntry,
@@ -31,23 +33,34 @@ export type DeckFlow =
   | { status: "receipt"; receipt: Receipt }
   | { status: "error"; message: string };
 
-export function useDeckBackFlow(signers: TradeSigners) {
+export function useDeckBackFlow(
+  signers: TradeSigners,
+  allCards: ConvictionEntry[],
+) {
   const account = useAccount();
-  const [index, setIndex] = useState(0);
+  const { state: swipeState, record } = useSwipeState(account.handle);
+  const cards = useMemo(
+    () => remainingDeckCards(allCards, swipeState),
+    [allCards, swipeState],
+  );
   const [flow, setFlow] = useState<DeckFlow>({ status: "browse" });
-
-  const advance = useCallback(() => {
-    setIndex((i) => i + 1);
-  }, []);
 
   const resetToBrowse = useCallback(() => {
     setFlow({ status: "browse" });
   }, []);
 
-  const onSkip = useCallback(() => {
-    if (flow.status !== "browse") return;
-    advance();
-  }, [advance, flow.status]);
+  const recordDeckVerb = useCallback(
+    (verb: "skip" | "save") => {
+      if (flow.status !== "browse") return;
+      const current = cards[0];
+      if (!current) return;
+      record(current.entryId, verb);
+    },
+    [cards, flow.status, record],
+  );
+
+  const onSkip = useCallback(() => recordDeckVerb("skip"), [recordDeckVerb]);
+  const onSave = useCallback(() => recordDeckVerb("save"), [recordDeckVerb]);
 
   const onBackSwipe = useCallback(
     (entry: ConvictionEntry) => {
@@ -133,6 +146,7 @@ export function useDeckBackFlow(signers: TradeSigners) {
         account.markUpgraded();
       }
 
+      record(entry.entryId, "back");
       setFlow({ status: "receipt", receipt: result.receipt });
     } catch (e) {
       setFlow({
@@ -141,17 +155,17 @@ export function useDeckBackFlow(signers: TradeSigners) {
           e instanceof Error ? e.message : "Couldn't back this conviction.",
       });
     }
-  }, [account, flow, signers]);
+  }, [account, flow, record, signers]);
 
   const onReceiptDone = useCallback(() => {
     resetToBrowse();
-    advance();
-  }, [advance, resetToBrowse]);
+  }, [resetToBrowse]);
 
   return {
-    index,
+    cards,
     flow,
     onSkip,
+    onSave,
     onBackSwipe,
     setFraction,
     onContinueSizing,

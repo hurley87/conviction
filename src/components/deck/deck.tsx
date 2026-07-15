@@ -1,22 +1,38 @@
 "use client";
 
-// Swipeable card stack — left skip, right back (ADR 0016).
+// Swipeable card stack — left skip, up save, right back (ADR 0016 / issue #24).
+// Parent passes remaining (unacted) cards; exhausted = empty list.
 
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import { DeckCard } from "@/components/deck/deck-card";
 import { GHOST_LIGHT } from "@/components/button-styles";
-import { isDeckExhausted } from "@/lib/verbs/deck";
+import {
+  resolveSwipeVerb,
+  SWIPE_COMMIT_PX,
+  SWIPE_HINT_PX,
+  type SwipeVerb,
+} from "@/lib/verbs/swipe-state";
 import type { ConvictionEntry } from "@/lib/verbs/types";
-
-const SWIPE_THRESHOLD_PX = 110;
 
 type DeckProps = {
   cards: ConvictionEntry[];
-  index: number;
   onSkip: () => void;
+  onSave: () => void;
   onBack: (entry: ConvictionEntry) => void;
   interactive?: boolean;
+};
+
+const HINT_CLASS: Record<SwipeVerb, string> = {
+  skip: "top-6 left-4 border border-zinc-300 bg-white text-zinc-500",
+  save: "top-4 left-1/2 -translate-x-1/2 border border-amber-200 bg-amber-50 text-amber-800",
+  back: "top-6 right-4 border border-blue-200 bg-blue-50 text-blue-700",
+};
+
+const HINT_LABEL: Record<SwipeVerb, string> = {
+  skip: "Skip",
+  save: "Save",
+  back: "Back",
 };
 
 export function DeckExhausted() {
@@ -27,9 +43,15 @@ export function DeckExhausted() {
         You&apos;ve seen today&apos;s cards. Scroll back through the drops on
         Discover — the feed is the archive.
       </p>
-      <div className="mt-6">
+      <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
         <Link href="/discover" className={`${GHOST_LIGHT} px-5 py-2 text-sm`}>
           Open Discover
+        </Link>
+        <Link
+          href="/discover?filter=saved"
+          className="rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+        >
+          View Saved
         </Link>
       </div>
     </div>
@@ -38,42 +60,64 @@ export function DeckExhausted() {
 
 export function Deck({
   cards,
-  index,
   onSkip,
+  onSave,
   onBack,
   interactive = true,
 }: DeckProps) {
   const [offsetX, setOffsetX] = useState(0);
+  const [offsetY, setOffsetY] = useState(0);
   const [dragging, setDragging] = useState(false);
   const startX = useRef(0);
+  const startY = useRef(0);
   const activeId = useRef<number | null>(null);
 
-  const exhausted = isDeckExhausted(cards, index);
-  const current = !exhausted ? cards[index] : undefined;
-  const next = !exhausted ? cards[index + 1] : undefined;
+  const current = cards[0];
+  const next = cards[1];
+
+  const commitVerb = useCallback(
+    (verb: SwipeVerb) => {
+      switch (verb) {
+        case "skip":
+          onSkip();
+          break;
+        case "save":
+          onSave();
+          break;
+        case "back":
+          if (current) onBack(current);
+          break;
+        default: {
+          const _exhaustive: never = verb;
+          return _exhaustive;
+        }
+      }
+    },
+    [current, onBack, onSave, onSkip],
+  );
 
   const settle = useCallback(
-    (dx: number) => {
+    (dx: number, dy: number) => {
       if (!current || !interactive) {
         setOffsetX(0);
+        setOffsetY(0);
         setDragging(false);
         return;
       }
-      if (dx <= -SWIPE_THRESHOLD_PX) {
-        onSkip();
-      } else if (dx >= SWIPE_THRESHOLD_PX) {
-        onBack(current);
-      }
+      const verb = resolveSwipeVerb(dx, dy, SWIPE_COMMIT_PX);
+      if (verb) commitVerb(verb);
       setOffsetX(0);
+      setOffsetY(0);
       setDragging(false);
     },
-    [current, interactive, onBack, onSkip],
+    [commitVerb, current, interactive],
   );
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (!interactive || !current) return;
     activeId.current = e.pointerId;
     startX.current = e.clientX;
+    startY.current = e.clientY;
     setDragging(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
@@ -81,21 +125,21 @@ export function Deck({
   const onPointerMove = (e: React.PointerEvent) => {
     if (!dragging || activeId.current !== e.pointerId) return;
     setOffsetX(e.clientX - startX.current);
+    setOffsetY(e.clientY - startY.current);
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
     if (activeId.current !== e.pointerId) return;
     activeId.current = null;
-    settle(e.clientX - startX.current);
+    settle(e.clientX - startX.current, e.clientY - startY.current);
   };
 
-  if (exhausted) {
+  if (!current) {
     return <DeckExhausted />;
   }
 
+  const hint = resolveSwipeVerb(offsetX, offsetY, SWIPE_HINT_PX);
   const rotation = offsetX / 28;
-  const skipHint = offsetX < -40;
-  const backHint = offsetX > 40;
 
   return (
     <div className="relative mx-auto h-[32rem] w-full max-w-md touch-none select-none">
@@ -104,38 +148,32 @@ export function Deck({
           <DeckCard entry={next} />
         </div>
       )}
-      {current && (
-        <div
-          className="absolute inset-0 cursor-grab active:cursor-grabbing"
-          style={{
-            transform: `translateX(${offsetX}px) rotate(${rotation}deg)`,
-            transition: dragging ? "none" : "transform 180ms ease-out",
-          }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-        >
-          {(skipHint || backHint) && (
-            <div
-              className={`pointer-events-none absolute top-6 z-10 rounded-full px-4 py-1.5 text-xs font-semibold tracking-wide uppercase ${
-                skipHint
-                  ? "left-4 border border-zinc-300 bg-white text-zinc-500"
-                  : "right-4 border border-blue-200 bg-blue-50 text-blue-700"
-              }`}
-            >
-              {skipHint ? "Skip" : "Back"}
-            </div>
-          )}
-          <DeckCard entry={current} />
-        </div>
-      )}
+      <div
+        className="absolute inset-0 cursor-grab active:cursor-grabbing"
+        style={{
+          transform: `translate(${offsetX}px, ${offsetY}px) rotate(${rotation}deg)`,
+          transition: dragging ? "none" : "transform 180ms ease-out",
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        {hint && (
+          <div
+            className={`pointer-events-none absolute z-10 rounded-full px-4 py-1.5 text-xs font-semibold tracking-wide uppercase ${HINT_CLASS[hint]}`}
+          >
+            {HINT_LABEL[hint]}
+          </div>
+        )}
+        <DeckCard entry={current} />
+      </div>
 
       <div className="absolute -bottom-14 left-0 right-0 flex justify-center gap-3">
         <button
           type="button"
           disabled={!interactive}
-          onClick={() => current && onSkip()}
+          onClick={onSkip}
           className={`${GHOST_LIGHT} px-5 py-2 text-sm`}
         >
           Skip
@@ -143,7 +181,15 @@ export function Deck({
         <button
           type="button"
           disabled={!interactive}
-          onClick={() => current && onBack(current)}
+          onClick={onSave}
+          className="rounded-full border border-amber-200 bg-amber-50 px-5 py-2 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:opacity-50"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          disabled={!interactive}
+          onClick={() => onBack(current)}
           className="rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
         >
           Back

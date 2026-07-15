@@ -43,7 +43,7 @@ export function DeckCard({ entry }: { entry: ConvictionEntry }) {
       )}
 
       <p className="mt-5 text-center text-[11px] tracking-wide text-zinc-400 uppercase">
-        Swipe left to skip · right to back
+        Skip left · save up · back right
       </p>
     </article>
   );

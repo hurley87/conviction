@@ -21,6 +21,8 @@ import type { ConvictionEntry } from "@/lib/verbs/types";
 type ConvictionCardProps = {
   entry: ConvictionEntry;
   backer: BackerApi;
+  /** Marked via deck save verb (issue #24). */
+  saved?: boolean;
 };
 
 function BackedByList({ handles }: { handles: string[] }) {
@@ -144,7 +146,7 @@ function BackButton({
   );
 }
 
-export function ConvictionCard({ entry, backer }: ConvictionCardProps) {
+export function ConvictionCard({ entry, backer, saved = false }: ConvictionCardProps) {
   const [series, setSeries] = useState<number[]>([]);
 
   useEffect(() => {
@@ -167,7 +169,14 @@ export function ConvictionCard({ entry, backer }: ConvictionCardProps) {
     <article className="rounded-2xl border border-zinc-200 bg-white p-5 text-left shadow-sm">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold text-zinc-900">@{entry.handle}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-zinc-900">@{entry.handle}</p>
+            {saved && (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-amber-800 uppercase">
+                Saved
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-xs text-zinc-400">
             {formatTimestamp(entry.createdAt)}
           </p>

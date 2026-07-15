@@ -1,13 +1,15 @@
 "use client";
 
 // Client feed board with mock/live account split (issue #5).
+// Saved filter reads the same swipe-state store as the deck (issue #24).
 
 import { useMemo } from "react";
-import { Feed } from "@/components/feed";
+import { Feed, type FeedFilter } from "@/components/feed";
 import { useAccount } from "@/components/account/account-context";
 import { useConvictionAccount } from "@/hooks/use-conviction-account";
 import { useLiveTradeSigners } from "@/hooks/use-live-trade-signers";
 import { useBacker } from "@/hooks/use-backer";
+import { useSwipeState } from "@/hooks/use-swipe-state";
 import { useUASnapshot } from "@/hooks/use-ua-snapshot";
 import { IS_LIVE } from "@/lib/env";
 import { getUAClient } from "@/lib/ua";
@@ -16,12 +18,20 @@ import type { ConvictionEntry } from "@/lib/verbs/types";
 
 type FeedBoardProps = {
   convictions: ConvictionEntry[];
+  filter?: FeedFilter;
 };
 
-function MockFeedBoard({ convictions }: FeedBoardProps) {
-  const { markUpgraded } = useAccount();
+function MockFeedBoard({
+  convictions,
+  filter,
+}: {
+  convictions: ConvictionEntry[];
+  filter: FeedFilter;
+}) {
+  const { markUpgraded, handle } = useAccount();
   const ua = useMemo(() => new MockUAClient(), []);
   const { balance } = useUASnapshot(ua);
+  const { state: swipeState } = useSwipeState(handle);
   const backer = useBacker({
     ua,
     balance,
@@ -30,13 +40,27 @@ function MockFeedBoard({ convictions }: FeedBoardProps) {
     onUpgraded: markUpgraded,
   });
 
-  return <Feed convictions={convictions} backer={backer} />;
+  return (
+    <Feed
+      convictions={convictions}
+      backer={backer}
+      swipeState={swipeState}
+      filter={filter}
+    />
+  );
 }
 
-function LiveFeedBoard({ convictions }: FeedBoardProps) {
+function LiveFeedBoard({
+  convictions,
+  filter,
+}: {
+  convictions: ConvictionEntry[];
+  filter: FeedFilter;
+}) {
   const account = useConvictionAccount();
-  const { markUpgraded } = useAccount();
+  const { markUpgraded, handle } = useAccount();
   const signers = useLiveTradeSigners();
+  const { state: swipeState } = useSwipeState(handle ?? account.handle);
   const ua = useMemo(
     () => (account.address ? getUAClient(account.address) : null),
     [account.address],
@@ -50,13 +74,23 @@ function LiveFeedBoard({ convictions }: FeedBoardProps) {
     onUpgraded: markUpgraded,
   });
 
-  return <Feed convictions={convictions} backer={backer} />;
+  return (
+    <Feed
+      convictions={convictions}
+      backer={backer}
+      swipeState={swipeState}
+      filter={filter}
+    />
+  );
 }
 
-export function FeedBoard({ convictions }: FeedBoardProps) {
+export function FeedBoard({
+  convictions,
+  filter = "all",
+}: FeedBoardProps) {
   return IS_LIVE ? (
-    <LiveFeedBoard convictions={convictions} />
+    <LiveFeedBoard convictions={convictions} filter={filter} />
   ) : (
-    <MockFeedBoard convictions={convictions} />
+    <MockFeedBoard convictions={convictions} filter={filter} />
   );
 }
