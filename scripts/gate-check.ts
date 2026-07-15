@@ -135,3 +135,7 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
+// Mark as a module so `requireEnv` does not collide with scripts/smoke-spine.ts
+// under the root tsconfig (non-module scripts share one global scope).
+export {};
