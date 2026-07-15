@@ -49,19 +49,18 @@ export function useDeckBackFlow(
     setFlow({ status: "browse" });
   }, []);
 
-  const onSkip = useCallback(() => {
-    if (flow.status !== "browse") return;
-    const current = cards[0];
-    if (!current) return;
-    record(current.entryId, "skip");
-  }, [cards, flow.status, record]);
+  const recordDeckVerb = useCallback(
+    (verb: "skip" | "save") => {
+      if (flow.status !== "browse") return;
+      const current = cards[0];
+      if (!current) return;
+      record(current.entryId, verb);
+    },
+    [cards, flow.status, record],
+  );
 
-  const onSave = useCallback(() => {
-    if (flow.status !== "browse") return;
-    const current = cards[0];
-    if (!current) return;
-    record(current.entryId, "save");
-  }, [cards, flow.status, record]);
+  const onSkip = useCallback(() => recordDeckVerb("skip"), [recordDeckVerb]);
+  const onSave = useCallback(() => recordDeckVerb("save"), [recordDeckVerb]);
 
   const onBackSwipe = useCallback(
     (entry: ConvictionEntry) => {

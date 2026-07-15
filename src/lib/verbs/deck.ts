@@ -42,11 +42,3 @@ export function fractionChipLabel(
     fraction >= 1 ? "All" : `${Math.round(fraction * 100)}%`;
   return { pct, usd: sizeUsdForFraction(balance, fraction) };
 }
-
-/** True when the deck index is past the last card (exhausted end state). */
-export function isDeckExhausted(
-  cards: ConvictionEntry[],
-  index: number,
-): boolean {
-  return cards.length === 0 || index >= cards.length;
-}

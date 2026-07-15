@@ -2,7 +2,7 @@
 
 // Per-handle swipe / save persistence for deck + feed Saved chip (issue #24).
 
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import {
   EMPTY_SWIPE_STATE,
   notifySwipeStateChanged,
@@ -10,26 +10,18 @@ import {
   recordSwipe,
   subscribeSwipeState,
   writeSwipeState,
-  type SwipeState,
   type SwipeVerb,
 } from "@/lib/verbs/swipe-state";
 
-function getServerSnapshot(): SwipeState {
-  return EMPTY_SWIPE_STATE;
-}
-
 export function useSwipeState(handle: string | null) {
-  const subscribe = useCallback(
-    (onStoreChange: () => void) => subscribeSwipeState(onStoreChange),
-    [],
+  const state = useSyncExternalStore(
+    subscribeSwipeState,
+    () => {
+      if (!handle || typeof window === "undefined") return EMPTY_SWIPE_STATE;
+      return readSwipeState(handle, window.localStorage);
+    },
+    () => EMPTY_SWIPE_STATE,
   );
-
-  const getSnapshot = useCallback((): SwipeState => {
-    if (!handle || typeof window === "undefined") return EMPTY_SWIPE_STATE;
-    return readSwipeState(handle, window.localStorage);
-  }, [handle]);
-
-  const state = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   const record = useCallback(
     (entryId: string, verb: SwipeVerb) => {
@@ -45,5 +37,5 @@ export function useSwipeState(handle: string | null) {
     [handle],
   );
 
-  return useMemo(() => ({ state, record }), [state, record]);
+  return { state, record };
 }

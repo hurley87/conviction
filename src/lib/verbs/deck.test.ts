@@ -3,7 +3,6 @@ import {
   DECK_SIZE_FRACTIONS,
   fractionChipLabel,
   isDeckCard,
-  isDeckExhausted,
   orderDeckCards,
   sizeUsdForFraction,
 } from "@/lib/verbs/deck";
@@ -98,15 +97,5 @@ describe("fractionChipLabel", () => {
 
   it("labels full balance as All", () => {
     expect(fractionChipLabel(BALANCE, 1).pct).toBe("All");
-  });
-});
-
-describe("isDeckExhausted", () => {
-  it("is exhausted when index is past the last card", () => {
-    expect(isDeckExhausted(DECK_SEED_CARDS, 0)).toBe(false);
-    expect(isDeckExhausted(DECK_SEED_CARDS, DECK_SEED_CARDS.length)).toBe(
-      true,
-    );
-    expect(isDeckExhausted([], 0)).toBe(true);
   });
 });

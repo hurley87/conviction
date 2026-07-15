@@ -2,6 +2,11 @@
 // App-level only: the deck consumes; the feed archives. Persistence is keyed
 // by handle so a reload / re-login does not resurface acted-on cards.
 
+import {
+  notifyLocalStorageEvent,
+  subscribeLocalStorageEvent,
+  type StorageLike,
+} from "@/lib/local-storage-store";
 import type { ConvictionEntry } from "@/lib/verbs/types";
 
 export type SwipeVerb = "skip" | "save" | "back";
@@ -11,15 +16,22 @@ export type SwipeState = {
   byId: Record<string, SwipeVerb>;
 };
 
-export type StorageLike = {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-};
-
 export const SWIPE_STATE_STORAGE_PREFIX = "conviction:swipe-state:";
 export const SWIPE_STATE_STORAGE_EVENT = "conviction:swipe-state-storage";
 
+/** Pointer travel (px) required to commit a swipe verb. */
+export const SWIPE_COMMIT_PX = 110;
+/** Pointer travel (px) to show the in-flight verb hint. */
+export const SWIPE_HINT_PX = 40;
+
 export const EMPTY_SWIPE_STATE: SwipeState = { byId: {} };
+
+/** Referential cache so useSyncExternalStore snapshots stay stable. */
+let snapshotCache: {
+  key: string;
+  raw: string | null;
+  state: SwipeState;
+} | null = null;
 
 export function swipeStateStorageKey(handle: string): string {
   return `${SWIPE_STATE_STORAGE_PREFIX}${handle.trim().toLowerCase()}`;
@@ -56,7 +68,18 @@ export function readSwipeState(
   handle: string,
   storage: StorageLike,
 ): SwipeState {
-  return parseSwipeState(storage.getItem(swipeStateStorageKey(handle)));
+  const key = swipeStateStorageKey(handle);
+  const raw = storage.getItem(key);
+  if (
+    snapshotCache &&
+    snapshotCache.key === key &&
+    snapshotCache.raw === raw
+  ) {
+    return snapshotCache.state;
+  }
+  const state = parseSwipeState(raw);
+  snapshotCache = { key, raw, state };
+  return state;
 }
 
 export function writeSwipeState(
@@ -64,7 +87,10 @@ export function writeSwipeState(
   state: SwipeState,
   storage: StorageLike,
 ): void {
-  storage.setItem(swipeStateStorageKey(handle), JSON.stringify(state));
+  const key = swipeStateStorageKey(handle);
+  const raw = JSON.stringify(state);
+  storage.setItem(key, raw);
+  snapshotCache = { key, raw, state };
 }
 
 /** Record a verb for an entry (idempotent overwrite). */
@@ -89,12 +115,6 @@ export function isSaved(state: SwipeState, entryId: string): boolean {
   return state.byId[entryId] === "save";
 }
 
-export function savedEntryIds(state: SwipeState): string[] {
-  return Object.entries(state.byId)
-    .filter(([, verb]) => verb === "save")
-    .map(([id]) => id);
-}
-
 /** Feed archive filter: keep only cards the user saved. */
 export function filterSavedConvictions(
   convictions: ConvictionEntry[],
@@ -103,17 +123,27 @@ export function filterSavedConvictions(
   return convictions.filter((c) => isSaved(state, c.entryId));
 }
 
+/**
+ * Map pointer delta to a swipe verb. Vertical (up) wins when it dominates;
+ * otherwise horizontal left = skip, right = back.
+ */
+export function resolveSwipeVerb(
+  dx: number,
+  dy: number,
+  thresholdPx: number,
+): SwipeVerb | null {
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+  if (dy <= -thresholdPx && absY >= absX) return "save";
+  if (dx <= -thresholdPx && absX > absY) return "skip";
+  if (dx >= thresholdPx && absX > absY) return "back";
+  return null;
+}
+
 export function notifySwipeStateChanged(): void {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new Event(SWIPE_STATE_STORAGE_EVENT));
+  notifyLocalStorageEvent(SWIPE_STATE_STORAGE_EVENT);
 }
 
 export function subscribeSwipeState(onStoreChange: () => void): () => void {
-  if (typeof window === "undefined") return () => {};
-  window.addEventListener("storage", onStoreChange);
-  window.addEventListener(SWIPE_STATE_STORAGE_EVENT, onStoreChange);
-  return () => {
-    window.removeEventListener("storage", onStoreChange);
-    window.removeEventListener(SWIPE_STATE_STORAGE_EVENT, onStoreChange);
-  };
+  return subscribeLocalStorageEvent(SWIPE_STATE_STORAGE_EVENT, onStoreChange);
 }

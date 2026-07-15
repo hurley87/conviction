@@ -7,7 +7,9 @@ import {
   readSwipeState,
   recordSwipe,
   remainingDeckCards,
-  savedEntryIds,
+  resolveSwipeVerb,
+  SWIPE_COMMIT_PX,
+  SWIPE_HINT_PX,
   swipeStateStorageKey,
   writeSwipeState,
 } from "@/lib/verbs/swipe-state";
@@ -87,12 +89,38 @@ describe("saved filter", () => {
     );
     expect(isSaved(state, a.entryId)).toBe(true);
     expect(isSaved(state, b.entryId)).toBe(false);
-    expect(savedEntryIds(state)).toEqual([a.entryId]);
 
     const feed: ConvictionEntry[] = [a, b];
     expect(filterSavedConvictions(feed, state).map((c) => c.entryId)).toEqual([
       a.entryId,
     ]);
+  });
+});
+
+describe("resolveSwipeVerb", () => {
+  it("maps axes at commit threshold", () => {
+    expect(resolveSwipeVerb(-SWIPE_COMMIT_PX, 0, SWIPE_COMMIT_PX)).toBe("skip");
+    expect(resolveSwipeVerb(SWIPE_COMMIT_PX, 0, SWIPE_COMMIT_PX)).toBe("back");
+    expect(resolveSwipeVerb(0, -SWIPE_COMMIT_PX, SWIPE_COMMIT_PX)).toBe("save");
+  });
+
+  it("lets vertical dominate diagonals", () => {
+    expect(
+      resolveSwipeVerb(-50, -SWIPE_COMMIT_PX, SWIPE_COMMIT_PX),
+    ).toBe("save");
+    expect(
+      resolveSwipeVerb(-SWIPE_COMMIT_PX, -50, SWIPE_COMMIT_PX),
+    ).toBe("skip");
+  });
+
+  it("returns null under threshold", () => {
+    expect(resolveSwipeVerb(-SWIPE_HINT_PX, 0, SWIPE_COMMIT_PX)).toBeNull();
+    expect(resolveSwipeVerb(0, -SWIPE_HINT_PX, SWIPE_COMMIT_PX)).toBeNull();
+  });
+
+  it("uses the same policy for hint threshold", () => {
+    expect(resolveSwipeVerb(-SWIPE_HINT_PX, 0, SWIPE_HINT_PX)).toBe("skip");
+    expect(resolveSwipeVerb(0, -SWIPE_HINT_PX, SWIPE_HINT_PX)).toBe("save");
   });
 });
 
