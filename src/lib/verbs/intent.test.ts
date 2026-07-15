@@ -172,15 +172,23 @@ describe("validateIntent", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("allows buying BTC (wired on the settlement chain)", () => {
+  it("allows buying BTC on Base (its only routable settlement chain)", () => {
     const result = validateIntent(
-      { toAsset: "btc", sizeUsd: 25, destChain: "Arbitrum" },
+      { toAsset: "btc", sizeUsd: 25, destChain: "Base" },
       balance,
     );
     expect(result.ok).toBe(true);
   });
 
-  it("allows buying ARB (wired on Arbitrum, the hero card)", () => {
+  it("rejects buying BTC on Arbitrum — no warm-up router coverage there", () => {
+    const result = validateIntent(
+      { toAsset: "btc", sizeUsd: 25, destChain: "Arbitrum" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("ARB passes static validation (fails at quote time with no-route — the gate-kill candidate)", () => {
     const result = validateIntent(
       { toAsset: "arb", sizeUsd: 25, destChain: "Arbitrum" },
       balance,
@@ -252,10 +260,14 @@ describe("pickSettlementChain", () => {
 
   it("defaults to Arbitrum when nothing is funded", () => {
     const empty: UniversalBalance = { totalUsd: 0, sources: [] };
-    expect(pickSettlementChain("btc", empty)).toBe("Arbitrum");
+    expect(pickSettlementChain("eth", empty)).toBe("Arbitrum");
   });
 
-  it("buying ARB settles on Arbitrum even when the funds sit on Base (the money shot)", () => {
+  it("BTC settles on Base — its only wired chain", () => {
+    expect(pickSettlementChain("btc", balance)).toBe("Base");
+  });
+
+  it("an ARB buy would settle on Arbitrum, its only wired chain", () => {
     const baseHeavy: UniversalBalance = {
       totalUsd: 100,
       sources: [

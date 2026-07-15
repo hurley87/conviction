@@ -13,7 +13,7 @@
   "dependencies": {
     "@lifi/sdk": "^4.1.0",
     "@neondatabase/serverless": "^1.1.0",
-    "@particle-network/universal-account-sdk": "^2.0.0-beta.3",
+    "@particle-network/universal-account-sdk": "^2.0.3",
     "@privy-io/react-auth": "^3.32.2",
     "ai": "^7.0.9",
     "ethers": "^6.17.0",

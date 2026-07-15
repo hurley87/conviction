@@ -70,9 +70,8 @@ describe("buildConvertPayload", () => {
 });
 
 describe("defaultTradeConfig", () => {
-  it("enables universal gas and a 1% slippage floor", () => {
+  it("sets a 1% slippage floor (gas abstraction is always-on in SDK v2)", () => {
     const config = defaultTradeConfig();
-    expect(config.universalGas).toBe(true);
     expect(config.slippageBps).toBe(100);
     expect(config.usePrimaryTokens).toBeUndefined();
   });
