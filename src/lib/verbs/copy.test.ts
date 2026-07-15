@@ -63,7 +63,7 @@ describe("copyTradeSizeUsd", () => {
 });
 
 describe("copyIntent", () => {
-  it("copies direction and picks dest from backer balance", () => {
+  it("copies direction and mirrors the original settlement chain", () => {
     const intent = copyIntent(SEED_ENTRY.trade, BALANCE_242);
     expect(intent.toAsset).toBe("cash");
     expect(intent.fromAsset).toBe("eth");
@@ -76,6 +76,25 @@ describe("copyIntent", () => {
       BALANCE_242,
     );
     expect(intent.fromAsset).toBeUndefined();
+  });
+
+  it("keeps an ETH card on Arbitrum even when the backer is Base-funded", () => {
+    const baseOnly: UniversalBalance = {
+      totalUsd: 50,
+      sources: [{ chain: "Base", asset: "USDC", usd: 50 }],
+    };
+    const intent = copyIntent(
+      {
+        fromAsset: "cash",
+        fromChain: "Base",
+        toAsset: "eth",
+        toChain: "Arbitrum",
+        sizeUsd: 20,
+      },
+      baseOnly,
+    );
+    expect(intent.toAsset).toBe("eth");
+    expect(intent.destChain).toBe("Arbitrum");
   });
 
   it("re-targets a concrete-token conviction exactly (same token, its chain)", () => {

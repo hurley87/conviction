@@ -16,7 +16,7 @@ import {
   type RawTransaction,
   userOpsNeeding7702,
 } from "@/lib/ua/trade";
-import { buildReceipt } from "@/lib/verbs/receipt";
+import { buildReceipt, inferSpentSymbol } from "@/lib/verbs/receipt";
 import { shapeQuote, isBelowFloor } from "@/lib/verbs/quote";
 import { narrateResult } from "@/lib/verbs/intent";
 import {
@@ -255,6 +255,7 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
           destChain: freshQuote.destChain,
           toAsset: freshQuote.toAsset,
           receivedSymbol: freshQuote.receivedSymbol,
+          sourceSymbol: inferSpentSymbol(intent),
         },
         raw.userOps,
       );

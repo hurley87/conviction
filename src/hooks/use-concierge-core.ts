@@ -10,7 +10,7 @@ import {
 } from "@/lib/verbs/feed-summary";
 import {
   parseIntentHeuristic,
-  pickSettlementChain,
+  resolveDestChain,
   validateIntent,
 } from "@/lib/verbs/intent";
 import { generateReceiptSlug } from "@/lib/verbs/receipt";
@@ -137,11 +137,12 @@ export function useConciergeCore(
       }
       setClarifyContext(null);
 
-      // Settle where the funds already are so a buy doesn't bridge (cash stays
-      // on Arbitrum, ADR 0005).
+      // Default: settle where funds already are (crypto) / Arbitrum (cash).
+      // Explicit "on Arbitrum" / "on Base" wins — needed for the Base→Arb ETH
+      // money shot when the wallet is Base-funded.
       const intent = {
         ...parsed.intent,
-        destChain: pickSettlementChain(parsed.intent.toAsset, balance),
+        destChain: resolveDestChain(parsed.intent.toAsset, balance, combined),
       };
       const validation = validateIntent(intent, balance);
       if (!validation.ok) {

@@ -4,6 +4,8 @@ import {
   validateIntent,
   resolveSizeUsd,
   pickSettlementChain,
+  parseExplicitDestChain,
+  resolveDestChain,
 } from "@/lib/verbs/intent";
 import type { TradeIntent, UniversalBalance } from "@/lib/verbs/types";
 
@@ -38,6 +40,24 @@ describe("parseIntent", () => {
     expect(result.kind).toBe("intent");
     if (result.kind !== "intent") return;
     expect(result.intent.toAsset).toBe("cash");
+    expect(result.intent.destChain).toBe("Arbitrum");
+  });
+
+  it("parses explicit ETH settlement on Arbitrum (money-shot phrasing)", () => {
+    const result = parseIntent("buy $20 of ETH on Arbitrum");
+    expect(result.kind).toBe("intent");
+    if (result.kind !== "intent") return;
+    expect(result.intent.toAsset).toBe("eth");
+    expect(result.intent.sizeUsd).toBe(20);
+    expect(result.intent.destChain).toBe("Arbitrum");
+  });
+
+  it("parses explicit settlement on Base", () => {
+    const result = parseIntent("buy $10 of ETH on Base");
+    expect(result.kind).toBe("intent");
+    if (result.kind !== "intent") return;
+    expect(result.intent.toAsset).toBe("eth");
+    expect(result.intent.destChain).toBe("Base");
   });
 
   it("parses explicit 'all' fraction", () => {
@@ -323,6 +343,31 @@ describe("pickSettlementChain", () => {
       ],
     };
     expect(pickSettlementChain("arb", baseHeavy)).toBe("Arbitrum");
+  });
+});
+
+describe("parseExplicitDestChain / resolveDestChain", () => {
+  const baseHeavy: UniversalBalance = {
+    totalUsd: 100,
+    sources: [{ chain: "Base", asset: "USDC", usd: 100 }],
+  };
+
+  it("reads on/settle-on chain phrases", () => {
+    expect(parseExplicitDestChain("buy $20 of ETH on Arbitrum")).toBe(
+      "Arbitrum",
+    );
+    expect(parseExplicitDestChain("settle on Base")).toBe("Base");
+    expect(parseExplicitDestChain("buy $20 of ETH")).toBeUndefined();
+  });
+
+  it("forces Arbitrum for a Base-funded ETH buy when the user names it", () => {
+    expect(resolveDestChain("eth", baseHeavy, "buy $20 of ETH on Arbitrum")).toBe(
+      "Arbitrum",
+    );
+  });
+
+  it("falls back to pickSettlementChain when no chain is named", () => {
+    expect(resolveDestChain("eth", baseHeavy, "buy $20 of ETH")).toBe("Base");
   });
 });
 

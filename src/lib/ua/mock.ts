@@ -10,7 +10,7 @@ import type {
 } from "@/lib/ua/types";
 import type { RawTransaction } from "@/lib/ua/trade";
 import { ARBITRUM_CHAIN_ID, BASE_CHAIN_ID } from "@/lib/verbs/chains";
-import { buildReceipt } from "@/lib/verbs/receipt";
+import { buildReceipt, inferSpentSymbol } from "@/lib/verbs/receipt";
 import { shapeQuote, isBelowFloor } from "@/lib/verbs/quote";
 import { narrateResult } from "@/lib/verbs/intent";
 import {
@@ -177,6 +177,7 @@ export class MockUAClient implements UAClient {
         destChain: freshQuote.destChain,
         toAsset: freshQuote.toAsset,
         receivedSymbol: freshQuote.receivedSymbol,
+        sourceSymbol: inferSpentSymbol(intent),
       },
       raw.userOps,
     );

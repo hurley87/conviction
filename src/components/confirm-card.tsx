@@ -1,11 +1,18 @@
 // Jargon-free confirm card (ADR 0011). Dollars in → dollars out, fee, ETA.
-// No chain/token vocabulary — explicit human confirmation required.
+// No chain vocabulary — destination named only as cash or a ticker. Explicit
+// human confirmation required.
 
 import { formatEta } from "@/lib/verbs/quote";
 import { formatUsd } from "@/lib/format";
+import { productAssetPrimarySymbol } from "@/lib/verbs/assets";
 import type { TradeQuote } from "@/lib/verbs/types";
 import { PRIMARY_LIGHT, GHOST_LIGHT } from "@/components/button-styles";
 import { TradePendingStatus } from "@/components/trade-pending";
+
+function destinationLabel(quote: TradeQuote): string {
+  if (quote.toAsset === "cash") return "cash";
+  return quote.receivedSymbol ?? productAssetPrimarySymbol(quote.toAsset);
+}
 
 export function ConfirmCard({
   quote,
@@ -34,7 +41,7 @@ export function ConfirmCard({
         <div className="flex items-baseline justify-between">
           <span className="text-sm text-zinc-500">You&apos;ll get</span>
           <span className="text-xl font-semibold tabular-nums text-emerald-600">
-            ≈{formatUsd(quote.dollarsOut)} in cash
+            ≈{formatUsd(quote.dollarsOut)} in {destinationLabel(quote)}
           </span>
         </div>
         <div className="flex items-baseline justify-between border-t border-zinc-100 pt-3">

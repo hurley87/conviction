@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   buildReceipt,
   buildReceiptSummary,
+  inferSpentSymbol,
   legsFromUserOps,
+  resolveReceiptSourceChain,
 } from "@/lib/verbs/receipt";
 import { explorerUrl } from "@/lib/verbs/chains";
 
@@ -31,20 +33,71 @@ describe("legsFromUserOps", () => {
   });
 });
 
+describe("resolveReceiptSourceChain", () => {
+  it("prefers a non-destination leg over a mis-ordered quote source", () => {
+    const legs = legsFromUserOps([
+      { chainId: 8453, userOpHash: "0xbase" },
+      { chainId: 42161, userOpHash: "0xarb" },
+    ]);
+    expect(
+      resolveReceiptSourceChain("Arbitrum", "Arbitrum", legs),
+    ).toBe("Base");
+  });
+
+  it("keeps the quoted source on same-chain receipts", () => {
+    const legs = legsFromUserOps([
+      { chainId: 42161, userOpHash: "0xarb" },
+    ]);
+    expect(
+      resolveReceiptSourceChain("Arbitrum", "Arbitrum", legs),
+    ).toBe("Arbitrum");
+  });
+});
+
+describe("inferSpentSymbol", () => {
+  it("uses fromAsset when selling", () => {
+    expect(
+      inferSpentSymbol({
+        fromAsset: "eth",
+        toAsset: "cash",
+        destChain: "Arbitrum",
+      }),
+    ).toBe("ETH");
+  });
+
+  it("defaults to USDC for cash-funded buys", () => {
+    expect(
+      inferSpentSymbol({ toAsset: "eth", destChain: "Arbitrum" }),
+    ).toBe("USDC");
+  });
+});
+
 describe("buildReceiptSummary", () => {
-  it("produces a plain net summary with the destination token", () => {
-    const summary = buildReceiptSummary(25, 24.95, "Base", "Arbitrum", "USDC");
-    expect(summary).toContain("Base");
-    expect(summary).toContain("Arbitrum");
-    expect(summary).toContain("$25.00");
-    expect(summary).toContain("$24.95");
-    expect(summary).toContain("USDC");
+  it("names spent and received tokens across chains", () => {
+    const summary = buildReceiptSummary(
+      25,
+      24.95,
+      "Base",
+      "Arbitrum",
+      "USDC",
+    );
+    expect(summary).toBe(
+      "$25.00 USDC from Base → $24.95 USDC on Arbitrum",
+    );
   });
 
   it("shows a non-cash destination token", () => {
-    const summary = buildReceiptSummary(0.5, 0.46, "Arbitrum", "Arbitrum", "ETH");
-    expect(summary).toContain("ETH");
-    expect(summary).not.toContain("USDC");
+    const summary = buildReceiptSummary(
+      20,
+      20.01,
+      "Base",
+      "Arbitrum",
+      "ETH",
+      "USDC",
+    );
+    expect(summary).toBe(
+      "$20.00 USDC from Base → $20.01 ETH on Arbitrum",
+    );
   });
 });
 
@@ -59,6 +112,7 @@ describe("buildReceipt", () => {
         sourceChain: "Base",
         destChain: "Arbitrum",
         toAsset: "cash",
+        sourceSymbol: "USDC",
       },
       [
         { chainId: 8453, userOpHash: "0xsource" },
@@ -70,9 +124,33 @@ describe("buildReceipt", () => {
     expect(receipt.dollarsIn).toBe(25);
     expect(receipt.dollarsOut).toBe(24.95);
     expect(receipt.feeUsd).toBe(0.05);
-    expect(receipt.summary).toContain("Base");
-    expect(receipt.summary).toContain("Arbitrum");
-    expect(receipt.summary).toContain("USDC");
+    expect(receipt.summary).toBe(
+      "$25.00 USDC from Base → $24.95 USDC on Arbitrum",
+    );
+  });
+
+  it("corrects a mislabeled same-chain summary when legs show a foreign source", () => {
+    const receipt = buildReceipt(
+      "10d7aa2987f4",
+      {
+        dollarsIn: 20,
+        dollarsOut: 20.01,
+        feeUsd: 0.43,
+        // Quote wrongly reported Arbitrum as source (SDK debit order).
+        sourceChain: "Arbitrum",
+        destChain: "Arbitrum",
+        toAsset: "eth",
+        receivedSymbol: "ETH",
+        sourceSymbol: "USDC",
+      },
+      [
+        { chainId: 8453, userOpHash: "0xbase" },
+        { chainId: 42161, userOpHash: "0xarb" },
+      ],
+    );
+    expect(receipt.summary).toBe(
+      "$20.00 USDC from Base → $20.01 ETH on Arbitrum",
+    );
   });
 
   it("labels with the real on-chain token when the SDK reports it", () => {
@@ -86,6 +164,7 @@ describe("buildReceipt", () => {
         destChain: "Arbitrum",
         toAsset: "eth",
         receivedSymbol: "wstETH",
+        sourceSymbol: "USDC",
       },
       [{ chainId: 42161, userOpHash: "0xdest" }],
     );

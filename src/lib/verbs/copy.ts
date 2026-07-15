@@ -3,7 +3,7 @@
 // funds sit (ADR 0002).
 
 import type { UAClient } from "@/lib/ua/types";
-import { pickSettlementChain, validateIntent } from "@/lib/verbs/intent";
+import { validateIntent } from "@/lib/verbs/intent";
 import { generateReceiptSlug } from "@/lib/verbs/receipt";
 import {
   FloorAbortError,
@@ -47,13 +47,13 @@ export function copyTradeSizeUsd(
 }
 
 /** Build a trade intent that copies the conviction's direction, settling on the
- * chain that best matches the backer's funded balance — not the original's.
- * A concrete-token conviction re-targets the exact token (same address, same
- * chain — the token defines where it settles), still sourcing from wherever
- * the backer's funds sit. */
+ * original's chain so the back mirrors the published position. Funds still
+ * source from wherever the backer holds them — a Base-funded back of an
+ * Arbitrum-settled ETH card is the cross-chain money shot. A concrete-token
+ * conviction re-targets the exact token (same address, same chain). */
 export function copyIntent(
   trade: ConvictionTrade,
-  balance: UniversalBalance,
+  _balance: UniversalBalance,
 ): TradeIntent {
   if (trade.token) {
     return {
@@ -64,7 +64,7 @@ export function copyIntent(
   }
   const intent: TradeIntent = {
     toAsset: trade.toAsset,
-    destChain: pickSettlementChain(trade.toAsset, balance),
+    destChain: trade.toChain,
   };
   if (trade.fromAsset !== "cash") {
     intent.fromAsset = trade.fromAsset;

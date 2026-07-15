@@ -105,9 +105,11 @@ function parseFromAsset(text: string): ProductAsset | undefined {
 }
 
 function parseToAsset(text: string): ProductAsset {
-  // "buy/get ETH", "buy 0.5 of ETH" — the asset being acquired is the dest.
+  // "buy/get ETH", "buy $20 of ETH", "buy 0.5 of ETH" — the asset being
+  // acquired is the dest. Allow an optional dollar amount between the verb
+  // and the asset so money-shot phrasing still parses.
   const buyMatch = text.match(
-    /\b(?:buy|buying|get|acquire|purchase)\s+(?:[\d.,]+\s+)?(?:of\s+)?(?:my\s+)?(\w+)/i,
+    /\b(?:buy|buying|get|acquire|purchase)\s+(?:\$?\s*[\d.,]+\s+)?(?:of\s+)?(?:my\s+)?(\w+)/i,
   );
   if (buyMatch) {
     const asset = parseAssetWord(buyMatch[1]!);
@@ -116,16 +118,53 @@ function parseToAsset(text: string): ProductAsset {
 
   // "to/into/for/on <asset>" names the destination — "spend half on ETH",
   // "move $25 to cash". ("on" stays out of parseFromAsset, so "cash in" /
-  // "sell on" don't get misread as a buy.)
+  // "sell on" don't get misread as a buy.) Skip chain words — those are
+  // settlement via parseExplicitDestChain, not assets.
   const toMatch = text.match(
     /\b(?:to|into|for|on)\s+(?:my\s+)?(\w+)/i,
   );
   if (toMatch) {
-    const asset = parseAssetWord(toMatch[1]!);
-    if (asset) return asset;
+    const word = toMatch[1]!.toLowerCase();
+    if (word !== "arbitrum" && word !== "base") {
+      const asset = parseAssetWord(word);
+      if (asset) return asset;
+    }
   }
   if (/\b(?:cash out|to cash|into cash)\b/i.test(text)) return "cash";
   return DEFAULT_TO_ASSET;
+}
+
+const DEST_CHAIN_WORDS: Record<string, DestChain> = {
+  arbitrum: "Arbitrum",
+  base: "Base",
+};
+
+/**
+ * Detect an explicit settlement chain in plain English ("on Arbitrum",
+ * "settle on Base"). Used for the desk/demo money shot: Base-funded buy of
+ * ETH that must land on Arbitrum (ADR 0005 + Particle cross-chain proof).
+ * Returns undefined when the user did not name a chain — callers then use
+ * pickSettlementChain.
+ */
+export function parseExplicitDestChain(text: string): DestChain | undefined {
+  const match = text.match(
+    /\b(?:settle(?:s|d|ing)?\s+)?(?:on|onto|to)\s+(arbitrum|base)\b/i,
+  );
+  if (!match) return undefined;
+  return DEST_CHAIN_WORDS[match[1]!.toLowerCase()];
+}
+
+/**
+ * Prefer an explicit settlement chain from the user's words; otherwise pick
+ * where funds already sit (crypto buys) / Arbitrum (cash, ADR 0005).
+ */
+export function resolveDestChain(
+  toAsset: ProductAsset,
+  balance: UniversalBalance,
+  userText?: string,
+): DestChain {
+  const explicit = userText ? parseExplicitDestChain(userText) : undefined;
+  return explicit ?? pickSettlementChain(toAsset, balance);
 }
 
 /**
@@ -150,7 +189,7 @@ export function parseIntentHeuristic(text: string): ParseResult {
 
   const intent: TradeIntent = {
     toAsset,
-    destChain: DEFAULT_DEST_CHAIN,
+    destChain: parseExplicitDestChain(trimmed) ?? DEFAULT_DEST_CHAIN,
   };
   if (fromAsset) intent.fromAsset = fromAsset;
   if (sizeUsd != null) intent.sizeUsd = sizeUsd;

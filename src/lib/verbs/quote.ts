@@ -87,10 +87,21 @@ export function extractFeeUsd(rawTx: unknown): number | undefined {
   return summed > 0 ? summed : undefined;
 }
 
-/** Infer source chain from the SDK's decr token changes. */
-export function inferSourceChain(changes: RawTokenChanges): string {
-  const first = changes.decr?.[0]?.token?.chainId;
-  return chainName(first);
+/** Infer source chain from the SDK's decr token changes. When a destination is
+ * known, prefer a debit chain that isn't the dest — the SDK often lists the
+ * settlement chain first even when funds also left another chain. */
+export function inferSourceChain(
+  changes: RawTokenChanges,
+  destChain?: string,
+): string {
+  const chainIds = (changes.decr ?? [])
+    .map((d) => d.token?.chainId)
+    .filter((id): id is number => id != null);
+  if (destChain) {
+    const foreign = chainIds.find((id) => chainName(id) !== destChain);
+    if (foreign != null) return chainName(foreign);
+  }
+  return chainName(chainIds[0]);
 }
 
 /** Map SDK tokenChanges + intent into a jargon-free TradeQuote. */
@@ -122,7 +133,7 @@ export function shapeQuote(
     feeUsd,
     etaSeconds,
     floorUsd,
-    sourceChain: inferSourceChain(changes),
+    sourceChain: inferSourceChain(changes, intent.destChain),
     destChain: intent.destChain as DestChain,
     toAsset: intent.toAsset,
     receivedSymbol: inferReceivedSymbol(changes) ?? intent.token?.symbol,
