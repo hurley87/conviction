@@ -3,8 +3,10 @@
 
 import "server-only";
 import { SEED_CONVICTION } from "@/lib/conviction-seed";
+import { DECK_SEED_CARDS } from "@/lib/deck-seed";
 import { getSql } from "@/lib/db";
 import { appendBacker } from "@/lib/verbs/conviction";
+import { orderDeckCards } from "@/lib/verbs/deck";
 import type {
   ConvictionEntry,
   GateCheck,
@@ -18,6 +20,9 @@ let schemaReady = false;
 function ensureMemorySeed() {
   if (memorySeeded) return;
   memoryStore.set(SEED_CONVICTION.entryId, SEED_CONVICTION);
+  for (const card of DECK_SEED_CARDS) {
+    memoryStore.set(card.entryId, card);
+  }
   memorySeeded = true;
 }
 
@@ -217,6 +222,19 @@ export async function addBacker(
   `;
   if (existing.length === 0) return null;
   return (existing[0] as { backed_by: string[] }).backed_by;
+}
+
+/**
+ * Convictions eligible for the home deck (gate report present). Falls back to
+ * desk seed cards when the store has none — keeps the demo path non-empty.
+ */
+export async function listDeckCards(
+  limit = 20,
+): Promise<ConvictionEntry[]> {
+  const all = await listConvictions(Math.max(limit * 2, 50));
+  const deck = orderDeckCards(all).slice(0, limit);
+  if (deck.length > 0) return deck;
+  return orderDeckCards(DECK_SEED_CARDS).slice(0, limit);
 }
 
 /** Test helper — reset in-memory store between tests. */

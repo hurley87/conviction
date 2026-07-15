@@ -4,6 +4,7 @@
 
 import { useCallback, useState } from "react";
 import type { UAClient } from "@/lib/ua/types";
+import { persistCopyResult } from "@/lib/persist-copy-result";
 import { copyConviction } from "@/lib/verbs/copy";
 import type {
   ConvictionEntry,
@@ -101,21 +102,11 @@ export function useBacker({
           override,
         );
 
-        void fetch("/api/receipts", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(result.receipt),
-        }).catch(() => {});
-
-        const res = await fetch("/api/convictions", {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ entryId: entry.entryId, handle }),
+        const { backedBy } = await persistCopyResult({
+          receipt: result.receipt,
+          entryId: entry.entryId,
+          handle,
         });
-        if (!res.ok) {
-          throw new Error("Failed to record your back");
-        }
-        const data = (await res.json()) as { backedBy: string[] };
 
         if (result.signed7702Auth) {
           onUpgraded?.();
@@ -125,7 +116,7 @@ export function useBacker({
           ...prev,
           [entry.entryId]: mergeEntryState(entry, prev, {
             phase: "backed",
-            backedBy: data.backedBy,
+            backedBy,
             receipt: result.receipt,
             error: null,
           }),

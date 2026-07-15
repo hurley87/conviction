@@ -5,8 +5,11 @@ import {
   copyConviction,
   copyIntent,
   copyTradeSizeUsd,
+  executeQuotedCopy,
+  quoteCopyConviction,
 } from "@/lib/verbs/copy";
 import { MockUAClient, mockTradeSigners } from "@/lib/ua/mock";
+import { DECK_SEED_CARDS } from "@/lib/deck-seed";
 import { FloorAbortError } from "@/lib/verbs/types";
 import type { ConvictionEntry, UniversalBalance } from "@/lib/verbs/types";
 
@@ -175,5 +178,45 @@ describe("copyConviction", () => {
     });
     expect(calls).toBe(2);
     expect(result.receipt).toBeTruthy();
+  });
+});
+
+describe("quoteCopyConviction + executeQuotedCopy", () => {
+  it("quotes then confirms a TokenRef deck card end to end", async () => {
+    const ua = new MockUAClient();
+    const tokenCard = DECK_SEED_CARDS.find(
+      (c) => c.trade.token?.symbol === "SURPLUS",
+    )!;
+    const quoted = await quoteCopyConviction(
+      tokenCard,
+      { ua, balance: BALANCE_242 },
+      8,
+    );
+
+    expect(quoted.intent.toAsset).toBe("token");
+    expect(quoted.intent.token?.symbol).toBe("SURPLUS");
+    expect(quoted.sizeUsd).toBe(8);
+    expect(quoted.quote.floorUsd).toBeLessThan(quoted.quote.dollarsOut);
+    expect(quoted.quote.receivedSymbol ?? quoted.intent.token?.symbol).toBeTruthy();
+
+    const result = await executeQuotedCopy(quoted, {
+      ua,
+      balance: BALANCE_242,
+      signers: mockTradeSigners,
+    });
+    expect(result.receipt.legs.length).toBeGreaterThanOrEqual(2);
+    expect(result.sizeUsd).toBe(8);
+  });
+
+  it("quotes the hero ETH card at the default fraction", async () => {
+    const ua = new MockUAClient();
+    const hero = DECK_SEED_CARDS[0]!;
+    const quoted = await quoteCopyConviction(hero, {
+      ua,
+      balance: BALANCE_242,
+    });
+    expect(quoted.intent.toAsset).toBe("eth");
+    expect(quoted.intent.destChain).toBe("Arbitrum");
+    expect(quoted.sizeUsd).toBe(copyTradeSizeUsd(BALANCE_242));
   });
 });

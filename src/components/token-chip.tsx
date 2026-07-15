@@ -1,28 +1,31 @@
 "use client";
 
 // Token name + logo + spot price — feed-only vocabulary (issue #4).
+// Concrete TokenRef cards show the token symbol directly (no chain name).
 
 import { useLiFiTokens } from "@/hooks/use-lifi-tokens";
 import { formatUsd } from "@/lib/format";
-import type { ProductAsset } from "@/lib/verbs/types";
+import type { ProductAsset, TokenRef } from "@/lib/verbs/types";
 
 type TokenChipProps = {
   asset: ProductAsset;
+  /** When set (deck TokenRef cards), prefer this symbol over product lookup. */
+  token?: TokenRef;
 };
 
-export function TokenChip({ asset }: TokenChipProps) {
+export function TokenChip({ asset, token }: TokenChipProps) {
   const { tokenForAsset, loading } = useLiFiTokens();
-  const token = tokenForAsset(asset);
+  const product = tokenForAsset(asset);
 
-  const label = token?.symbol ?? asset.toUpperCase();
-  const name = token?.name ?? label;
+  const label = token?.symbol ?? product?.symbol ?? asset.toUpperCase();
+  const name = token?.symbol ?? product?.name ?? label;
 
   return (
     <div className="flex items-center gap-2">
-      {token?.logoURI ? (
+      {!token && product?.logoURI ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={token.logoURI}
+          src={product.logoURI}
           alt=""
           width={24}
           height={24}
@@ -35,10 +38,12 @@ export function TokenChip({ asset }: TokenChipProps) {
       )}
       <div className="text-left">
         <p className="text-sm font-semibold text-zinc-900">{name}</p>
-        {loading ? (
+        {token ? (
+          <p className="text-xs text-zinc-400">{label}</p>
+        ) : loading ? (
           <p className="text-xs text-zinc-400">Loading price…</p>
-        ) : token?.priceUSD != null ? (
-          <p className="text-xs text-zinc-500">{formatUsd(token.priceUSD)}</p>
+        ) : product?.priceUSD != null ? (
+          <p className="text-xs text-zinc-500">{formatUsd(product.priceUSD)}</p>
         ) : (
           <p className="text-xs text-zinc-400">{label}</p>
         )}
