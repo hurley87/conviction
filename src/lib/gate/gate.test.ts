@@ -60,7 +60,15 @@ function mockFetch(opts: {
 
     if (url.includes("/api/v2/tokens/") && url.includes("/holders")) {
       return jsonResponse({
-        items: [{ value: topValue }],
+        items: [
+          {
+            value: topValue,
+            address: {
+              hash: "0x1111111111111111111111111111111111111111",
+              is_contract: false,
+            },
+          },
+        ],
       });
     }
 
@@ -125,14 +133,69 @@ describe("runGateCheck (mocked HTTP + warm-up, ADR 0014)", () => {
     expect(report[1]?.name).toBe("Contract source is not verified");
   });
 
-  it("fails concentrated holders in plain language", async () => {
+  it("fails when a single EOA owns too much supply", async () => {
     const report = await runGateCheck(DEGEN, "base", {
       fetch: mockFetch({ topHolderFraction: 0.8 }),
       checkRouter: async () => true,
     });
 
     expect(report[1]?.passed).toBe(false);
-    expect(report[1]?.name).toBe("Top holders own too much of the supply");
+    expect(report[1]?.name).toBe(
+      "A single wallet owns too much of the supply",
+    );
+  });
+
+  it("ignores contract holders when scoring concentration", async () => {
+    const supply = "1000000";
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("geckoterminal.com") && url.includes("/pools")) {
+        return jsonResponse({
+          data: [
+            {
+              attributes: {
+                reserve_in_usd: "120000",
+                address: "0xpool",
+              },
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/v2/smart-contracts/")) {
+        return jsonResponse({ is_verified: true });
+      }
+      if (url.includes("/holders")) {
+        return jsonResponse({
+          items: [
+            {
+              value: "900000",
+              address: {
+                hash: "0x2222222222222222222222222222222222222222",
+                is_contract: true,
+              },
+            },
+            {
+              value: "50000",
+              address: {
+                hash: "0x1111111111111111111111111111111111111111",
+                is_contract: false,
+              },
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/v2/tokens/")) {
+        return jsonResponse({ total_supply: supply });
+      }
+      return jsonResponse({}, false, 404);
+    }) as unknown as typeof fetch;
+
+    const report = await runGateCheck(DEGEN, "base", {
+      fetch: fetchImpl,
+      checkRouter: async () => true,
+    });
+
+    expect(report[1]?.passed).toBe(true);
   });
 
   it("fails Arbitrum non-primary routability via warm-up seam (ARB case)", async () => {

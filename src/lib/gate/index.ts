@@ -13,6 +13,7 @@ export type { GateChainInfo };
 export { resolveGateChain } from "@/lib/gate/chains";
 export { DEFAULT_MIN_LIQUIDITY_USD } from "@/lib/gate/liquidity";
 export {
+  DEFAULT_MAX_EOA_HOLDER_FRACTION,
   DEFAULT_MAX_TOP_HOLDER_FRACTION,
   DEFAULT_TOP_HOLDER_COUNT,
 } from "@/lib/gate/contract";
