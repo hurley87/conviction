@@ -17,6 +17,7 @@ import {
 } from "@/lib/verbs/assets";
 import {
   SETTLEMENT_CHAINS,
+  destChainFromId,
   destChainId,
   tokenAddress,
 } from "@/lib/verbs/chains";
@@ -231,52 +232,74 @@ export function validateIntent(
   intent: TradeIntent,
   balance: UniversalBalance,
 ): ValidationResult {
-  if (!SUPPORTED_ASSETS.has(intent.toAsset)) {
-    return { ok: false, error: "That destination isn't supported yet." };
-  }
-  if (intent.fromAsset && !SUPPORTED_ASSETS.has(intent.fromAsset)) {
-    return { ok: false, error: "That asset isn't supported yet." };
-  }
+  if (intent.token) {
+    // Concrete-token intents (deck cards) bypass the product-asset table;
+    // routability is proven at quote time via the warm-up flow.
+    if (intent.toAsset !== "token") {
+      return { ok: false, error: "That destination isn't supported yet." };
+    }
+    const tokenChain = destChainFromId(intent.token.chainId);
+    if (!tokenChain || tokenChain !== intent.destChain) {
+      return {
+        ok: false,
+        error: `${intent.token.symbol} lives on a chain we can't settle on yet.`,
+      };
+    }
+    if (intent.fromAsset) {
+      return {
+        ok: false,
+        error: `Buy ${intent.token.symbol} with cash instead — converting another asset into it isn't supported yet.`,
+      };
+    }
+  } else {
+    if (intent.toAsset === "token" || !SUPPORTED_ASSETS.has(intent.toAsset)) {
+      return { ok: false, error: "That destination isn't supported yet." };
+    }
+    if (intent.fromAsset && !SUPPORTED_ASSETS.has(intent.fromAsset)) {
+      return { ok: false, error: "That asset isn't supported yet." };
+    }
 
-  // Buy-only assets (e.g. ARB) aren't UA primary tokens: they can't fund a
-  // trade (usePrimaryTokens) or be a convert destination (expectToken.type).
-  if (intent.fromAsset && isBuyOnlyAsset(intent.fromAsset)) {
-    return {
-      ok: false,
-      error: `${intent.fromAsset.toUpperCase()} can only be bought for now, not sold.`,
-    };
-  }
-  if (intent.fromAsset && isBuyOnlyAsset(intent.toAsset)) {
-    return {
-      ok: false,
-      error: `Buy ${intent.toAsset.toUpperCase()} with cash instead — converting another asset into it isn't supported yet.`,
-    };
-  }
+    // Buy-only assets (e.g. ARB) aren't UA primary tokens: they can't fund a
+    // trade (usePrimaryTokens) or be a convert destination (expectToken.type).
+    if (intent.fromAsset && isBuyOnlyAsset(intent.fromAsset)) {
+      return {
+        ok: false,
+        error: `${intent.fromAsset.toUpperCase()} can only be bought for now, not sold.`,
+      };
+    }
+    if (intent.fromAsset && isBuyOnlyAsset(intent.toAsset)) {
+      return {
+        ok: false,
+        error: `Buy ${intent.toAsset.toUpperCase()} with cash instead — converting another asset into it isn't supported yet.`,
+      };
+    }
 
-  // The target must have a known address on the settlement chain. Catches
-  // assets like SOL (not an EVM chain) before quoting, with a friendly message
-  // instead of a jargon error from the trade builder.
-  if (!tokenAddress(toUaTokenType(intent.toAsset), destChainId(intent.destChain))) {
-    return { ok: false, error: "That destination isn't supported yet." };
-  }
+    // The target must have a known address on the settlement chain. Catches
+    // assets like SOL (not an EVM chain) before quoting, with a friendly message
+    // instead of a jargon error from the trade builder.
+    if (!tokenAddress(toUaTokenType(intent.toAsset), destChainId(intent.destChain))) {
+      return { ok: false, error: "That destination isn't supported yet." };
+    }
 
-  // No-op guard: if every funded source is already the target asset on the
-  // settlement chain, there's nothing to convert — the SDK would reject this as
-  // a same-token buy (-32683). Surface a friendly message instead.
-  const hasConvertibleFunds = balance.sources.some(
-    (s) =>
-      s.usd > 0 &&
-      !(s.chain === intent.destChain && assetMatches(s.asset, intent.toAsset)),
-  );
-  if (!hasConvertibleFunds) {
-    const label =
-      intent.toAsset === "cash"
-        ? "in cash"
-        : `held as ${intent.toAsset.toUpperCase()}`;
-    return {
-      ok: false,
-      error: `Your money is already ${label} — there's nothing to move.`,
-    };
+    // No-op guard: if every funded source is already the target asset on the
+    // settlement chain, there's nothing to convert — the SDK would reject this as
+    // a same-token buy (-32683). Surface a friendly message instead. (Concrete
+    // tokens skip this: they're never a primary-balance asset.)
+    const hasConvertibleFunds = balance.sources.some(
+      (s) =>
+        s.usd > 0 &&
+        !(s.chain === intent.destChain && assetMatches(s.asset, intent.toAsset)),
+    );
+    if (!hasConvertibleFunds) {
+      const label =
+        intent.toAsset === "cash"
+          ? "in cash"
+          : `held as ${intent.toAsset.toUpperCase()}`;
+      return {
+        ok: false,
+        error: `Your money is already ${label} — there's nothing to move.`,
+      };
+    }
   }
 
   const sizeUsd = resolveSizeUsd(intent, balance);

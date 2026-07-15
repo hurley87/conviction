@@ -9,6 +9,14 @@ import { toUaTokenType } from "@/lib/verbs/assets";
  * the SDK doesn't sweep the whole balance (the empty-transactions bug). Settles
  * on the intent's chosen chain (see pickSettlementChain). */
 export function buildBuyPayload(intent: TradeIntent, sizeUsd: number) {
+  // A concrete TokenRef (deck cards) is the buy target verbatim — the adapter
+  // routes it through the warm-up flow since it's never a plain v2 target.
+  if (intent.token) {
+    return {
+      token: { chainId: intent.token.chainId, address: intent.token.address },
+      amountInUSD: sizeUsd.toFixed(2),
+    };
+  }
   const chainId = destChainId(intent.destChain);
   const uaTokenType = toUaTokenType(intent.toAsset);
   const address = tokenAddress(uaTokenType, chainId);

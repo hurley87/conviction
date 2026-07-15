@@ -78,6 +78,14 @@ export function destChainId(dest: DestChain): number {
   return DEST_CHAIN_IDS[dest];
 }
 
+/** Settlement chain name for a chain id — undefined when we can't settle
+ * there (e.g. Ethereum mainnet tokens are not backable yet). */
+export function destChainFromId(chainId: number): DestChain | undefined {
+  return (Object.keys(DEST_CHAIN_IDS) as DestChain[]).find(
+    (chain) => DEST_CHAIN_IDS[chain] === chainId,
+  );
+}
+
 /** Resolve a UA token type + chain id to a known contract address, if any. */
 export function tokenAddress(
   uaTokenType: string,

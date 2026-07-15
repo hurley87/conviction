@@ -223,6 +223,53 @@ describe("validateIntent", () => {
     if (!result.ok) expect(result.error).toContain("isn't supported");
   });
 
+  const SURPLUS = {
+    chainId: 8453,
+    address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+    symbol: "SURPLUS",
+  };
+
+  it("allows a concrete-token buy (deck card) with no product-table entry", () => {
+    const result = validateIntent(
+      { toAsset: "token", token: SURPLUS, sizeUsd: 5, destChain: "Base" },
+      balance,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a concrete token on a chain we can't settle on", () => {
+    const pepeOnEthereum = { chainId: 1, address: "0x6982…", symbol: "PEPE" };
+    const result = validateIntent(
+      { toAsset: "token", token: pepeOnEthereum, sizeUsd: 5, destChain: "Base" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("can't settle on yet");
+  });
+
+  it("rejects converting another asset into a concrete token", () => {
+    const result = validateIntent(
+      {
+        fromAsset: "eth",
+        toAsset: "token",
+        token: SURPLUS,
+        sizeUsd: 5,
+        destChain: "Base",
+      },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("with cash instead");
+  });
+
+  it("rejects the token sentinel without a TokenRef attached", () => {
+    const result = validateIntent(
+      { toAsset: "token", sizeUsd: 5, destChain: "Base" },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("allows cashing out USDC that lives on another chain", () => {
     const usdcOnBase: UniversalBalance = {
       totalUsd: 1,

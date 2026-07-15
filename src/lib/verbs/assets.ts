@@ -23,6 +23,9 @@ const ASSETS: Record<ProductAsset, AssetInfo> = {
   btc: { uaTokenType: "btc", matchSymbols: ["BTC", "WBTC"] },
   sol: { uaTokenType: "sol", matchSymbols: ["SOL"] },
   arb: { uaTokenType: "arb", matchSymbols: ["ARB"], buyOnly: true },
+  // Sentinel for a concrete TokenRef on the intent; never buyable through this
+  // table (buildBuyPayload uses the ref's address directly).
+  token: { uaTokenType: "token", matchSymbols: [], buyOnly: true },
 };
 
 /** True when a string is one of the known product assets. */
@@ -58,6 +61,8 @@ export function productAssetPrimarySymbol(asset: ProductAsset): string {
     btc: "WBTC",
     sol: "SOL",
     arb: "ARB",
+    // Last-resort label; callers with a TokenRef prefer its symbol.
+    token: "TOKEN",
   };
   return symbols[asset];
 }

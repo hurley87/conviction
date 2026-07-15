@@ -81,3 +81,25 @@ describe("defaultTradeConfig", () => {
     expect(config.usePrimaryTokens).toEqual(["eth"]);
   });
 });
+
+describe("buildBuyPayload with a concrete TokenRef", () => {
+  it("uses the ref's chain and address verbatim, bypassing the table", () => {
+    const payload = buildBuyPayload(
+      {
+        toAsset: "token",
+        token: {
+          chainId: 8453,
+          address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+          symbol: "SURPLUS",
+        },
+        destChain: "Base",
+      },
+      5,
+    );
+    expect(payload.token).toEqual({
+      chainId: 8453,
+      address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+    });
+    expect(payload.amountInUSD).toBe("5.00");
+  });
+});

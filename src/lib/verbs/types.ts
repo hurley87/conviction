@@ -29,7 +29,9 @@ export type DepositAddresses = {
  * bridge fees. */
 export type DestChain = "Arbitrum" | "Base";
 
-/** Product asset labels the parser maps to UA token types. */
+/** Product asset labels the parser maps to UA token types. "token" is the
+ * sentinel for a concrete TokenRef carried alongside the intent — never
+ * emitted by the parser, only by structured callers (deck cards). */
 export type ProductAsset =
   | "cash"
   | "eth"
@@ -37,12 +39,24 @@ export type ProductAsset =
   | "usdt"
   | "btc"
   | "sol"
-  | "arb";
+  | "arb"
+  | "token";
+
+/** A concrete routable token by address — how cards reference assets outside
+ * the product set. Routability is proven at quote time (the warm-up flow),
+ * which is also what gate-check runs before a card is published. */
+export type TokenRef = {
+  chainId: number;
+  address: string;
+  symbol: string;
+};
 
 /** Constrained trade intent schema (ADR 0012). */
 export type TradeIntent = {
   fromAsset?: ProductAsset;
   toAsset: ProductAsset;
+  /** Concrete token target; requires toAsset: "token". Buy-only. */
+  token?: TokenRef;
   /** Fixed dollar amount when set. */
   sizeUsd?: number;
   /** Fraction of unified balance (0–1) when set. Mutually exclusive with sizeUsd. */
@@ -106,6 +120,9 @@ export type ConvictionTrade = {
   fromAsset: ProductAsset;
   fromChain: string;
   toAsset: ProductAsset;
+  /** Concrete token the conviction is about, when outside the product set —
+   * copies re-target it exactly (same address, same chain). */
+  token?: TokenRef;
   toChain: DestChain;
   /** Presentation-only size (ADR 0003); not the copy amount. */
   sizeUsd: number;
