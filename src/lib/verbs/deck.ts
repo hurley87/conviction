@@ -1,11 +1,7 @@
 // Deck policy helpers — which convictions surface as swipeable cards, and how
 // right-swipe sizing maps fractions of unified balance to dollars (ADR 0016).
 
-import {
-  COPY_TRADE_CAP_USD,
-  DEFAULT_COPY_FRACTION,
-  copyTradeSizeUsd,
-} from "@/lib/verbs/copy";
+import { copyTradeSizeUsd } from "@/lib/verbs/copy";
 import type { ConvictionEntry, UniversalBalance } from "@/lib/verbs/types";
 
 /** Preset fractions on the sizing sheet (10% is the default — ADR 0003). */
@@ -34,11 +30,7 @@ export function sizeUsdForFraction(
   fraction: number,
 ): number {
   if (fraction <= 0 || balance.totalUsd <= 0) return 0;
-  if (fraction === DEFAULT_COPY_FRACTION) {
-    return copyTradeSizeUsd(balance);
-  }
-  const cap = Math.min(balance.totalUsd, COPY_TRADE_CAP_USD);
-  return Math.min(balance.totalUsd * fraction, cap);
+  return copyTradeSizeUsd(balance, balance.totalUsd * fraction);
 }
 
 /** Label for a fraction chip — dollars only, no chain vocabulary. */

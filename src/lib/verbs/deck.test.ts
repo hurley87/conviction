@@ -7,7 +7,7 @@ import {
   orderDeckCards,
   sizeUsdForFraction,
 } from "@/lib/verbs/deck";
-import { DEFAULT_COPY_FRACTION } from "@/lib/verbs/copy";
+import { copyTradeSizeUsd, DEFAULT_COPY_FRACTION } from "@/lib/verbs/copy";
 import { DECK_SEED_CARDS } from "@/lib/deck-seed";
 import type { ConvictionEntry, UniversalBalance } from "@/lib/verbs/types";
 
@@ -59,9 +59,17 @@ describe("orderDeckCards", () => {
 });
 
 describe("sizeUsdForFraction", () => {
+  it("delegates to copyTradeSizeUsd for every preset", () => {
+    for (const fraction of DECK_SIZE_FRACTIONS) {
+      expect(sizeUsdForFraction(BALANCE, fraction)).toBe(
+        copyTradeSizeUsd(BALANCE, BALANCE.totalUsd * fraction),
+      );
+    }
+  });
+
   it("defaults match one-tap copy at 10%", () => {
     expect(sizeUsdForFraction(BALANCE, DEFAULT_COPY_FRACTION)).toBe(
-      BALANCE.totalUsd * DEFAULT_COPY_FRACTION,
+      copyTradeSizeUsd(BALANCE),
     );
   });
 
