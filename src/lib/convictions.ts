@@ -5,7 +5,11 @@ import "server-only";
 import { SEED_CONVICTION } from "@/lib/conviction-seed";
 import { getSql } from "@/lib/db";
 import { appendBacker } from "@/lib/verbs/conviction";
-import type { ConvictionEntry } from "@/lib/verbs/types";
+import type {
+  ConvictionEntry,
+  GateCheck,
+  WhyNowEvent,
+} from "@/lib/verbs/types";
 
 const memoryStore = new Map<string, ConvictionEntry>();
 let memorySeeded = false;
@@ -27,8 +31,18 @@ async function ensureSchema(sql: NonNullable<ReturnType<typeof getSql>>) {
       trade         jsonb NOT NULL,
       receipt_slug  text,
       backed_by     text[] NOT NULL DEFAULT '{}',
-      created_at    timestamptz NOT NULL DEFAULT now()
+      created_at    timestamptz NOT NULL DEFAULT now(),
+      why_now       jsonb,
+      what_breaks_it text,
+      gate_report   jsonb
     )
+  `;
+  // Existing Neon DBs created before anatomy columns — add if missing.
+  await sql`
+    ALTER TABLE convictions
+      ADD COLUMN IF NOT EXISTS why_now jsonb,
+      ADD COLUMN IF NOT EXISTS what_breaks_it text,
+      ADD COLUMN IF NOT EXISTS gate_report jsonb
   `;
   await sql`
     INSERT INTO convictions (entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at)
@@ -54,6 +68,9 @@ function rowToEntry(row: {
   receipt_slug: string | null;
   backed_by: string[];
   created_at: string;
+  why_now: WhyNowEvent[] | null;
+  what_breaks_it: string | null;
+  gate_report: GateCheck[] | null;
 }): ConvictionEntry {
   return {
     entryId: row.entry_id,
@@ -63,6 +80,11 @@ function rowToEntry(row: {
     receiptSlug: row.receipt_slug ?? undefined,
     backedBy: row.backed_by ?? [],
     createdAt: new Date(row.created_at).toISOString(),
+    ...(row.why_now && row.why_now.length > 0 ? { whyNow: row.why_now } : {}),
+    ...(row.what_breaks_it ? { whatBreaksIt: row.what_breaks_it } : {}),
+    ...(row.gate_report && row.gate_report.length > 0
+      ? { gateReport: row.gate_report }
+      : {}),
   };
 }
 
@@ -79,7 +101,10 @@ export async function saveConviction(
   }
   await ensureSchema(sql);
   await sql`
-    INSERT INTO convictions (entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at)
+    INSERT INTO convictions (
+      entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
+      why_now, what_breaks_it, gate_report
+    )
     VALUES (
       ${entry.entryId},
       ${entry.handle},
@@ -87,14 +112,20 @@ export async function saveConviction(
       ${JSON.stringify(entry.trade)}::jsonb,
       ${entry.receiptSlug ?? null},
       ${entry.backedBy},
-      ${entry.createdAt}
+      ${entry.createdAt},
+      ${entry.whyNow ? JSON.stringify(entry.whyNow) : null}::jsonb,
+      ${entry.whatBreaksIt ?? null},
+      ${entry.gateReport ? JSON.stringify(entry.gateReport) : null}::jsonb
     )
     ON CONFLICT (entry_id) DO UPDATE SET
       handle = EXCLUDED.handle,
       thesis = EXCLUDED.thesis,
       trade = EXCLUDED.trade,
       receipt_slug = EXCLUDED.receipt_slug,
-      backed_by = EXCLUDED.backed_by
+      backed_by = EXCLUDED.backed_by,
+      why_now = EXCLUDED.why_now,
+      what_breaks_it = EXCLUDED.what_breaks_it,
+      gate_report = EXCLUDED.gate_report
   `;
   return true;
 }
@@ -114,7 +145,8 @@ export async function listConvictions(
   }
   await ensureSchema(sql);
   const rows = await sql`
-    SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at
+    SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
+           why_now, what_breaks_it, gate_report
     FROM convictions
     ORDER BY created_at DESC
     LIMIT ${limit}
@@ -139,7 +171,8 @@ export async function listConvictionsByHandle(
   }
   await ensureSchema(sql);
   const rows = await sql`
-    SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at
+    SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
+           why_now, what_breaks_it, gate_report
     FROM convictions
     WHERE handle = ${handle}
     ORDER BY created_at DESC
