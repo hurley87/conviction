@@ -11,6 +11,7 @@ import {
   type ConvictionTrade,
   type Receipt,
   type TradeIntent,
+  type TradeQuote,
   type TradeSigners,
   type UniversalBalance,
 } from "@/lib/verbs/types";
@@ -32,6 +33,12 @@ export type CopyConvictionResult = {
   summary: string;
   sizeUsd: number;
   signed7702Auth?: boolean;
+};
+
+export type QuotedCopy = {
+  intent: TradeIntent;
+  sizeUsd: number;
+  quote: TradeQuote;
 };
 
 /** Size a copy trade: 10% of unified balance by default, capped at COPY_TRADE_CAP_USD. */
@@ -69,13 +76,13 @@ export function copyIntent(trade: ConvictionTrade): TradeIntent {
   return intent;
 }
 
-/** Execute a cross-chain copy of a conviction: quote → execute → receipt. */
-export async function copyConviction(
+/** Quote a copy without executing — deck sizing sheet → confirm card. */
+export async function quoteCopyConviction(
   entry: ConvictionEntry,
-  deps: CopyConvictionDeps,
+  deps: Pick<CopyConvictionDeps, "ua" | "balance">,
   override?: number,
-): Promise<CopyConvictionResult> {
-  const { ua, balance, signers } = deps;
+): Promise<QuotedCopy> {
+  const { ua, balance } = deps;
   const sizeUsd = copyTradeSizeUsd(balance, override);
   const intent = copyIntent(entry.trade);
 
@@ -89,14 +96,27 @@ export async function copyConviction(
     sizeUsd: validation.sizeUsd,
   });
 
+  return {
+    intent: validation.intent,
+    sizeUsd: validation.sizeUsd,
+    quote,
+  };
+}
+
+/** Execute a previously quoted copy, retrying once on floor abort (ADR 0011). */
+export async function executeQuotedCopy(
+  quoted: QuotedCopy,
+  deps: CopyConvictionDeps,
+): Promise<CopyConvictionResult> {
+  const { ua, signers } = deps;
   const receiptSlug = generateReceiptSlug();
 
   const execute = async (
-    agreedQuote: typeof quote,
+    agreedQuote: TradeQuote,
   ): Promise<CopyConvictionResult> => {
     const result = await ua.executeTrade({
-      intent: validation.intent,
-      sizeUsd: validation.sizeUsd,
+      intent: quoted.intent,
+      sizeUsd: quoted.sizeUsd,
       agreedQuote,
       signers,
       receiptSlug,
@@ -104,18 +124,27 @@ export async function copyConviction(
     return {
       receipt: result.receipt,
       summary: result.summary,
-      sizeUsd: validation.sizeUsd,
+      sizeUsd: quoted.sizeUsd,
       signed7702Auth: result.signed7702Auth,
     };
   };
 
   try {
-    return await execute(quote);
+    return await execute(quoted.quote);
   } catch (e) {
-    // A stale quote aborts at the floor; retry once with the fresh one.
     if (e instanceof FloorAbortError) {
       return execute(e.freshQuote);
     }
     throw e;
   }
+}
+
+/** Execute a cross-chain copy of a conviction: quote → execute → receipt. */
+export async function copyConviction(
+  entry: ConvictionEntry,
+  deps: CopyConvictionDeps,
+  override?: number,
+): Promise<CopyConvictionResult> {
+  const quoted = await quoteCopyConviction(entry, deps, override);
+  return executeQuotedCopy(quoted, deps);
 }

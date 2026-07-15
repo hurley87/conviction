@@ -90,6 +90,29 @@ export function appendBacker(backedBy: string[], handle: string): string[] {
   return [...backedBy, trimmed];
 }
 
+/** `undefined` when absent; `null` when present but invalid. */
+function parseTokenRef(
+  value: unknown,
+): ConvictionTrade["token"] | undefined | null {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object") return null;
+  const t = value as Record<string, unknown>;
+  if (
+    typeof t.chainId !== "number" ||
+    typeof t.address !== "string" ||
+    !t.address.trim() ||
+    typeof t.symbol !== "string" ||
+    !t.symbol.trim()
+  ) {
+    return null;
+  }
+  return {
+    chainId: t.chainId,
+    address: t.address.trim(),
+    symbol: t.symbol.trim(),
+  };
+}
+
 /** Validate a conviction trade payload from the API. */
 export function parseConvictionTrade(
   trade: unknown,
@@ -106,12 +129,17 @@ export function parseConvictionTrade(
   ) {
     return null;
   }
+  const token = parseTokenRef(t.token);
+  if (token === null) return null;
+  if (t.toAsset === "token" && !token) return null;
+  if (t.toAsset !== "token" && token) return null;
   return {
     fromAsset: t.fromAsset,
     fromChain: t.fromChain,
     toAsset: t.toAsset,
     toChain: t.toChain as ConvictionTrade["toChain"],
     sizeUsd: t.sizeUsd,
+    ...(token ? { token } : {}),
   };
 }
 

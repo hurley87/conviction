@@ -172,6 +172,35 @@ describe("parseConvictionTrade", () => {
     expect(trade?.fromAsset).toBe("eth");
   });
 
+  it("accepts a concrete TokenRef trade", () => {
+    const trade = parseConvictionTrade({
+      fromAsset: "cash",
+      fromChain: "Arbitrum",
+      toAsset: "token",
+      token: {
+        chainId: 8453,
+        address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+        symbol: "SURPLUS",
+      },
+      toChain: "Base",
+      sizeUsd: 8,
+    });
+    expect(trade?.token?.symbol).toBe("SURPLUS");
+    expect(trade?.toAsset).toBe("token");
+  });
+
+  it("rejects token sentinel without TokenRef", () => {
+    expect(
+      parseConvictionTrade({
+        fromAsset: "cash",
+        fromChain: "Arbitrum",
+        toAsset: "token",
+        toChain: "Base",
+        sizeUsd: 8,
+      }),
+    ).toBeNull();
+  });
+
   it("rejects invalid payloads", () => {
     expect(parseConvictionTrade(null)).toBeNull();
     expect(parseConvictionTrade({ fromAsset: "eth" })).toBeNull();

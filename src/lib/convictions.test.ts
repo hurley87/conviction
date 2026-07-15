@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SEED_CONVICTION } from "@/lib/conviction-seed";
+import { DECK_SEED_CARDS } from "@/lib/deck-seed";
 import {
   listConvictions,
+  listDeckCards,
   saveConviction,
   resetConvictionsMemoryForTests,
 } from "@/lib/convictions";
 import { buildConviction, hasAnatomy } from "@/lib/verbs/conviction";
+import { isDeckCard } from "@/lib/verbs/deck";
 
 describe("convictions memory store", () => {
   beforeEach(() => {
@@ -15,6 +18,17 @@ describe("convictions memory store", () => {
   it("includes the seed conviction at cold start", async () => {
     const list = await listConvictions();
     expect(list.some((e) => e.entryId === SEED_CONVICTION.entryId)).toBe(true);
+  });
+
+  it("seeds desk deck cards with gate reports", async () => {
+    const list = await listConvictions();
+    for (const card of DECK_SEED_CARDS) {
+      expect(list.some((e) => e.entryId === card.entryId)).toBe(true);
+    }
+    const deck = await listDeckCards();
+    expect(deck.length).toBeGreaterThan(0);
+    expect(deck.every(isDeckCard)).toBe(true);
+    expect(deck.some((c) => c.trade.token?.symbol === "SURPLUS")).toBe(true);
   });
 
   it("orders newest first after saving", async () => {
