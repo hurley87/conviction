@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useConciergeCore } from "@/hooks/use-concierge-core";
 import { useLiveTradeSigners } from "@/hooks/use-live-trade-signers";
+import { useAccount } from "@/components/account/account-context";
 import { ConfirmCard } from "@/components/confirm-card";
 import { PostConviction } from "@/components/post-conviction";
 import { ReceiptView } from "@/components/receipt-view";
@@ -27,7 +28,8 @@ function ConciergePanel({
   signers: TradeSigners;
   handle: string | null;
 }) {
-  const c = useConciergeCore(ua, balance, signers, handle);
+  const { markUpgraded } = useAccount();
+  const c = useConciergeCore(ua, balance, signers, handle, markUpgraded);
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 

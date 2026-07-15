@@ -37,6 +37,10 @@ export function useConvictionAccount() {
   const [isFunding, setIsFunding] = useState(false);
   const [fundingError, setFundingError] = useState<string | null>(null);
 
+  const markUpgraded = useCallback(() => {
+    setUpgraded(true);
+  }, []);
+
   // Reflect the account's real on-chain 7702 status, so "Wallet ready" survives
   // reloads instead of resetting to "Upgrade my wallet" every load.
   useEffect(() => {
@@ -109,5 +113,6 @@ export function useConvictionAccount() {
     fundingError,
     upgrade,
     upgraded,
+    markUpgraded,
   };
 }

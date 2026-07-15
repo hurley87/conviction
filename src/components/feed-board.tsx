@@ -4,6 +4,7 @@
 
 import { useMemo } from "react";
 import { Feed } from "@/components/feed";
+import { useAccount } from "@/components/account/account-context";
 import { useConvictionAccount } from "@/hooks/use-conviction-account";
 import { useLiveTradeSigners } from "@/hooks/use-live-trade-signers";
 import { useBacker } from "@/hooks/use-backer";
@@ -18,6 +19,7 @@ type FeedBoardProps = {
 };
 
 function MockFeedBoard({ convictions }: FeedBoardProps) {
+  const { markUpgraded } = useAccount();
   const ua = useMemo(() => new MockUAClient(), []);
   const { balance } = useUASnapshot(ua);
   const backer = useBacker({
@@ -25,6 +27,7 @@ function MockFeedBoard({ convictions }: FeedBoardProps) {
     balance,
     signers: mockTradeSigners,
     handle: "demo-trader",
+    onUpgraded: markUpgraded,
   });
 
   return <Feed convictions={convictions} backer={backer} />;
@@ -32,6 +35,7 @@ function MockFeedBoard({ convictions }: FeedBoardProps) {
 
 function LiveFeedBoard({ convictions }: FeedBoardProps) {
   const account = useConvictionAccount();
+  const { markUpgraded } = useAccount();
   const signers = useLiveTradeSigners();
   const ua = useMemo(
     () => (account.address ? getUAClient(account.address) : null),
@@ -43,6 +47,7 @@ function LiveFeedBoard({ convictions }: FeedBoardProps) {
     signers,
     handle: account.handle,
     onSignIn: account.login,
+    onUpgraded: markUpgraded,
   });
 
   return <Feed convictions={convictions} backer={backer} />;

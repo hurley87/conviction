@@ -113,6 +113,8 @@ export type TradeResult = {
   transactionId: string;
   summary: string;
   receipt: Receipt;
+  /** True when this execution signed a first-time in-place upgrade auth. */
+  signed7702Auth?: boolean;
 };
 
 /** Trade metadata attached to a conviction feed entry. */

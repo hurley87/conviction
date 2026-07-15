@@ -37,6 +37,7 @@ export function LiveAccountProvider({ children }: { children: React.ReactNode })
       logout: account.logout,
       addMoney: account.addMoney,
       upgrade: account.upgrade,
+      markUpgraded: account.markUpgraded,
     }),
     [
       account.ready,
@@ -54,6 +55,7 @@ export function LiveAccountProvider({ children }: { children: React.ReactNode })
       account.logout,
       account.addMoney,
       account.upgrade,
+      account.markUpgraded,
     ],
   );
 

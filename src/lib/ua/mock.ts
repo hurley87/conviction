@@ -161,6 +161,12 @@ export class MockUAClient implements UAClient {
       await signers.signRootHash(raw.rootHash);
     }
 
+    // First mock trade mirrors live first-tx 7702 auth.
+    const signed7702Auth = !this.upgraded;
+    if (signed7702Auth) {
+      this.upgraded = true;
+    }
+
     const receipt = buildReceipt(
       receiptSlug,
       {
@@ -184,6 +190,7 @@ export class MockUAClient implements UAClient {
         freshQuote.receivedSymbol,
       ),
       receipt,
+      signed7702Auth,
     };
   }
 }

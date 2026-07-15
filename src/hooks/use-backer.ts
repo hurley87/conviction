@@ -28,6 +28,8 @@ export type UseBackerDeps = {
   handle: string | null;
   /** Called when the user must sign in before backing (live path). */
   onSignIn?: () => void;
+  /** Called after first-tx in-place upgrade auth (issue #19). */
+  onUpgraded?: () => void;
 };
 
 function defaultEntryState(entry: ConvictionEntry): EntryBackState {
@@ -57,6 +59,7 @@ export function useBacker({
   signers,
   handle,
   onSignIn,
+  onUpgraded,
 }: UseBackerDeps) {
   const [entries, setEntries] = useState<Record<string, EntryBackState>>({});
 
@@ -114,6 +117,10 @@ export function useBacker({
         }
         const data = (await res.json()) as { backedBy: string[] };
 
+        if (result.signed7702Auth) {
+          onUpgraded?.();
+        }
+
         setEntries((prev) => ({
           ...prev,
           [entry.entryId]: mergeEntryState(entry, prev, {
@@ -135,7 +142,7 @@ export function useBacker({
         }));
       }
     },
-    [ua, balance, signers, handle, onSignIn],
+    [ua, balance, signers, handle, onSignIn, onUpgraded],
   );
 
   return {

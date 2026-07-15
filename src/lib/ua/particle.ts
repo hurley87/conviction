@@ -230,6 +230,8 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
         });
       }
 
+      const signed7702Auth = authorizations.length > 0;
+
       const ua = await account();
       const result = await ua.sendTransaction(
         raw,
@@ -266,6 +268,7 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
           freshQuote.receivedSymbol,
         ),
         receipt,
+        signed7702Auth,
       };
     },
   };

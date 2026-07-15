@@ -7,6 +7,7 @@ import {
   ConciergeBubble,
   ConciergeBubbleProvider,
 } from "@/components/concierge-bubble";
+import { UpgradeBeatHost } from "@/components/upgrade-beat-host";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
@@ -39,6 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <ConciergeBubble />
+        <UpgradeBeatHost />
       </div>
     </ConciergeBubbleProvider>
   );

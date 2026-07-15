@@ -19,6 +19,9 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
 
   const noop = useCallback(() => {}, []);
   const asyncNoop = useCallback(async () => {}, []);
+  const markUpgraded = useCallback(() => {
+    setUpgraded(true);
+  }, []);
   const upgrade = useCallback(async () => {
     await ua.ensureUpgraded();
     setUpgraded(true);
@@ -42,8 +45,9 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
       logout: noop,
       addMoney: asyncNoop,
       upgrade,
+      markUpgraded,
     }),
-    [deposits, balance, upgraded, ua, noop, asyncNoop, upgrade],
+    [deposits, balance, upgraded, ua, noop, asyncNoop, upgrade, markUpgraded],
   );
 
   return (

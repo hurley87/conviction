@@ -23,6 +23,8 @@ export type AccountContextValue = {
   logout: () => void;
   addMoney: () => Promise<void>;
   upgrade: () => Promise<void>;
+  /** Optimistic flip after a known in-place upgrade (Settings or first-tx 7702). */
+  markUpgraded: () => void;
 };
 
 const AccountContext = createContext<AccountContextValue | null>(null);
