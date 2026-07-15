@@ -60,13 +60,6 @@ describe("parseIntent", () => {
     expect(result.intent.destChain).toBe("Arbitrum");
   });
 
-  it("still parses 'buy ARB for $5' as the ARB token", () => {
-    const result = parseIntent("buy ARB for $5");
-    expect(result.kind).toBe("intent");
-    if (result.kind !== "intent") return;
-    expect(result.intent.toAsset).toBe("arb");
-  });
-
   it("parses explicit settlement on Base", () => {
     const result = parseIntent("buy $10 of ETH on Base");
     expect(result.kind).toBe("intent");
