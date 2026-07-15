@@ -5,7 +5,9 @@ import "server-only";
 import { getSql } from "@/lib/db";
 import type { Receipt } from "@/lib/verbs/types";
 
-const memoryStore = new Map<string, Receipt>();
+type MemoryReceipt = { receipt: Receipt; createdAt: string };
+
+const memoryStore = new Map<string, MemoryReceipt>();
 
 let schemaReady = false;
 
@@ -24,7 +26,10 @@ async function ensureSchema(sql: NonNullable<ReturnType<typeof getSql>>) {
 export async function saveReceipt(receipt: Receipt): Promise<boolean> {
   const sql = getSql();
   if (!sql) {
-    memoryStore.set(receipt.slug, receipt);
+    memoryStore.set(receipt.slug, {
+      receipt,
+      createdAt: new Date().toISOString(),
+    });
     return false;
   }
   await ensureSchema(sql);
@@ -36,17 +41,50 @@ export async function saveReceipt(receipt: Receipt): Promise<boolean> {
   return true;
 }
 
-export async function getStoredReceipt(
+/** One store read — receipt payload + entry timestamp. */
+export async function getStoredReceiptRecord(
   slug: string,
-): Promise<Receipt | null> {
+): Promise<{ receipt: Receipt; entryAt: string } | null> {
   const sql = getSql();
   if (!sql) {
-    return memoryStore.get(slug) ?? null;
+    const stored = memoryStore.get(slug);
+    if (!stored) return null;
+    return { receipt: stored.receipt, entryAt: stored.createdAt };
   }
   await ensureSchema(sql);
   const rows = await sql`
-    SELECT payload FROM receipts WHERE slug = ${slug} LIMIT 1
+    SELECT payload, created_at FROM receipts WHERE slug = ${slug} LIMIT 1
   `;
-  const row = rows[0] as { payload: Receipt } | undefined;
-  return row?.payload ?? null;
+  const row = rows[0] as
+    | { payload: Receipt; created_at: string }
+    | undefined;
+  if (!row) return null;
+  return {
+    receipt: row.payload,
+    entryAt: new Date(row.created_at).toISOString(),
+  };
+}
+
+export async function getStoredReceipt(
+  slug: string,
+): Promise<Receipt | null> {
+  const record = await getStoredReceiptRecord(slug);
+  return record?.receipt ?? null;
+}
+
+/**
+ * Entry timestamp for a receipt — when the position landed onchain / was
+ * persisted. Used so desk cards can enforce entry ≤ publication (issue #27).
+ */
+export async function getReceiptEntryAt(
+  slug: string,
+): Promise<string | null> {
+  const record = await getStoredReceiptRecord(slug);
+  return record?.entryAt ?? null;
+}
+
+/** Test helper — reset in-memory store between tests. */
+export function resetReceiptsMemoryForTests() {
+  memoryStore.clear();
+  schemaReady = false;
 }
