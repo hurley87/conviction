@@ -166,65 +166,64 @@ function BackButton({
         <p className="mt-2 text-xs text-red-500">{state.error}</p>
       )}
 
-      {!hasBacked && isBacking && (
-        <div className="mt-3">
-          <TradePendingStatus />
-        </div>
-      )}
-
-      {!hasBacked && !isBacking && (
-        <div className="mt-3 flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleBack()}
-              className={`${PRIMARY_LIGHT} px-5 py-2 text-sm`}
-            >
-              Back this
-            </button>
-            <button
-              type="button"
-              onClick={() => setAdvancedOpen((o) => !o)}
-              className={`${GHOST_LIGHT} px-4 py-2 text-xs`}
-            >
-              {advancedOpen ? "Hide" : "Advanced"}
-            </button>
+      {!hasBacked &&
+        (isBacking ? (
+          <div className="mt-3">
+            <TradePendingStatus />
           </div>
-          <p className="text-xs text-zinc-400">
-            Mirrors this trade at {defaultPct}% of your balance (up to{" "}
-            {formatUsd(COPY_TRADE_CAP_USD)}).
-          </p>
-
-          {advancedOpen && (
-            <form
-              className="flex flex-wrap items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const n = parseFloat(overrideInput);
-                if (Number.isFinite(n) && n > 0) handleBack(n);
-              }}
-            >
-              <input
-                type="number"
-                min={0.01}
-                max={COPY_TRADE_CAP_USD}
-                step={0.01}
-                value={overrideInput}
-                onChange={(e) => setOverrideInput(e.target.value)}
-                placeholder="Custom amount ($)"
-                className="w-36 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none"
-              />
+        ) : (
+          <div className="mt-3 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
-                type="submit"
-                disabled={!overrideInput}
+                type="button"
+                onClick={() => handleBack()}
+                className={`${PRIMARY_LIGHT} px-5 py-2 text-sm`}
+              >
+                Back this
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((o) => !o)}
                 className={`${GHOST_LIGHT} px-4 py-2 text-xs`}
               >
-                Back custom amount
+                {advancedOpen ? "Hide" : "Advanced"}
               </button>
-            </form>
-          )}
-        </div>
-      )}
+            </div>
+            <p className="text-xs text-zinc-400">
+              Mirrors this trade at {defaultPct}% of your balance (up to{" "}
+              {formatUsd(COPY_TRADE_CAP_USD)}).
+            </p>
+
+            {advancedOpen && (
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const n = parseFloat(overrideInput);
+                  if (Number.isFinite(n) && n > 0) handleBack(n);
+                }}
+              >
+                <input
+                  type="number"
+                  min={0.01}
+                  max={COPY_TRADE_CAP_USD}
+                  step={0.01}
+                  value={overrideInput}
+                  onChange={(e) => setOverrideInput(e.target.value)}
+                  placeholder="Custom amount ($)"
+                  className="w-36 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={!overrideInput}
+                  className={`${GHOST_LIGHT} px-4 py-2 text-xs`}
+                >
+                  Back custom amount
+                </button>
+              </form>
+            )}
+          </div>
+        ))}
 
       {hasBacked && state.phase !== "backing" && (
         <p className="mt-3 text-xs text-emerald-600">
