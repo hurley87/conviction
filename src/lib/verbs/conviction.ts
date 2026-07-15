@@ -1,11 +1,15 @@
 // postConviction verb — build feed entries from a completed trade (issue #4).
+// Desk cards (issue #27) publish full anatomy through the same verb layer.
 
+import { SETTLEMENT_CHAINS } from "@/lib/verbs/chains";
 import type {
   ConvictionEntry,
   ConvictionTrade,
+  DestChain,
   GateCheck,
   ProductAsset,
   Receipt,
+  TokenRef,
   TradeIntent,
   TradeQuote,
   WhyNowEvent,
@@ -20,6 +24,23 @@ export type BuildConvictionInput = {
   whyNow?: WhyNowEvent[];
   whatBreaksIt?: string;
   gateReport?: GateCheck[];
+};
+
+/** Full-anatomy desk card — trade first, then author, then post (ADR 0016). */
+export type BuildDeskCardInput = {
+  handle: string;
+  thesis: string;
+  trade: ConvictionTrade;
+  /** Entry receipt slug — must exist; entry time precedes publication. */
+  receiptSlug: string;
+  /** Onchain entry timestamp (receipt created_at), ISO string. */
+  entryAt: string;
+  whyNow: WhyNowEvent[];
+  whatBreaksIt: string;
+  /** Gate-check output passed in — not re-run here. */
+  gateReport: GateCheck[];
+  /** Override publication time (tests); defaults to now. */
+  publishedAt?: string;
 };
 
 /** Generate a short unique id for a conviction feed entry. */
@@ -90,6 +111,27 @@ export function appendBacker(backedBy: string[], handle: string): string[] {
   return [...backedBy, trimmed];
 }
 
+function isDestChain(value: unknown): value is DestChain {
+  return (
+    typeof value === "string" &&
+    (SETTLEMENT_CHAINS as readonly string[]).includes(value)
+  );
+}
+
+/** Validate an optional TokenRef so backs re-target the exact token. */
+export function parseTokenRef(value: unknown): TokenRef | null {
+  if (!value || typeof value !== "object") return null;
+  const t = value as Record<string, unknown>;
+  if (typeof t.chainId !== "number" || !Number.isFinite(t.chainId)) return null;
+  if (typeof t.address !== "string" || !t.address.trim()) return null;
+  if (typeof t.symbol !== "string" || !t.symbol.trim()) return null;
+  return {
+    chainId: t.chainId,
+    address: t.address.trim(),
+    symbol: t.symbol.trim(),
+  };
+}
+
 /** Validate a conviction trade payload from the API. */
 export function parseConvictionTrade(
   trade: unknown,
@@ -100,19 +142,84 @@ export function parseConvictionTrade(
     !isProductAsset(t.fromAsset) ||
     !isProductAsset(t.toAsset) ||
     typeof t.fromChain !== "string" ||
-    typeof t.toChain !== "string" ||
+    !isDestChain(t.toChain) ||
     typeof t.sizeUsd !== "number" ||
     t.sizeUsd <= 0
   ) {
     return null;
   }
+
+  let token: TokenRef | undefined;
+  if (t.token !== undefined && t.token !== null) {
+    const parsed = parseTokenRef(t.token);
+    if (!parsed) return null;
+    // Concrete tokens use the "token" sentinel (same as TradeIntent).
+    if (t.toAsset !== "token") return null;
+    token = parsed;
+  } else if (t.toAsset === "token") {
+    // Sentinel without a TokenRef is invalid.
+    return null;
+  }
+
   return {
     fromAsset: t.fromAsset,
     fromChain: t.fromChain,
     toAsset: t.toAsset,
-    toChain: t.toChain as ConvictionTrade["toChain"],
+    ...(token ? { token } : {}),
+    toChain: t.toChain,
     sizeUsd: t.sizeUsd,
   };
+}
+
+/**
+ * Entry timestamp must precede (or equal) card publication — every published
+ * card is a revealed position with its entry already onchain (issue #27).
+ */
+export function entryPrecedesPublication(
+  entryAt: string,
+  publishedAt: string,
+): boolean {
+  const entryMs = Date.parse(entryAt);
+  const publishedMs = Date.parse(publishedAt);
+  if (!Number.isFinite(entryMs) || !Number.isFinite(publishedMs)) return false;
+  return entryMs <= publishedMs;
+}
+
+/**
+ * Assemble a desk card with full anatomy + linked entry receipt.
+ * Throws when entry time does not precede publication.
+ */
+export function buildDeskCard(input: BuildDeskCardInput): ConvictionEntry {
+  const publishedAt = input.publishedAt ?? new Date().toISOString();
+  if (!entryPrecedesPublication(input.entryAt, publishedAt)) {
+    throw new Error(
+      "Entry receipt timestamp must precede card publication time.",
+    );
+  }
+  if (!input.receiptSlug.trim()) {
+    throw new Error("Desk cards require a linked entry receipt.");
+  }
+  if (!input.whyNow.length) {
+    throw new Error("Desk cards require a why-now timeline.");
+  }
+  if (!input.whatBreaksIt.trim()) {
+    throw new Error("Desk cards require a what-breaks-it falsifier.");
+  }
+  if (!input.gateReport.length) {
+    throw new Error("Desk cards require a gate report.");
+  }
+
+  const entry = buildConviction({
+    handle: input.handle,
+    thesis: input.thesis,
+    trade: input.trade,
+    receiptSlug: input.receiptSlug.trim(),
+    whyNow: input.whyNow,
+    whatBreaksIt: input.whatBreaksIt,
+    gateReport: input.gateReport,
+  });
+  entry.createdAt = publishedAt;
+  return entry;
 }
 
 /**

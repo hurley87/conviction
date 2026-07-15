@@ -1,6 +1,13 @@
-import { addBacker, saveConviction, listConvictions, listConvictionsByHandle } from "@/lib/convictions";
+import {
+  addBacker,
+  saveConviction,
+  listConvictions,
+  listConvictionsByHandle,
+} from "@/lib/convictions";
+import { getReceiptEntryAt } from "@/lib/receipts";
 import {
   buildConviction,
+  entryPrecedesPublication,
   parseConvictionTrade,
   parseGateReport,
   parseWhatBreaksIt,
@@ -60,7 +67,33 @@ export async function POST(request: Request) {
   if (gateReport === null) return invalidPayload("gateReport");
 
   const receiptSlug =
-    typeof payload.receiptSlug === "string" ? payload.receiptSlug : undefined;
+    typeof payload.receiptSlug === "string" && payload.receiptSlug.trim()
+      ? payload.receiptSlug.trim()
+      : undefined;
+
+  // Desk / full-anatomy cards must link an entry receipt (issue #27).
+  // Plain user posts stay optional.
+  const needsEntryReceipt = Boolean(
+    trade.token ||
+      (whyNow && whyNow.length > 0) ||
+      whatBreaksIt ||
+      (gateReport && gateReport.length > 0),
+  );
+  if (needsEntryReceipt && !receiptSlug) {
+    return Response.json(
+      { error: "receiptSlug required for anatomy or token cards" },
+      { status: 400 },
+    );
+  }
+
+  let entryAt: string | undefined;
+  if (receiptSlug) {
+    const found = await getReceiptEntryAt(receiptSlug);
+    if (!found) {
+      return Response.json({ error: "receipt not found" }, { status: 404 });
+    }
+    entryAt = found;
+  }
 
   const entry = buildConviction({
     handle: payload.handle.trim(),
@@ -71,6 +104,13 @@ export async function POST(request: Request) {
     whatBreaksIt,
     gateReport,
   });
+
+  if (entryAt && !entryPrecedesPublication(entryAt, entry.createdAt)) {
+    return Response.json(
+      { error: "entry receipt timestamp must precede publication" },
+      { status: 400 },
+    );
+  }
 
   const persisted = await saveConviction(entry);
   return Response.json({ entryId: entry.entryId, persisted });

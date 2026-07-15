@@ -17,12 +17,14 @@ import { generateReceiptSlug } from "@/lib/verbs/receipt";
 import { tradeToConvictionTrade } from "@/lib/verbs/conviction";
 import {
   FloorAbortError,
+  type GateCheck,
   type ParseResult,
   type Receipt,
   type TradeIntent,
   type TradeQuote,
   type TradeSigners,
   type UniversalBalance,
+  type WhyNowEvent,
 } from "@/lib/verbs/types";
 
 /**
@@ -271,7 +273,14 @@ export function useConciergeCore(
   }, []);
 
   const postConviction = useCallback(
-    async (thesis: string) => {
+    async (
+      thesis: string,
+      anatomy?: {
+        whyNow?: WhyNowEvent[];
+        whatBreaksIt?: string;
+        gateReport?: GateCheck[];
+      },
+    ) => {
       if (
         !handle ||
         !pendingIntent ||
@@ -302,6 +311,13 @@ export function useConciergeCore(
             thesis: trimmed,
             trade,
             receiptSlug: receipt.slug,
+            ...(anatomy?.whyNow?.length ? { whyNow: anatomy.whyNow } : {}),
+            ...(anatomy?.whatBreaksIt
+              ? { whatBreaksIt: anatomy.whatBreaksIt }
+              : {}),
+            ...(anatomy?.gateReport?.length
+              ? { gateReport: anatomy.gateReport }
+              : {}),
           }),
         });
         if (!res.ok) {

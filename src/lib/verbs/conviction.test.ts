@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   buildConviction,
+  buildDeskCard,
   generateConvictionEntryId,
   appendBacker,
+  entryPrecedesPublication,
   hasAnatomy,
   parseConvictionTrade,
   parseGateReport,
@@ -144,6 +146,33 @@ describe("tradeToConvictionTrade", () => {
       sizeUsd: 25,
     });
   });
+
+  it("carries TokenRef through to conviction trade metadata", () => {
+    const token = {
+      chainId: 8453,
+      address: "0xSurplus",
+      symbol: "SURPLUS",
+    };
+    const trade = tradeToConvictionTrade(
+      { toAsset: "token", token, destChain: "Base" },
+      {
+        dollarsIn: 8,
+        dollarsOut: 7.9,
+        feeUsd: 0.1,
+        etaSeconds: 30,
+        floorUsd: 7.8,
+        sourceChain: "Arbitrum",
+        destChain: "Base",
+        toAsset: "token",
+        receivedSymbol: "SURPLUS",
+        transactionId: "tx-token",
+        rawTransaction: {},
+      },
+      8,
+    );
+    expect(trade.token).toEqual(token);
+    expect(trade.toAsset).toBe("token");
+  });
 });
 
 describe("appendBacker", () => {
@@ -172,6 +201,62 @@ describe("parseConvictionTrade", () => {
     expect(trade?.fromAsset).toBe("eth");
   });
 
+  it("round-trips a concrete TokenRef", () => {
+    const trade = parseConvictionTrade({
+      fromAsset: "cash",
+      fromChain: "Arbitrum",
+      toAsset: "token",
+      token: {
+        chainId: 8453,
+        address: "0xSurplusTokenAddress",
+        symbol: "SURPLUS",
+      },
+      toChain: "Base",
+      sizeUsd: 8,
+    });
+    expect(trade).toEqual({
+      fromAsset: "cash",
+      fromChain: "Arbitrum",
+      toAsset: "token",
+      token: {
+        chainId: 8453,
+        address: "0xSurplusTokenAddress",
+        symbol: "SURPLUS",
+      },
+      toChain: "Base",
+      sizeUsd: 8,
+    });
+  });
+
+  it("rejects token sentinel without TokenRef", () => {
+    expect(
+      parseConvictionTrade({
+        fromAsset: "cash",
+        fromChain: "Base",
+        toAsset: "token",
+        toChain: "Base",
+        sizeUsd: 8,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects TokenRef when toAsset is not token", () => {
+    expect(
+      parseConvictionTrade({
+        fromAsset: "cash",
+        fromChain: "Base",
+        toAsset: "eth",
+        token: {
+          chainId: 8453,
+          address: "0xabc",
+          symbol: "X",
+        },
+        toChain: "Base",
+        sizeUsd: 8,
+      }),
+    ).toBeNull();
+  });
+
   it("rejects invalid payloads", () => {
     expect(parseConvictionTrade(null)).toBeNull();
     expect(parseConvictionTrade({ fromAsset: "eth" })).toBeNull();
@@ -184,6 +269,91 @@ describe("parseConvictionTrade", () => {
         sizeUsd: 0,
       }),
     ).toBeNull();
+  });
+});
+
+describe("entryPrecedesPublication", () => {
+  it("allows entry before or equal to publication", () => {
+    expect(
+      entryPrecedesPublication(
+        "2026-07-15T18:20:44.000Z",
+        "2026-07-15T18:25:00.000Z",
+      ),
+    ).toBe(true);
+    expect(
+      entryPrecedesPublication(
+        "2026-07-15T18:20:44.000Z",
+        "2026-07-15T18:20:44.000Z",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects entry after publication", () => {
+    expect(
+      entryPrecedesPublication(
+        "2026-07-15T19:00:00.000Z",
+        "2026-07-15T18:00:00.000Z",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("buildDeskCard", () => {
+  const tokenTrade = {
+    fromAsset: "cash" as const,
+    fromChain: "Base",
+    toAsset: "token" as const,
+    token: {
+      chainId: 8453,
+      address: "0xSurplusTokenAddress",
+      symbol: "SURPLUS",
+    },
+    toChain: "Base" as const,
+    sizeUsd: 8,
+  };
+
+  it("builds a full-anatomy card with TokenRef and receipt", () => {
+    const entry = buildDeskCard({
+      handle: "desk",
+      thesis: "Base meme looks liquid.",
+      trade: tokenTrade,
+      receiptSlug: "entry-receipt-1",
+      entryAt: "2026-07-15T18:20:44.000Z",
+      publishedAt: "2026-07-15T18:25:00.000Z",
+      whyNow: [
+        { at: "2026-07-14T12:00:00.000Z", event: "Volume spike on Base." },
+      ],
+      whatBreaksIt: "Liquidity dries below $50k.",
+      gateReport: [
+        { name: "liquidity depth", passed: true },
+        { name: "UA routability", passed: true },
+      ],
+    });
+
+    expect(entry.handle).toBe("desk");
+    expect(entry.receiptSlug).toBe("entry-receipt-1");
+    expect(entry.trade.token?.symbol).toBe("SURPLUS");
+    expect(entry.whyNow).toHaveLength(1);
+    expect(entry.whatBreaksIt).toBe("Liquidity dries below $50k.");
+    expect(entry.gateReport).toHaveLength(2);
+    expect(entry.createdAt).toBe("2026-07-15T18:25:00.000Z");
+    expect(hasAnatomy(entry)).toBe(true);
+  });
+
+  it("rejects when entry is after publication", () => {
+    expect(() =>
+      buildDeskCard({
+        handle: "desk",
+        thesis: "Too early.",
+        trade: tokenTrade,
+        receiptSlug: "r1",
+        entryAt: "2026-07-15T19:00:00.000Z",
+        publishedAt: "2026-07-15T18:00:00.000Z",
+        whyNow: [{ at: "2026-07-14", event: "x" }],
+        whatBreaksIt: "y",
+        gateReport: [{ name: "z", passed: true }],
+      }),
+    ).toThrow(/precede/);
   });
 });
 
