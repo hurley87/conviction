@@ -1,10 +1,15 @@
-// Conviction feed API (issue #4): post + list + back.
-
 import { addBacker, saveConviction, listConvictions, listConvictionsByHandle } from "@/lib/convictions";
 import {
   buildConviction,
   parseConvictionTrade,
+  parseGateReport,
+  parseWhatBreaksIt,
+  parseWhyNow,
 } from "@/lib/verbs/conviction";
+
+function invalidPayload(field: string) {
+  return Response.json({ error: `invalid ${field} payload` }, { status: 400 });
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -30,6 +35,9 @@ export async function POST(request: Request) {
     thesis?: unknown;
     trade?: unknown;
     receiptSlug?: unknown;
+    whyNow?: unknown;
+    whatBreaksIt?: unknown;
+    gateReport?: unknown;
   };
 
   if (typeof payload.handle !== "string" || !payload.handle.trim()) {
@@ -44,6 +52,13 @@ export async function POST(request: Request) {
     return Response.json({ error: "invalid trade payload" }, { status: 400 });
   }
 
+  const whyNow = parseWhyNow(payload.whyNow);
+  if (whyNow === null) return invalidPayload("whyNow");
+  const whatBreaksIt = parseWhatBreaksIt(payload.whatBreaksIt);
+  if (whatBreaksIt === null) return invalidPayload("whatBreaksIt");
+  const gateReport = parseGateReport(payload.gateReport);
+  if (gateReport === null) return invalidPayload("gateReport");
+
   const receiptSlug =
     typeof payload.receiptSlug === "string" ? payload.receiptSlug : undefined;
 
@@ -52,6 +67,9 @@ export async function POST(request: Request) {
     thesis: payload.thesis,
     trade,
     receiptSlug,
+    whyNow,
+    whatBreaksIt,
+    gateReport,
   });
 
   const persisted = await saveConviction(entry);

@@ -5,7 +5,7 @@ import {
   saveConviction,
   resetConvictionsMemoryForTests,
 } from "@/lib/convictions";
-import { buildConviction } from "@/lib/verbs/conviction";
+import { buildConviction, hasAnatomy } from "@/lib/verbs/conviction";
 
 describe("convictions memory store", () => {
   beforeEach(() => {
@@ -34,5 +34,56 @@ describe("convictions memory store", () => {
     await saveConviction(newer);
     const list = await listConvictions();
     expect(list[0]?.entryId).toBe(newer.entryId);
+  });
+
+  it("round-trips anatomy fields through save and list", async () => {
+    const withAnatomy = buildConviction({
+      handle: "desk",
+      thesis: "Full anatomy card.",
+      trade: {
+        fromAsset: "cash",
+        fromChain: "Base",
+        toAsset: "eth",
+        toChain: "Base",
+        sizeUsd: 8,
+      },
+      whyNow: [
+        {
+          at: "2026-07-10T09:00:00.000Z",
+          event: "Trending on GeckoTerminal.",
+        },
+        { at: "2026-07-12T15:00:00.000Z", event: "Liquidity doubled." },
+      ],
+      whatBreaksIt: "Contract pause or LP unlock.",
+      gateReport: [
+        {
+          name: "liquidity depth",
+          passed: true,
+          evidenceUrl: "https://example.com/pool",
+        },
+        { name: "UA routability", passed: true },
+        {
+          name: "holder concentration",
+          passed: false,
+          evidenceUrl: "https://example.com/holders",
+        },
+      ],
+    });
+    withAnatomy.createdAt = new Date(Date.now() + 2000).toISOString();
+
+    await saveConviction(withAnatomy);
+    const listed = await listConvictions();
+    const found = listed.find((e) => e.entryId === withAnatomy.entryId);
+
+    expect(found).toBeDefined();
+    expect(found?.whyNow).toEqual(withAnatomy.whyNow);
+    expect(found?.whatBreaksIt).toBe(withAnatomy.whatBreaksIt);
+    expect(found?.gateReport).toEqual(withAnatomy.gateReport);
+    expect(hasAnatomy(found!)).toBe(true);
+
+    // Plain seed remains without anatomy chrome.
+    const seed = listed.find((e) => e.entryId === SEED_CONVICTION.entryId);
+    expect(seed).toBeDefined();
+    expect(hasAnatomy(seed!)).toBe(false);
   });
 });

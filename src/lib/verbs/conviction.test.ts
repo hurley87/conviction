@@ -3,7 +3,11 @@ import {
   buildConviction,
   generateConvictionEntryId,
   appendBacker,
+  hasAnatomy,
   parseConvictionTrade,
+  parseGateReport,
+  parseWhatBreaksIt,
+  parseWhyNow,
   tradeToConvictionTrade,
 } from "@/lib/verbs/conviction";
 
@@ -51,6 +55,57 @@ describe("buildConviction", () => {
       },
     });
     expect(entry.thesis).toBe("Bullish on BTC.");
+  });
+
+  it("includes optional anatomy when present", () => {
+    const entry = buildConviction({
+      handle: "desk",
+      thesis: "Base meme looks liquid.",
+      trade: {
+        fromAsset: "cash",
+        fromChain: "Base",
+        toAsset: "eth",
+        toChain: "Base",
+        sizeUsd: 10,
+      },
+      whyNow: [
+        { at: "2026-07-14T12:00:00.000Z", event: "Volume spike on Base." },
+      ],
+      whatBreaksIt: "Liquidity dries below $50k.",
+      gateReport: [
+        {
+          name: "liquidity depth",
+          passed: true,
+          evidenceUrl: "https://example.com/liq",
+        },
+        { name: "UA routability", passed: true },
+      ],
+    });
+
+    expect(entry.whyNow).toEqual([
+      { at: "2026-07-14T12:00:00.000Z", event: "Volume spike on Base." },
+    ]);
+    expect(entry.whatBreaksIt).toBe("Liquidity dries below $50k.");
+    expect(entry.gateReport).toHaveLength(2);
+    expect(hasAnatomy(entry)).toBe(true);
+  });
+
+  it("omits anatomy fields when absent", () => {
+    const entry = buildConviction({
+      handle: "alice",
+      thesis: "Plain thesis.",
+      trade: {
+        fromAsset: "eth",
+        fromChain: "Base",
+        toAsset: "cash",
+        toChain: "Arbitrum",
+        sizeUsd: 50,
+      },
+    });
+    expect(entry).not.toHaveProperty("whyNow");
+    expect(entry).not.toHaveProperty("whatBreaksIt");
+    expect(entry).not.toHaveProperty("gateReport");
+    expect(hasAnatomy(entry)).toBe(false);
   });
 });
 
@@ -128,6 +183,83 @@ describe("parseConvictionTrade", () => {
         toChain: "Arbitrum",
         sizeUsd: 0,
       }),
+    ).toBeNull();
+  });
+});
+
+describe("parseWhyNow", () => {
+  it("returns undefined when absent", () => {
+    expect(parseWhyNow(undefined)).toBeUndefined();
+    expect(parseWhyNow(null)).toBeUndefined();
+    expect(parseWhyNow([])).toBeUndefined();
+  });
+
+  it("accepts dated events", () => {
+    expect(
+      parseWhyNow([
+        { at: "2026-07-01", event: " Listing day " },
+        { at: "2026-07-02T00:00:00.000Z", event: "Whale buy" },
+      ]),
+    ).toEqual([
+      { at: "2026-07-01", event: "Listing day" },
+      { at: "2026-07-02T00:00:00.000Z", event: "Whale buy" },
+    ]);
+  });
+
+  it("rejects invalid shapes", () => {
+    expect(parseWhyNow("nope")).toBeNull();
+    expect(parseWhyNow([{ at: "2026-07-01" }])).toBeNull();
+    expect(parseWhyNow([{ event: "missing at" }])).toBeNull();
+  });
+});
+
+describe("parseWhatBreaksIt", () => {
+  it("returns undefined when absent or blank", () => {
+    expect(parseWhatBreaksIt(undefined)).toBeUndefined();
+    expect(parseWhatBreaksIt("  ")).toBeUndefined();
+  });
+
+  it("trims a string falsifier", () => {
+    expect(parseWhatBreaksIt("  Rug risk.  ")).toBe("Rug risk.");
+  });
+
+  it("rejects non-strings", () => {
+    expect(parseWhatBreaksIt(42)).toBeNull();
+  });
+});
+
+describe("parseGateReport", () => {
+  it("returns undefined when absent", () => {
+    expect(parseGateReport(undefined)).toBeUndefined();
+    expect(parseGateReport([])).toBeUndefined();
+  });
+
+  it("accepts structured checks", () => {
+    expect(
+      parseGateReport([
+        {
+          name: " liquidity ",
+          passed: true,
+          evidenceUrl: " https://ex.com ",
+        },
+        { name: "holders", passed: false },
+      ]),
+    ).toEqual([
+      {
+        name: "liquidity",
+        passed: true,
+        evidenceUrl: "https://ex.com",
+      },
+      { name: "holders", passed: false },
+    ]);
+  });
+
+  it("rejects invalid checks", () => {
+    expect(parseGateReport("blob")).toBeNull();
+    expect(parseGateReport([{ name: "x" }])).toBeNull();
+    expect(parseGateReport([{ passed: true }])).toBeNull();
+    expect(
+      parseGateReport([{ name: "x", passed: true, evidenceUrl: 1 }]),
     ).toBeNull();
   });
 });

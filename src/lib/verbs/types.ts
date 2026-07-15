@@ -128,6 +128,19 @@ export type ConvictionTrade = {
   sizeUsd: number;
 };
 
+/** Dated event on a conviction's why-now timeline (ADR 0016). */
+export type WhyNowEvent = {
+  at: string;
+  event: string;
+};
+
+/** One diligence check in a gate report (ADR 0016). */
+export type GateCheck = {
+  name: string;
+  passed: boolean;
+  evidenceUrl?: string;
+};
+
 /** A posted trade + thesis on the public feed (PRD). */
 export type ConvictionEntry = {
   entryId: string;
@@ -138,6 +151,12 @@ export type ConvictionEntry = {
   createdAt: string;
   backedBy: string[];
   receiptSlug?: string;
+  /** Optional card anatomy — why-now timeline (ADR 0016). */
+  whyNow?: WhyNowEvent[];
+  /** Optional card anatomy — falsifier (ADR 0016). */
+  whatBreaksIt?: string;
+  /** Optional card anatomy — structured gate report (ADR 0016). */
+  gateReport?: GateCheck[];
 };
 
 /** Floor abort — execution re-quotes below the agreed floor (ADR 0011). */
