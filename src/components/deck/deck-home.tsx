@@ -1,6 +1,7 @@
 "use client";
 
 // Home deck surface — swipe stack with sizing → confirm → receipt (issue #22).
+// Skip / save / back persist; exhausted deck points to feed + Saved (#24).
 
 import { useAccount } from "@/components/account/account-context";
 import { ConfirmCard } from "@/components/confirm-card";
@@ -17,19 +18,20 @@ type DeckHomeProps = {
   signers: TradeSigners;
 };
 
-export function DeckHome({ cards, signers }: DeckHomeProps) {
+export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
   const account = useAccount();
   const {
-    index,
+    cards,
     flow,
     onSkip,
+    onSave,
     onBackSwipe,
     setFraction,
     onContinueSizing,
     onConfirm,
     onReceiptDone,
     resetToBrowse,
-  } = useDeckBackFlow(signers);
+  } = useDeckBackFlow(signers, allCards);
 
   if (!account.ready) {
     return (
@@ -71,14 +73,14 @@ export function DeckHome({ cards, signers }: DeckHomeProps) {
       <div>
         <h1 className="text-3xl font-bold text-zinc-900">Deck</h1>
         <p className="mt-2 text-sm text-zinc-500">
-          Today&apos;s drops — skip left, back right.
+          Today&apos;s drops — skip left, save up, back right.
         </p>
       </div>
 
       <Deck
         cards={cards}
-        index={index}
         onSkip={onSkip}
+        onSave={onSave}
         onBack={onBackSwipe}
         interactive={!overlayOpen}
       />
