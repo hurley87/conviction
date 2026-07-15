@@ -238,19 +238,29 @@ describe("parseGateReport", () => {
     expect(
       parseGateReport([
         {
+          id: "liquidity",
           name: " liquidity ",
           passed: true,
           evidenceUrl: " https://ex.com ",
         },
-        { name: "holders", passed: false },
+        {
+          name: "holders",
+          passed: false,
+          detail: " too concentrated ",
+        },
       ]),
     ).toEqual([
       {
+        id: "liquidity",
         name: "liquidity",
         passed: true,
         evidenceUrl: "https://ex.com",
       },
-      { name: "holders", passed: false },
+      {
+        name: "holders",
+        passed: false,
+        detail: "too concentrated",
+      },
     ]);
   });
 
@@ -260,6 +270,9 @@ describe("parseGateReport", () => {
     expect(parseGateReport([{ passed: true }])).toBeNull();
     expect(
       parseGateReport([{ name: "x", passed: true, evidenceUrl: 1 }]),
+    ).toBeNull();
+    expect(
+      parseGateReport([{ name: "x", passed: true, id: "nope" }]),
     ).toBeNull();
   });
 });

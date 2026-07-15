@@ -176,7 +176,29 @@ function parseGateCheck(item: unknown): GateCheck | null {
   ) {
     return null;
   }
+  if (
+    c.detail !== undefined &&
+    c.detail !== null &&
+    typeof c.detail !== "string"
+  ) {
+    return null;
+  }
+  if (
+    c.id !== undefined &&
+    c.id !== "liquidity" &&
+    c.id !== "contract" &&
+    c.id !== "routability"
+  ) {
+    return null;
+  }
+
   const check: GateCheck = { name: c.name.trim(), passed: c.passed };
+  if (c.id === "liquidity" || c.id === "contract" || c.id === "routability") {
+    check.id = c.id;
+  }
+  if (typeof c.detail === "string" && c.detail.trim()) {
+    check.detail = c.detail.trim();
+  }
   if (typeof c.evidenceUrl === "string" && c.evidenceUrl.trim()) {
     check.evidenceUrl = c.evidenceUrl.trim();
   }
