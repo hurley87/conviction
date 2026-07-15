@@ -19,7 +19,6 @@ describe("MockUAClient withdrawals", () => {
     expect(ua.withdrawalRecords).toHaveLength(1);
 
     const result = await ua.executeWithdrawal({
-      request: REQUEST,
       agreedQuote: quote,
       signers: mockTradeSigners,
     });
@@ -33,7 +32,6 @@ describe("MockUAClient withdrawals", () => {
     const quote = await ua.quoteWithdrawal({ request: REQUEST });
     await expect(
       ua.executeWithdrawal({
-        request: REQUEST,
         agreedQuote: quote,
         signers: mockTradeSigners,
       }),
@@ -45,7 +43,6 @@ describe("MockUAClient withdrawals", () => {
     const quote = await ua.quoteWithdrawal({ request: REQUEST });
     await expect(
       ua.executeWithdrawal({
-        request: REQUEST,
         agreedQuote: quote,
         signers: mockTradeSigners,
       }),

@@ -22,6 +22,7 @@ import { narrateResult } from "@/lib/verbs/intent";
 import {
   isAboveMaxDebit,
   narrateWithdrawal,
+  requestFromQuote,
   shapeWithdrawalQuote,
   withdrawalTokenRef,
 } from "@/lib/verbs/withdrawal";
@@ -290,7 +291,8 @@ export class MockUAClient implements UAClient {
   async executeWithdrawal(
     params: ExecuteWithdrawalParams,
   ): Promise<WithdrawalResult> {
-    const { request, agreedQuote, signers } = params;
+    const { agreedQuote, signers } = params;
+    const request = requestFromQuote(agreedQuote);
     const stale = this.seed.simulateStaleWithdrawal ?? false;
     const txId = `mock-withdraw-exec-${Date.now()}`;
     const raw = this.mockWithdrawalRaw(request, txId, stale);

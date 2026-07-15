@@ -6,6 +6,8 @@ import {
   isSupportedWithdrawalPair,
   narrateWithdrawal,
   parseTokenAmount,
+  requestFromQuote,
+  sendActivityId,
   shapeWithdrawalQuote,
   supportedWithdrawalChains,
   validateWithdrawal,
@@ -206,5 +208,31 @@ describe("narrateWithdrawal", () => {
     });
     expect(summary).toContain("10 USDC");
     expect(summary).toContain("0x2222");
+  });
+});
+
+describe("requestFromQuote / sendActivityId", () => {
+  it("derives the request from quote fields only", () => {
+    const quote = shapeWithdrawalQuote(
+      { totalDecrAmountInUSD: "10", totalFeeInUSD: "0.05" },
+      {
+        asset: "usdc",
+        destChain: "Base",
+        amount: "10",
+        destination: EXTERNAL,
+      },
+      "tx-1",
+      {},
+    );
+    expect(requestFromQuote(quote)).toEqual({
+      asset: "usdc",
+      destChain: "Base",
+      amount: "10",
+      destination: EXTERNAL,
+    });
+  });
+
+  it("namespaces send activity ids", () => {
+    expect(sendActivityId("abc")).toBe("send:abc");
   });
 });

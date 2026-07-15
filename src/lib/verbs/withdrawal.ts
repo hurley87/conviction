@@ -245,7 +245,22 @@ export function shapeWithdrawalQuote(
   };
 }
 
+/** Withdrawal request fields carried on a confirmed quote. */
+export function requestFromQuote(quote: WithdrawalQuote): WithdrawalRequest {
+  return {
+    asset: quote.asset,
+    destChain: quote.destChain,
+    amount: quote.amount,
+    destination: quote.destination,
+  };
+}
+
 /** Short summary for activity timeline after a successful send. */
 export function narrateWithdrawal(request: WithdrawalRequest): string {
   return `Sent ${request.amount} ${withdrawalAssetLabel(request.asset)} to ${request.destination.slice(0, 6)}…${request.destination.slice(-4)}`;
+}
+
+/** Stable activity id for a Particle transfer — insert-once, never overwrites. */
+export function sendActivityId(transactionId: string): string {
+  return `send:${transactionId}`;
 }

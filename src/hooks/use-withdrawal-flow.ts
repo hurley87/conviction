@@ -3,7 +3,7 @@
 // State machine for Settings → external-wallet withdrawals.
 // edit → quoting → confirm → executing → success | error (with recover path).
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { UAClient } from "@/lib/ua/types";
 import type {
   DestChain,
@@ -16,6 +16,8 @@ import type {
 import { WithdrawalStaleQuoteError } from "@/lib/verbs/types";
 import {
   narrateWithdrawal,
+  requestFromQuote,
+  sendActivityId,
   supportedWithdrawalChains,
   validateWithdrawal,
   withdrawalAssetLabel,
@@ -62,6 +64,11 @@ function defaultChainFor(asset: WithdrawalAsset): DestChain {
   return supportedWithdrawalChains(asset)[0] ?? "Arbitrum";
 }
 
+function draftFrom(state: FlowState): WithdrawalDraft {
+  if (state.status === "success") return DEFAULT_DRAFT;
+  return state.draft;
+}
+
 export type UseWithdrawalFlowArgs = {
   ua: UAClient | null;
   signers: TradeSigners;
@@ -86,64 +93,48 @@ export function useWithdrawalFlow({
     draft: DEFAULT_DRAFT,
     error: null,
   });
+  const flowRef = useRef(flow);
   const executingRef = useRef(false);
-  const draftRef = useRef<WithdrawalDraft>(DEFAULT_DRAFT);
-  const quoteRef = useRef<WithdrawalQuote | null>(null);
+
+  useEffect(() => {
+    flowRef.current = flow;
+  }, [flow]);
 
   const setDraft = useCallback((patch: Partial<WithdrawalDraft>) => {
     setFlow((prev) => {
       if (prev.status !== "edit" && prev.status !== "error") return prev;
-      const draft = {
-        ...(prev.status === "edit" || prev.status === "error"
-          ? prev.draft
-          : DEFAULT_DRAFT),
-        ...patch,
-      };
+      const draft = { ...prev.draft, ...patch };
       if (patch.asset && !patch.destChain) {
         const chains = supportedWithdrawalChains(patch.asset);
         if (!chains.includes(draft.destChain)) {
           draft.destChain = defaultChainFor(patch.asset);
         }
       }
-      draftRef.current = draft;
       return { status: "edit", draft, error: null };
     });
   }, []);
 
   const reset = useCallback(() => {
     executingRef.current = false;
-    draftRef.current = DEFAULT_DRAFT;
-    quoteRef.current = null;
     setFlow({ status: "edit", draft: DEFAULT_DRAFT, error: null });
   }, []);
 
   const backToEdit = useCallback(() => {
     executingRef.current = false;
-    quoteRef.current = null;
-    setFlow((prev) => {
-      const draft =
-        prev.status === "confirm" ||
-        prev.status === "quoting" ||
-        prev.status === "executing" ||
-        prev.status === "error"
-          ? prev.draft
-          : DEFAULT_DRAFT;
-      draftRef.current = draft;
-      return { status: "edit", draft, error: null };
-    });
+    setFlow((prev) => ({
+      status: "edit",
+      draft: draftFrom(prev),
+      error: null,
+    }));
   }, []);
 
   const requestQuote = useCallback(async () => {
+    const draft = draftFrom(flowRef.current);
     if (!ua) {
-      setFlow({
-        status: "edit",
-        draft: draftRef.current,
-        error: "Wallet is not ready yet.",
-      });
+      setFlow({ status: "edit", draft, error: "Wallet is not ready yet." });
       return;
     }
 
-    const draft = draftRef.current;
     const validated = validateWithdrawal({
       asset: draft.asset,
       destChain: draft.destChain,
@@ -160,7 +151,6 @@ export function useWithdrawalFlow({
     setFlow({ status: "quoting", draft });
     try {
       const quote = await ua.quoteWithdrawal({ request: validated.request });
-      quoteRef.current = quote;
       setFlow({ status: "confirm", draft, quote, requoteNotice: null });
     } catch (err) {
       setFlow({
@@ -176,42 +166,29 @@ export function useWithdrawalFlow({
 
   const confirmSend = useCallback(async () => {
     if (executingRef.current) return;
-    if (!ua || !quoteRef.current) return;
+    const current = flowRef.current;
+    if (!ua || current.status !== "confirm") return;
 
-    const draft = draftRef.current;
-    const quote = quoteRef.current;
-    const validated = validateWithdrawal({
-      asset: draft.asset,
-      destChain: draft.destChain,
-      amountRaw: draft.amountRaw,
-      destinationRaw: draft.destinationRaw,
-      ownerAddress,
-      balance,
-    });
-    if (!validated.ok) {
-      setFlow({ status: "edit", draft, error: validated.error });
-      return;
-    }
-
+    const { draft, quote } = current;
     executingRef.current = true;
     setFlow({ status: "executing", draft, quote });
 
     try {
       const result = await ua.executeWithdrawal({
-        request: validated.request,
         agreedQuote: quote,
         signers,
       });
 
       if (handle) {
+        const request = requestFromQuote(quote);
         void fetch("/api/activity", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            id: result.transactionId,
+            id: sendActivityId(result.transactionId),
             handle,
             kind: "send",
-            summary: result.summary || narrateWithdrawal(validated.request),
+            summary: result.summary || narrateWithdrawal(request),
             amountUsd: result.estimatedDebitUsd,
             receiptSlug: null,
             metadata: {
@@ -230,11 +207,11 @@ export function useWithdrawalFlow({
       if (result.signed7702Auth) {
         onUpgraded?.();
       }
-      await onSuccess?.();
+      // Balance refresh must not veto a completed on-chain send.
+      void Promise.resolve(onSuccess?.()).catch(() => {});
       setFlow({ status: "success", result });
     } catch (err) {
       if (err instanceof WithdrawalStaleQuoteError) {
-        quoteRef.current = err.freshQuote;
         setFlow({
           status: "confirm",
           draft,
@@ -255,7 +232,7 @@ export function useWithdrawalFlow({
     } finally {
       executingRef.current = false;
     }
-  }, [ua, ownerAddress, balance, signers, handle, onSuccess, onUpgraded]);
+  }, [ua, signers, handle, onSuccess, onUpgraded]);
 
   return {
     flow,

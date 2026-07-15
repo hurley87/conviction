@@ -15,8 +15,8 @@ import {
   buildConvertPayload,
   defaultTradeConfig,
   isSellIntent,
+  signAndSendRaw,
   type RawTransaction,
-  userOpsNeeding7702,
 } from "@/lib/ua/trade";
 import { buildReceipt, inferSpentSymbol } from "@/lib/verbs/receipt";
 import { shapeQuote, isBelowFloor } from "@/lib/verbs/quote";
@@ -24,6 +24,7 @@ import { narrateResult } from "@/lib/verbs/intent";
 import {
   isAboveMaxDebit,
   narrateWithdrawal,
+  requestFromQuote,
   shapeWithdrawalQuote,
   withdrawalTokenRef,
 } from "@/lib/verbs/withdrawal";
@@ -153,9 +154,8 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
   }
 
   async function createTransferRaw(
-    params: QuoteWithdrawalParams,
+    request: QuoteWithdrawalParams["request"],
   ): Promise<RawTransaction> {
-    const { request } = params;
     const token = withdrawalTokenRef(request.asset, request.destChain);
     if (!token) {
       throw new Error(
@@ -220,32 +220,14 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
         );
       }
 
-      if (!raw.rootHash) {
-        throw new Error("Transaction missing root hash");
-      }
-
-      const rootHashSig = await signers.signRootHash(raw.rootHash);
-
-      const authorizations: { userOpHash: string; signature: string }[] = [];
-      for (const pending of userOpsNeeding7702(raw.userOps)) {
-        const sig = await signers.sign7702(pending.auth);
-        authorizations.push({
-          userOpHash: pending.userOpHash,
-          signature: sig,
-        });
-      }
-
-      const signed7702Auth = authorizations.length > 0;
-
       const ua = await account();
-      const result = await ua.sendTransaction(
+      const { transactionId, signed7702Auth } = await signAndSendRaw(
         raw,
-        rootHashSig,
-        authorizations,
+        signers,
+        (transaction, signature, authorizations) =>
+          ua.sendTransaction(transaction, signature, authorizations),
+        agreedQuote.transactionId,
       );
-
-      const transactionId =
-        result.transactionId ?? raw.transactionId ?? agreedQuote.transactionId;
 
       // Amounts come from the executed quote — the SDK's getTransaction status
       // object does not carry USD totals (it would zero the receipt). Legs come
@@ -281,7 +263,7 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
     async quoteWithdrawal(
       params: QuoteWithdrawalParams,
     ): Promise<WithdrawalQuote> {
-      const raw = await createTransferRaw(params);
+      const raw = await createTransferRaw(params.request);
       const txId = raw.transactionId ?? `withdraw-quote-${Date.now()}`;
       return shapeWithdrawalQuote(
         raw.tokenChanges ?? {},
@@ -294,8 +276,9 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
     async executeWithdrawal(
       params: ExecuteWithdrawalParams,
     ): Promise<WithdrawalResult> {
-      const { request, agreedQuote, signers } = params;
-      const raw = await createTransferRaw({ request });
+      const { agreedQuote, signers } = params;
+      const request = requestFromQuote(agreedQuote);
+      const raw = await createTransferRaw(request);
 
       const freshQuote = shapeWithdrawalQuote(
         raw.tokenChanges ?? {},
@@ -311,32 +294,14 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
         );
       }
 
-      if (!raw.rootHash) {
-        throw new Error("Transaction missing root hash");
-      }
-
-      const rootHashSig = await signers.signRootHash(raw.rootHash);
-
-      const authorizations: { userOpHash: string; signature: string }[] = [];
-      for (const pending of userOpsNeeding7702(raw.userOps)) {
-        const sig = await signers.sign7702(pending.auth);
-        authorizations.push({
-          userOpHash: pending.userOpHash,
-          signature: sig,
-        });
-      }
-
-      const signed7702Auth = authorizations.length > 0;
-
       const ua = await account();
-      const result = await ua.sendTransaction(
+      const { transactionId, signed7702Auth } = await signAndSendRaw(
         raw,
-        rootHashSig,
-        authorizations,
+        signers,
+        (transaction, signature, authorizations) =>
+          ua.sendTransaction(transaction, signature, authorizations),
+        agreedQuote.transactionId,
       );
-
-      const transactionId =
-        result.transactionId ?? raw.transactionId ?? agreedQuote.transactionId;
 
       return {
         transactionId,

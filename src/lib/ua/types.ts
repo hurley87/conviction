@@ -33,7 +33,7 @@ export type QuoteWithdrawalParams = {
 };
 
 export type ExecuteWithdrawalParams = {
-  request: WithdrawalRequest;
+  /** Quote is the sole source of truth — transfer fields come from here. */
   agreedQuote: WithdrawalQuote;
   signers: TradeSigners;
 };
