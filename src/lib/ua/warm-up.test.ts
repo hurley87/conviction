@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  hasWarmUpRoute,
+  checkWarmUpRoute,
   NO_ROUTE_MESSAGE,
   warmUpTokenPair,
   type WarmUpAccount,
@@ -20,7 +20,9 @@ describe("warmUpTokenPair", () => {
       })),
     };
 
-    await expect(warmUpTokenPair(ua, TOKEN, { sleep: async () => {} })).resolves.toEqual({
+    await expect(
+      warmUpTokenPair(ua, TOKEN, { sleep: async () => {} }),
+    ).resolves.toEqual({
       address: "0xpair",
       factory: "0xfactory",
     });
@@ -60,18 +62,18 @@ describe("warmUpTokenPair", () => {
   });
 });
 
-describe("hasWarmUpRoute", () => {
-  it("returns false when warm-up fails", async () => {
+describe("checkWarmUpRoute", () => {
+  it("returns no_route when warm-up finds no router", async () => {
     const ua: WarmUpAccount = {
       warmUpToken: async () => ({ router: null }),
       getTokenPair: async () => null,
     };
     await expect(
-      hasWarmUpRoute(ua, TOKEN, { sleep: async () => {} }),
-    ).resolves.toBe(false);
+      checkWarmUpRoute(ua, TOKEN, { sleep: async () => {} }),
+    ).resolves.toEqual({ status: "no_route" });
   });
 
-  it("returns true when a pair is found", async () => {
+  it("returns routable when a pair is found", async () => {
     const ua: WarmUpAccount = {
       warmUpToken: async () => ({ router: {} }),
       getTokenPair: async () => ({
@@ -79,7 +81,19 @@ describe("hasWarmUpRoute", () => {
       }),
     };
     await expect(
-      hasWarmUpRoute(ua, TOKEN, { sleep: async () => {} }),
-    ).resolves.toBe(true);
+      checkWarmUpRoute(ua, TOKEN, { sleep: async () => {} }),
+    ).resolves.toEqual({ status: "routable" });
+  });
+
+  it("returns error when warm-up throws unexpectedly", async () => {
+    const ua: WarmUpAccount = {
+      warmUpToken: async () => {
+        throw new Error("network down");
+      },
+      getTokenPair: async () => null,
+    };
+    await expect(
+      checkWarmUpRoute(ua, TOKEN, { sleep: async () => {} }),
+    ).resolves.toEqual({ status: "error", message: "network down" });
   });
 });

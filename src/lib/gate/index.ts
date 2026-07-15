@@ -7,30 +7,28 @@ import { resolveGateChain, type GateChainInfo } from "@/lib/gate/chains";
 import { checkLiquidityDepth } from "@/lib/gate/liquidity";
 import { checkContractAndHolders } from "@/lib/gate/contract";
 import { checkUaRoutability } from "@/lib/gate/routability";
-import type { WarmUpToken } from "@/lib/ua/warm-up";
+import type { WarmUpRouteResult, WarmUpToken } from "@/lib/ua/warm-up";
 
 export type { GateChainInfo };
 export { resolveGateChain } from "@/lib/gate/chains";
 export { DEFAULT_MIN_LIQUIDITY_USD } from "@/lib/gate/liquidity";
 export {
   DEFAULT_MAX_EOA_HOLDER_FRACTION,
-  DEFAULT_MAX_TOP_HOLDER_FRACTION,
   DEFAULT_TOP_HOLDER_COUNT,
 } from "@/lib/gate/contract";
-export { routerCheckFromWarmUp } from "@/lib/gate/routability";
 
 export type RunGateCheckOptions = {
   fetch?: typeof fetch;
   /** Injected routability seam. Required — live CLI wires Particle warm-up. */
-  checkRouter: (token: WarmUpToken) => Promise<boolean>;
+  checkRouter: (token: WarmUpToken) => Promise<WarmUpRouteResult>;
   minLiquidityUsd?: number;
-  maxTopHolderFraction?: number;
+  maxEoaHolderFraction?: number;
   topHolderCount?: number;
 };
 
 /**
  * Run the three gate checks for a token and return the card-ready report
- * (`GateCheck[]` — pass/fail + evidence link per check).
+ * (`GateCheck[]` — stable name + pass/fail + optional fail detail + evidence).
  */
 export async function runGateCheck(
   address: string,
@@ -48,7 +46,7 @@ export async function runGateCheck(
     }),
     checkContractAndHolders(normalized, chainInfo, {
       fetch: fetchImpl,
-      maxTopHolderFraction: options.maxTopHolderFraction,
+      maxEoaHolderFraction: options.maxEoaHolderFraction,
       topHolderCount: options.topHolderCount,
     }),
     checkUaRoutability(normalized, chainInfo, {
@@ -59,16 +57,19 @@ export async function runGateCheck(
   return [liquidity, contract, routability];
 }
 
-/** First failing check's plain-language name, for gate-kill cards. */
+/** Plain-language fail reason for gate-kill cards (`detail`, else `name`). */
 export function failedCheckName(report: GateCheck[]): string | undefined {
-  return report.find((c) => !c.passed)?.name;
+  const failed = report.find((c) => !c.passed);
+  if (!failed) return undefined;
+  return failed.detail ?? failed.name;
 }
 
 export function formatGateReport(report: GateCheck[]): string {
   const lines = report.map((c) => {
     const mark = c.passed ? "PASS" : "FAIL";
+    const label = !c.passed && c.detail ? c.detail : c.name;
     const evidence = c.evidenceUrl ? `  ${c.evidenceUrl}` : "";
-    return `[${mark}] ${c.name}${evidence}`;
+    return `[${mark}] ${label}${evidence}`;
   });
   const failed = failedCheckName(report);
   if (failed) {

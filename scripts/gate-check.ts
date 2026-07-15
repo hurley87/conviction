@@ -15,6 +15,8 @@
  *   GATE_OWNER_ADDRESS  (any EOA — warm-up does not move funds)
  */
 
+import { requireEnv } from "./lib/require-env";
+
 try {
   process.loadEnvFile(".env.local");
 } catch {
@@ -60,66 +62,47 @@ function parseArgs(argv: string[]): {
   return { address, chain, json };
 }
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    console.error(`Missing ${name}. Required for UA routability warm-up.`);
-    process.exit(1);
-  }
-  return value;
-}
+async function main() {
+  const { address, chain, json } = parseArgs(process.argv.slice(2));
 
-async function createParticleRouterCheck(): Promise<
-  (token: { chainId: number; address: string }) => Promise<boolean>
-> {
   const ownerAddress =
     process.env.GATE_OWNER_ADDRESS ??
     process.env.SMOKE_OWNER_ADDRESS ??
     "0x0000000000000000000000000000000000000001";
 
-  const { UniversalAccount, UNIVERSAL_ACCOUNT_VERSION_V2 } = await import(
-    "@particle-network/universal-account-sdk"
-  );
+  const [{ createParticleAccount }, { checkWarmUpRoute }, gate] =
+    await Promise.all([
+      import("../src/lib/ua/particle"),
+      import("../src/lib/ua/warm-up"),
+      import("../src/lib/gate"),
+    ]);
 
-  const ua = new UniversalAccount({
-    projectId: requireEnv("NEXT_PUBLIC_PARTICLE_PROJECT_ID"),
-    projectClientKey: requireEnv("NEXT_PUBLIC_PARTICLE_CLIENT_KEY"),
-    projectAppUuid: requireEnv("NEXT_PUBLIC_PARTICLE_APP_ID"),
-    smartAccountOptions: {
-      name: "UNIVERSAL",
-      version: UNIVERSAL_ACCOUNT_VERSION_V2,
-      ownerAddress,
-      useEIP7702: true,
-    },
-  }) as {
-    warmUpToken: (token: {
-      chainId: number;
-      address: string;
-    }) => Promise<{ router?: unknown | null } | null>;
-    getTokenPair: (token: {
-      chainId: number;
-      address: string;
-    }) => Promise<{ pair?: { address: string; factory: string } } | null>;
-  };
-
-  const { routerCheckFromWarmUp } = await import("../src/lib/gate");
-  return routerCheckFromWarmUp(ua);
-}
-
-async function main() {
-  const { address, chain, json } = parseArgs(process.argv.slice(2));
-
-  const { runGateCheck, formatGateReport, resolveGateChain } = await import(
-    "../src/lib/gate"
-  );
+  const { runGateCheck, formatGateReport, resolveGateChain } = gate;
 
   const chainInfo = resolveGateChain(chain);
   console.error(
     `Gate-check ${address} on ${chainInfo.name} (${chainInfo.chainId})…`,
   );
 
-  const checkRouter = await createParticleRouterCheck();
-  const report = await runGateCheck(address, chain, { checkRouter });
+  const ua = await createParticleAccount({
+    ownerAddress,
+    projectId: requireEnv(
+      "NEXT_PUBLIC_PARTICLE_PROJECT_ID",
+      "Required for UA routability warm-up.",
+    ),
+    projectClientKey: requireEnv(
+      "NEXT_PUBLIC_PARTICLE_CLIENT_KEY",
+      "Required for UA routability warm-up.",
+    ),
+    projectAppUuid: requireEnv(
+      "NEXT_PUBLIC_PARTICLE_APP_ID",
+      "Required for UA routability warm-up.",
+    ),
+  });
+
+  const report = await runGateCheck(address, chain, {
+    checkRouter: (token) => checkWarmUpRoute(ua, token),
+  });
 
   if (json) {
     console.log(JSON.stringify(report, null, 2));
@@ -135,7 +118,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-
-// Mark as a module so `requireEnv` does not collide with scripts/smoke-spine.ts
-// under the root tsconfig (non-module scripts share one global scope).
-export {};

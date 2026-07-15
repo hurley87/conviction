@@ -40,7 +40,7 @@ export type ParticleConfig = {
 };
 
 /** Minimal structural surface of the SDK account object we depend on. */
-type ParticleAccount = WarmUpAccount & {
+export type ParticleAccount = WarmUpAccount & {
   getPrimaryAssets(): Promise<RawPrimaryAssets>;
   getSmartAccountOptions(): Promise<{
     smartAccountAddress?: string;
@@ -62,8 +62,31 @@ type ParticleAccount = WarmUpAccount & {
   ): Promise<{ transactionId?: string }>;
 };
 
+/** Shared Particle account construction for the UA client and desk CLIs. */
+export async function createParticleAccount(
+  config: ParticleConfig,
+): Promise<ParticleAccount> {
+  const { UniversalAccount, UNIVERSAL_ACCOUNT_VERSION_V2 } = await import(
+    "@particle-network/universal-account-sdk"
+  );
+  return new UniversalAccount({
+    projectId: config.projectId,
+    projectClientKey: config.projectClientKey,
+    projectAppUuid: config.projectAppUuid,
+    // v2.0.x moved the owner into smartAccountOptions and requires
+    // name + version; the old top-level ownerAddress shape is rejected
+    // by the backend as "Invalid parameters".
+    smartAccountOptions: {
+      name: "UNIVERSAL",
+      version: UNIVERSAL_ACCOUNT_VERSION_V2,
+      ownerAddress: config.ownerAddress,
+      useEIP7702: true,
+    },
+  }) as ParticleAccount;
+}
+
 export function createParticleUAClient(config: ParticleConfig): UAClient {
-  let accountPromise: Promise<unknown> | null = null;
+  let accountPromise: Promise<ParticleAccount> | null = null;
 
   async function sdk() {
     return import("@particle-network/universal-account-sdk");
@@ -71,25 +94,9 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
 
   async function account(): Promise<ParticleAccount> {
     if (!accountPromise) {
-      accountPromise = (async () => {
-        const { UniversalAccount, UNIVERSAL_ACCOUNT_VERSION_V2 } = await sdk();
-        return new UniversalAccount({
-          projectId: config.projectId,
-          projectClientKey: config.projectClientKey,
-          projectAppUuid: config.projectAppUuid,
-          // v2.0.x moved the owner into smartAccountOptions and requires
-          // name + version; the old top-level ownerAddress shape is rejected
-          // by the backend as "Invalid parameters".
-          smartAccountOptions: {
-            name: "UNIVERSAL",
-            version: UNIVERSAL_ACCOUNT_VERSION_V2,
-            ownerAddress: config.ownerAddress,
-            useEIP7702: true,
-          },
-        });
-      })();
+      accountPromise = createParticleAccount(config);
     }
-    return accountPromise as Promise<ParticleAccount>;
+    return accountPromise;
   }
 
   /** True when the token is a plain v2 buy target (a primary of a buyable

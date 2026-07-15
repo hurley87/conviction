@@ -6,6 +6,9 @@ import type { GateChainInfo } from "@/lib/gate/chains";
 /** Default floor — below this, a back can move the market against followers. */
 export const DEFAULT_MIN_LIQUIDITY_USD = 50_000;
 
+export const LIQUIDITY_CHECK_NAME = "Liquidity depth";
+export const LIQUIDITY_FAIL_DETAIL = "Liquidity is too thin to back safely";
+
 export type LiquidityDeps = {
   fetch: typeof fetch;
   minLiquidityUsd?: number;
@@ -56,7 +59,8 @@ export async function checkLiquidityDepth(
   }
 
   return {
-    name: "Liquidity depth",
+    id: "liquidity",
+    name: LIQUIDITY_CHECK_NAME,
     passed: true,
     evidenceUrl,
   };
@@ -64,9 +68,10 @@ export async function checkLiquidityDepth(
 
 function failLiquidity(evidenceUrl: string): GateCheck {
   return {
-    // Plain language for a gate-kill card.
-    name: "Liquidity is too thin to back safely",
+    id: "liquidity",
+    name: LIQUIDITY_CHECK_NAME,
     passed: false,
+    detail: LIQUIDITY_FAIL_DETAIL,
     evidenceUrl,
   };
 }

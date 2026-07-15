@@ -141,9 +141,18 @@ export type WhyNowEvent = {
 };
 
 /** One diligence check in a gate report (ADR 0016). */
+/** Stable diligence-check identity (gate module + card keys). */
+export type GateCheckId = "liquidity" | "contract" | "routability";
+
+/**
+ * One diligence check on a card's gate report (ADR 0016).
+ * `name` is stable across pass/fail; `detail` carries kill-card copy on failure.
+ */
 export type GateCheck = {
+  id?: GateCheckId;
   name: string;
   passed: boolean;
+  detail?: string;
   evidenceUrl?: string;
 };
 

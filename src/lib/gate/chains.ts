@@ -26,7 +26,7 @@ export type GateChainInfo = {
 const GATE_CHAINS: Record<GateChainId, GateChainInfo> = {
   1: {
     chainId: 1,
-    name: "Ethereum",
+    name: chainName(1),
     geckoNetwork: "eth",
     blockscoutOrigin: "https://eth.blockscout.com",
     explorerTokenUrl: (address) => `https://etherscan.io/token/${address}`,
@@ -35,7 +35,7 @@ const GATE_CHAINS: Record<GateChainId, GateChainInfo> = {
   },
   [BASE_CHAIN_ID]: {
     chainId: BASE_CHAIN_ID,
-    name: "Base",
+    name: chainName(BASE_CHAIN_ID),
     geckoNetwork: "base",
     blockscoutOrigin: "https://base.blockscout.com",
     explorerTokenUrl: (address) => `https://basescan.org/token/${address}`,
@@ -44,7 +44,7 @@ const GATE_CHAINS: Record<GateChainId, GateChainInfo> = {
   },
   [ARBITRUM_CHAIN_ID]: {
     chainId: ARBITRUM_CHAIN_ID,
-    name: "Arbitrum",
+    name: chainName(ARBITRUM_CHAIN_ID),
     geckoNetwork: "arbitrum",
     blockscoutOrigin: "https://arbitrum.blockscout.com",
     explorerTokenUrl: (address) => `https://arbiscan.io/token/${address}`,
@@ -87,8 +87,4 @@ export function resolveGateChain(chain: string | number): GateChainInfo {
     );
   }
   return GATE_CHAINS[id];
-}
-
-export function gateChainLabel(chainId: number): string {
-  return chainName(chainId);
 }

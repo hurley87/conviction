@@ -21,6 +21,12 @@ export type WarmUpOptions = {
   sleep?: (ms: number) => Promise<void>;
 };
 
+/** Discriminated routability result — one mapping site for gate-check. */
+export type WarmUpRouteResult =
+  | { status: "routable" }
+  | { status: "no_route" }
+  | { status: "error"; message?: string };
+
 export const NO_ROUTE_MESSAGE =
   "This token has no route through your Universal Account yet, so it can't be bought here.";
 
@@ -57,16 +63,22 @@ export async function warmUpTokenPair(
   throw new Error(NO_ROUTE_MESSAGE);
 }
 
-/** True when warm-up yields a routable pair. Used by gate-check. */
-export async function hasWarmUpRoute(
+/** Map warm-up to a routability result (no second swallow at the gate edge). */
+export async function checkWarmUpRoute(
   ua: WarmUpAccount,
   token: WarmUpToken,
   options: WarmUpOptions = {},
-): Promise<boolean> {
+): Promise<WarmUpRouteResult> {
   try {
     await warmUpTokenPair(ua, token, options);
-    return true;
-  } catch {
-    return false;
+    return { status: "routable" };
+  } catch (err) {
+    if (err instanceof Error && err.message === NO_ROUTE_MESSAGE) {
+      return { status: "no_route" };
+    }
+    return {
+      status: "error",
+      message: err instanceof Error ? err.message : undefined,
+    };
   }
 }

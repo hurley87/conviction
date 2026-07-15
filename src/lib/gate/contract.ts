@@ -13,15 +13,19 @@ export const DEFAULT_MAX_EOA_HOLDER_FRACTION = 0.2;
 /** How many top holders to scan for EOAs (Blockscout default page size). */
 export const DEFAULT_TOP_HOLDER_COUNT = 10;
 
-/** @deprecated Prefer DEFAULT_MAX_EOA_HOLDER_FRACTION — kept for call-site aliases. */
-export const DEFAULT_MAX_TOP_HOLDER_FRACTION = DEFAULT_MAX_EOA_HOLDER_FRACTION;
+export const CONTRACT_CHECK_NAME =
+  "Contract verification and holder concentration";
+export const UNVERIFIED_DETAIL = "Contract source is not verified";
+export const CONCENTRATED_DETAIL =
+  "A single wallet owns too much of the supply";
+export const HOLDERS_UNREADABLE_DETAIL =
+  "Couldn't verify holder concentration";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dead";
 
 export type ContractDeps = {
   fetch: typeof fetch;
-  maxTopHolderFraction?: number;
   maxEoaHolderFraction?: number;
   topHolderCount?: number;
 };
@@ -50,18 +54,18 @@ type HoldersResponse = {
 
 /**
  * Passes only when the contract is verified and no single EOA among the top
- * holders owns too much supply. Failure names the specific reason in plain language.
+ * holders owns too much supply. Failures keep a stable `name` and put the
+ * reason in `detail`.
  */
 export async function checkContractAndHolders(
   address: string,
   chain: GateChainInfo,
   deps: ContractDeps,
 ): Promise<GateCheck> {
-  const evidenceUrl = `${chain.explorerTokenUrl(address)}#code`;
+  const codeEvidence = `${chain.explorerTokenUrl(address)}#code`;
+  const balancesEvidence = `${chain.explorerTokenUrl(address)}#balances`;
   const maxFraction =
-    deps.maxEoaHolderFraction ??
-    deps.maxTopHolderFraction ??
-    DEFAULT_MAX_EOA_HOLDER_FRACTION;
+    deps.maxEoaHolderFraction ?? DEFAULT_MAX_EOA_HOLDER_FRACTION;
   const topN = deps.topHolderCount ?? DEFAULT_TOP_HOLDER_COUNT;
   const origin = chain.blockscoutOrigin;
 
@@ -80,14 +84,9 @@ export async function checkContractAndHolders(
   }
 
   if (!verified) {
-    return {
-      name: "Contract source is not verified",
-      passed: false,
-      evidenceUrl,
-    };
+    return failContract(UNVERIFIED_DETAIL, codeEvidence);
   }
 
-  let concentrated = false;
   try {
     const [tokenRes, holdersRes] = await Promise.all([
       deps.fetch(`${origin}/api/v2/tokens/${address}`, {
@@ -100,37 +99,41 @@ export async function checkContractAndHolders(
     ]);
 
     if (!tokenRes.ok || !holdersRes.ok) {
-      // Can't prove concentration is safe — fail closed.
-      concentrated = true;
-    } else {
-      const token = (await tokenRes.json()) as TokenResponse;
-      const holders = (await holdersRes.json()) as HoldersResponse;
-      const supply = Number.parseFloat(token.total_supply ?? "0");
-      if (!Number.isFinite(supply) || supply <= 0) {
-        concentrated = true;
-      } else {
-        const maxEoaShare = maxEoaHolderShare(
-          (holders.items ?? []).slice(0, topN),
-          supply,
-        );
-        concentrated = maxEoaShare > maxFraction;
-      }
+      return failContract(HOLDERS_UNREADABLE_DETAIL, balancesEvidence);
+    }
+
+    const token = (await tokenRes.json()) as TokenResponse;
+    const holders = (await holdersRes.json()) as HoldersResponse;
+    const supply = Number.parseFloat(token.total_supply ?? "0");
+    if (!Number.isFinite(supply) || supply <= 0) {
+      return failContract(HOLDERS_UNREADABLE_DETAIL, balancesEvidence);
+    }
+
+    const maxEoaShare = maxEoaHolderShare(
+      (holders.items ?? []).slice(0, topN),
+      supply,
+    );
+    if (maxEoaShare > maxFraction) {
+      return failContract(CONCENTRATED_DETAIL, balancesEvidence);
     }
   } catch {
-    concentrated = true;
-  }
-
-  if (concentrated) {
-    return {
-      name: "A single wallet owns too much of the supply",
-      passed: false,
-      evidenceUrl: `${chain.explorerTokenUrl(address)}#balances`,
-    };
+    return failContract(HOLDERS_UNREADABLE_DETAIL, balancesEvidence);
   }
 
   return {
-    name: "Contract verification and holder concentration",
+    id: "contract",
+    name: CONTRACT_CHECK_NAME,
     passed: true,
+    evidenceUrl: codeEvidence,
+  };
+}
+
+function failContract(detail: string, evidenceUrl: string): GateCheck {
+  return {
+    id: "contract",
+    name: CONTRACT_CHECK_NAME,
+    passed: false,
+    detail,
     evidenceUrl,
   };
 }
