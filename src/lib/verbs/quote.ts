@@ -1,7 +1,7 @@
 // Pure quote shaping and min-received floor logic (ADR 0011).
 // SDK-free so it is unit-testable without the UA client (ADR 0014).
 
-import type { DestChain, TradeIntent, TradeQuote } from "@/lib/verbs/types";
+import type { TradeIntent, TradeQuote } from "@/lib/verbs/types";
 import { chainName } from "@/lib/verbs/chains";
 
 /** Default tolerance for the min-received floor (ADR 0011). */
@@ -115,6 +115,9 @@ export function shapeQuote(
     feeUsd = reported > 0 ? reported : Math.max(0, dollarsIn - dollarsOut);
   }
   const floorUsd = computeFloor(dollarsOut);
+  if (!intent.destChain) {
+    throw new Error("Settlement chain required before quoting");
+  }
 
   return {
     dollarsIn,
@@ -123,7 +126,7 @@ export function shapeQuote(
     etaSeconds,
     floorUsd,
     sourceChain: inferSourceChain(changes),
-    destChain: intent.destChain as DestChain,
+    destChain: intent.destChain,
     toAsset: intent.toAsset,
     receivedSymbol: inferReceivedSymbol(changes) ?? intent.token?.symbol,
     transactionId,

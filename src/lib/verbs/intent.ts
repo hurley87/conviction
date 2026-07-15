@@ -104,10 +104,18 @@ function parseFromAsset(text: string): ProductAsset | undefined {
   return undefined;
 }
 
+const DEST_CHAIN_WORDS: Record<string, DestChain> = {
+  arbitrum: "Arbitrum",
+  arb: "Arbitrum",
+  base: "Base",
+};
+
 function parseToAsset(text: string): ProductAsset {
-  // "buy/get ETH", "buy 0.5 of ETH" — the asset being acquired is the dest.
+  // "buy/get ETH", "buy $20 of ETH", "buy 0.5 of ETH" — the asset being
+  // acquired is the dest. Allow an optional dollar amount between the verb
+  // and the asset so money-shot phrasing still parses.
   const buyMatch = text.match(
-    /\b(?:buy|buying|get|acquire|purchase)\s+(?:[\d.,]+\s+)?(?:of\s+)?(?:my\s+)?(\w+)/i,
+    /\b(?:buy|buying|get|acquire|purchase)\s+(?:\$?\s*[\d.,]+\s+)?(?:of\s+)?(?:my\s+)?(\w+)/i,
   );
   if (buyMatch) {
     const asset = parseAssetWord(buyMatch[1]!);
@@ -116,22 +124,44 @@ function parseToAsset(text: string): ProductAsset {
 
   // "to/into/for/on <asset>" names the destination — "spend half on ETH",
   // "move $25 to cash". ("on" stays out of parseFromAsset, so "cash in" /
-  // "sell on" don't get misread as a buy.)
+  // "sell on" don't get misread as a buy.) Skip chain words — those are
+  // settlement via parseExplicitDestChain, not assets. "arb" is the token
+  // only via buy/get phrasing; "on ARB" means the Arbitrum chain.
   const toMatch = text.match(
     /\b(?:to|into|for|on)\s+(?:my\s+)?(\w+)/i,
   );
   if (toMatch) {
-    const asset = parseAssetWord(toMatch[1]!);
-    if (asset) return asset;
+    const word = toMatch[1]!.toLowerCase();
+    if (!(word in DEST_CHAIN_WORDS)) {
+      const asset = parseAssetWord(word);
+      if (asset) return asset;
+    }
   }
   if (/\b(?:cash out|to cash|into cash)\b/i.test(text)) return "cash";
   return DEFAULT_TO_ASSET;
 }
 
 /**
+ * Detect an explicit settlement chain in plain English ("on Arbitrum",
+ * "on ARB", "settle on Base"). Used for the desk/demo money shot: Base-funded
+ * buy of ETH that must land on Arbitrum (ADR 0005 + Particle cross-chain
+ * proof). Returns undefined when the user did not name a chain — callers then
+ * use pickSettlementChain.
+ */
+export function parseExplicitDestChain(text: string): DestChain | undefined {
+  const match = text.match(
+    /\b(?:settle(?:s|d|ing)?\s+)?(?:on|onto|to)\s+(arbitrum|arb|base)\b/i,
+  );
+  if (!match) return undefined;
+  return DEST_CHAIN_WORDS[match[1]!.toLowerCase()];
+}
+
+/**
  * Deterministic plain-English → intent parser. Fully offline and the CI test
  * target (ADR 0014); also the fallback when the LLM gateway is unavailable.
  * Never silently infers "all" when amount is missing (ADR 0012).
+ * Only sets destChain when the user named a chain; otherwise leave it unset
+ * so the caller can pickSettlementChain from live balance.
  */
 export function parseIntentHeuristic(text: string): ParseResult {
   const trimmed = text.trim();
@@ -148,10 +178,9 @@ export function parseIntentHeuristic(text: string): ParseResult {
     return { kind: "clarify", question: CLARIFY_AMOUNT };
   }
 
-  const intent: TradeIntent = {
-    toAsset,
-    destChain: DEFAULT_DEST_CHAIN,
-  };
+  const intent: TradeIntent = { toAsset };
+  const destChain = parseExplicitDestChain(trimmed);
+  if (destChain) intent.destChain = destChain;
   if (fromAsset) intent.fromAsset = fromAsset;
   if (sizeUsd != null) intent.sizeUsd = sizeUsd;
   if (fraction != null) intent.fraction = fraction;
@@ -232,6 +261,11 @@ export function validateIntent(
   intent: TradeIntent,
   balance: UniversalBalance,
 ): ValidationResult {
+  if (!intent.destChain) {
+    return { ok: false, error: "Settlement chain required." };
+  }
+  const destChain = intent.destChain;
+
   if (intent.token) {
     // Concrete-token intents (deck cards) bypass the product-asset table;
     // routability is proven at quote time via the warm-up flow.
@@ -239,7 +273,7 @@ export function validateIntent(
       return { ok: false, error: "That destination isn't supported yet." };
     }
     const tokenChain = destChainFromId(intent.token.chainId);
-    if (!tokenChain || tokenChain !== intent.destChain) {
+    if (!tokenChain || tokenChain !== destChain) {
       return {
         ok: false,
         error: `${intent.token.symbol} lives on a chain we can't settle on yet.`,
@@ -277,7 +311,7 @@ export function validateIntent(
     // The target must have a known address on the settlement chain. Catches
     // assets like SOL (not an EVM chain) before quoting, with a friendly message
     // instead of a jargon error from the trade builder.
-    if (!tokenAddress(toUaTokenType(intent.toAsset), destChainId(intent.destChain))) {
+    if (!tokenAddress(toUaTokenType(intent.toAsset), destChainId(destChain))) {
       return { ok: false, error: "That destination isn't supported yet." };
     }
 
@@ -288,7 +322,7 @@ export function validateIntent(
     const hasConvertibleFunds = balance.sources.some(
       (s) =>
         s.usd > 0 &&
-        !(s.chain === intent.destChain && assetMatches(s.asset, intent.toAsset)),
+        !(s.chain === destChain && assetMatches(s.asset, intent.toAsset)),
     );
     if (!hasConvertibleFunds) {
       const label =

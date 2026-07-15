@@ -17,6 +17,9 @@ export function buildBuyPayload(intent: TradeIntent, sizeUsd: number) {
       amountInUSD: sizeUsd.toFixed(2),
     };
   }
+  if (!intent.destChain) {
+    throw new Error("Settlement chain required before building a buy.");
+  }
   const chainId = destChainId(intent.destChain);
   const uaTokenType = toUaTokenType(intent.toAsset);
   const address = tokenAddress(uaTokenType, chainId);
@@ -44,6 +47,9 @@ export function isSellIntent(intent: TradeIntent): boolean {
  * units. The source token is directed via defaultTradeConfig(fromAsset)'s
  * usePrimaryTokens. */
 export function buildConvertPayload(intent: TradeIntent, sizeUsd: number) {
+  if (!intent.destChain) {
+    throw new Error("Settlement chain required before building a convert.");
+  }
   return {
     chainId: destChainId(intent.destChain),
     expectToken: {

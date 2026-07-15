@@ -61,7 +61,11 @@ export type TradeIntent = {
   sizeUsd?: number;
   /** Fraction of unified balance (0–1) when set. Mutually exclusive with sizeUsd. */
   fraction?: number;
-  destChain: DestChain;
+  /**
+   * Settlement chain. Set when the user named one explicitly ("on Arbitrum");
+   * otherwise left unset so the caller can pickSettlementChain from balance.
+   */
+  destChain?: DestChain;
 };
 
 export type ParseResult =

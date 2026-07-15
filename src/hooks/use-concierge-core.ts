@@ -137,11 +137,13 @@ export function useConciergeCore(
       }
       setClarifyContext(null);
 
-      // Settle where the funds already are so a buy doesn't bridge (cash stays
-      // on Arbitrum, ADR 0005).
+      // Explicit dest from the parser wins; otherwise settle where funds
+      // already are (crypto) / Arbitrum (cash, ADR 0005).
       const intent = {
         ...parsed.intent,
-        destChain: pickSettlementChain(parsed.intent.toAsset, balance),
+        destChain:
+          parsed.intent.destChain ??
+          pickSettlementChain(parsed.intent.toAsset, balance),
       };
       const validation = validateIntent(intent, balance);
       if (!validation.ok) {

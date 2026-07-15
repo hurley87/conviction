@@ -5,6 +5,7 @@ import {
   shapeQuote,
   formatEta,
   extractFeeUsd,
+  inferSourceChain,
   DEFAULT_FLOOR_TOLERANCE,
 } from "@/lib/verbs/quote";
 import type { TradeIntent } from "@/lib/verbs/types";
@@ -135,6 +136,23 @@ describe("extractFeeUsd", () => {
   it("returns undefined when there is no fee data", () => {
     expect(extractFeeUsd({})).toBeUndefined();
     expect(extractFeeUsd(null)).toBeUndefined();
+  });
+});
+
+describe("inferSourceChain", () => {
+  it("reads the first debit chain from the SDK changes", () => {
+    expect(
+      inferSourceChain({
+        decr: [
+          { token: { chainId: 8453 } },
+          { token: { chainId: 42161 } },
+        ],
+      }),
+    ).toBe("Base");
+  });
+
+  it("falls back when no debit chain is present", () => {
+    expect(inferSourceChain({})).toBe("Unknown");
   });
 });
 

@@ -63,6 +63,10 @@ export function tradeToConvictionTrade(
     receipt?.legs[0]?.chain ?? quote.sourceChain ?? "Unknown";
   const fromAsset = intent.fromAsset ?? inferFromAsset(intent.toAsset);
 
+  if (!intent.destChain) {
+    throw new Error("Settlement chain required before publishing a conviction.");
+  }
+
   return {
     fromAsset,
     fromChain,

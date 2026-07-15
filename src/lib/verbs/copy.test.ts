@@ -63,19 +63,32 @@ describe("copyTradeSizeUsd", () => {
 });
 
 describe("copyIntent", () => {
-  it("copies direction and picks dest from backer balance", () => {
-    const intent = copyIntent(SEED_ENTRY.trade, BALANCE_242);
+  it("copies direction and mirrors the original settlement chain", () => {
+    const intent = copyIntent(SEED_ENTRY.trade);
     expect(intent.toAsset).toBe("cash");
     expect(intent.fromAsset).toBe("eth");
     expect(intent.destChain).toBe("Arbitrum");
   });
 
   it("omits fromAsset when original source was cash", () => {
-    const intent = copyIntent(
-      { ...SEED_ENTRY.trade, fromAsset: "cash", fromChain: "Arbitrum" },
-      BALANCE_242,
-    );
+    const intent = copyIntent({
+      ...SEED_ENTRY.trade,
+      fromAsset: "cash",
+      fromChain: "Arbitrum",
+    });
     expect(intent.fromAsset).toBeUndefined();
+  });
+
+  it("keeps an ETH card on Arbitrum even when the backer is Base-funded", () => {
+    const intent = copyIntent({
+      fromAsset: "cash",
+      fromChain: "Base",
+      toAsset: "eth",
+      toChain: "Arbitrum",
+      sizeUsd: 20,
+    });
+    expect(intent.toAsset).toBe("eth");
+    expect(intent.destChain).toBe("Arbitrum");
   });
 
   it("re-targets a concrete-token conviction exactly (same token, its chain)", () => {
@@ -84,17 +97,14 @@ describe("copyIntent", () => {
       address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
       symbol: "SURPLUS",
     };
-    const intent = copyIntent(
-      {
-        fromAsset: "cash",
-        fromChain: "Arbitrum",
-        toAsset: "token",
-        token: surplus,
-        toChain: "Base",
-        sizeUsd: 100,
-      },
-      BALANCE_242,
-    );
+    const intent = copyIntent({
+      fromAsset: "cash",
+      fromChain: "Arbitrum",
+      toAsset: "token",
+      token: surplus,
+      toChain: "Base",
+      sizeUsd: 100,
+    });
     expect(intent.toAsset).toBe("token");
     expect(intent.token).toEqual(surplus);
     // The token defines settlement — Base — even though the backer's funds
