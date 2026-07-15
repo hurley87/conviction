@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   getReceiptEntryAt,
   getStoredReceipt,
+  getStoredReceiptRecord,
   resetReceiptsMemoryForTests,
   saveReceipt,
 } from "@/lib/receipts";
@@ -27,22 +28,25 @@ describe("receipts memory store", () => {
     resetReceiptsMemoryForTests();
   });
 
-  it("round-trips a receipt and exposes entryAt", async () => {
+  it("round-trips a receipt and exposes entryAt in one read", async () => {
     const before = Date.now();
     await saveReceipt(sample);
     const after = Date.now();
 
-    expect(await getStoredReceipt("entry-abc")).toEqual(sample);
-
-    const entryAt = await getReceiptEntryAt("entry-abc");
-    expect(entryAt).toBeTruthy();
-    const ms = Date.parse(entryAt!);
+    const record = await getStoredReceiptRecord("entry-abc");
+    expect(record?.receipt).toEqual(sample);
+    expect(record?.entryAt).toBeTruthy();
+    const ms = Date.parse(record!.entryAt);
     expect(ms).toBeGreaterThanOrEqual(before);
     expect(ms).toBeLessThanOrEqual(after);
+
+    expect(await getStoredReceipt("entry-abc")).toEqual(sample);
+    expect(await getReceiptEntryAt("entry-abc")).toBe(record!.entryAt);
   });
 
   it("returns null for unknown slugs", async () => {
     expect(await getStoredReceipt("missing")).toBeNull();
     expect(await getReceiptEntryAt("missing")).toBeNull();
+    expect(await getStoredReceiptRecord("missing")).toBeNull();
   });
 });

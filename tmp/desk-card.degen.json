@@ -1,0 +1,46 @@
+{
+  "handle": "desk",
+  "thesis": "DEGEN is the Base culture coin \u2014 liquid enough to back, and UA can route it.",
+  "trade": {
+    "fromAsset": "cash",
+    "fromChain": "Base",
+    "toAsset": "token",
+    "token": {
+      "chainId": 8453,
+      "address": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed",
+      "symbol": "DEGEN"
+    },
+    "toChain": "Base",
+    "sizeUsd": 8
+  },
+  "receiptSlug": "desk-degen-dry-run",
+  "entryAt": "2026-07-15T18:00:00.000Z",
+  "publishedAt": "2026-07-15T19:00:00.000Z",
+  "whyNow": [
+    {
+      "at": "2026-07-14T12:00:00.000Z",
+      "event": "Gate-check passed liquidity + UA routability on Base."
+    }
+  ],
+  "whatBreaksIt": "UA route disappears or liquidity collapses below the desk floor.",
+  "gateReport": [
+    {
+      "id": "liquidity",
+      "name": "Liquidity depth",
+      "passed": true,
+      "evidenceUrl": "https://www.geckoterminal.com/base/tokens/0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed"
+    },
+    {
+      "id": "contract",
+      "name": "Contract verification and holder concentration",
+      "passed": true,
+      "evidenceUrl": "https://basescan.org/token/0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed#code"
+    },
+    {
+      "id": "routability",
+      "name": "UA routability",
+      "passed": true,
+      "evidenceUrl": "https://basescan.org/token/0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed"
+    }
+  ]
+}

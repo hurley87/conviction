@@ -7,8 +7,10 @@ import {
 import { getReceiptEntryAt } from "@/lib/receipts";
 import {
   buildConviction,
-  entryPrecedesPublication,
+  buildDeskCard,
+  isDeskCardIntent,
   parseConvictionTrade,
+  parseDeskCardFields,
   parseGateReport,
   parseWhatBreaksIt,
   parseWhyNow,
@@ -66,33 +68,46 @@ export async function POST(request: Request) {
   const gateReport = parseGateReport(payload.gateReport);
   if (gateReport === null) return invalidPayload("gateReport");
 
+  // Desk / TokenRef cards share one builder — no partial anatomy on this path.
+  if (isDeskCardIntent({ trade, whyNow, whatBreaksIt, gateReport })) {
+    const parsed = parseDeskCardFields(body);
+    if (!parsed.ok) {
+      return Response.json({ error: parsed.error }, { status: 400 });
+    }
+
+    const entryAt = await getReceiptEntryAt(parsed.value.receiptSlug);
+    if (!entryAt) {
+      return Response.json({ error: "receipt not found" }, { status: 404 });
+    }
+
+    let entry;
+    try {
+      entry = buildDeskCard({
+        ...parsed.value,
+        entryAt,
+      });
+    } catch (err) {
+      return Response.json(
+        { error: err instanceof Error ? err.message : "invalid desk card" },
+        { status: 400 },
+      );
+    }
+
+    const persisted = await saveConviction(entry);
+    return Response.json({ entryId: entry.entryId, persisted });
+  }
+
+  // Plain conviction — anatomy/TokenRef absent; receipt optional.
   const receiptSlug =
     typeof payload.receiptSlug === "string" && payload.receiptSlug.trim()
       ? payload.receiptSlug.trim()
       : undefined;
 
-  // Desk / full-anatomy cards must link an entry receipt (issue #27).
-  // Plain user posts stay optional.
-  const needsEntryReceipt = Boolean(
-    trade.token ||
-      (whyNow && whyNow.length > 0) ||
-      whatBreaksIt ||
-      (gateReport && gateReport.length > 0),
-  );
-  if (needsEntryReceipt && !receiptSlug) {
-    return Response.json(
-      { error: "receiptSlug required for anatomy or token cards" },
-      { status: 400 },
-    );
-  }
-
-  let entryAt: string | undefined;
   if (receiptSlug) {
     const found = await getReceiptEntryAt(receiptSlug);
     if (!found) {
       return Response.json({ error: "receipt not found" }, { status: 404 });
     }
-    entryAt = found;
   }
 
   const entry = buildConviction({
@@ -100,17 +115,7 @@ export async function POST(request: Request) {
     thesis: payload.thesis,
     trade,
     receiptSlug,
-    whyNow,
-    whatBreaksIt,
-    gateReport,
   });
-
-  if (entryAt && !entryPrecedesPublication(entryAt, entry.createdAt)) {
-    return Response.json(
-      { error: "entry receipt timestamp must precede publication" },
-      { status: 400 },
-    );
-  }
 
   const persisted = await saveConviction(entry);
   return Response.json({ entryId: entry.entryId, persisted });

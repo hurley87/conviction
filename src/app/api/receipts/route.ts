@@ -1,6 +1,6 @@
 // Persist / look up receipts for shareable permalinks (ADR 0013).
 
-import { getReceiptEntryAt, getStoredReceipt, saveReceipt } from "@/lib/receipts";
+import { getStoredReceiptRecord, saveReceipt } from "@/lib/receipts";
 import type { Receipt } from "@/lib/verbs/types";
 
 export async function GET(request: Request) {
@@ -10,13 +10,15 @@ export async function GET(request: Request) {
     return Response.json({ error: "slug required" }, { status: 400 });
   }
 
-  const receipt = await getStoredReceipt(slug);
-  if (!receipt) {
+  const record = await getStoredReceiptRecord(slug);
+  if (!record) {
     return Response.json({ error: "receipt not found" }, { status: 404 });
   }
 
-  const entryAt = await getReceiptEntryAt(slug);
-  return Response.json({ receipt, entryAt });
+  return Response.json({
+    receipt: record.receipt,
+    entryAt: record.entryAt,
+  });
 }
 
 export async function POST(request: Request) {

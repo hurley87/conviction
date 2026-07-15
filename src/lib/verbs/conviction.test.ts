@@ -6,7 +6,9 @@ import {
   appendBacker,
   entryPrecedesPublication,
   hasAnatomy,
+  isDeskCardIntent,
   parseConvictionTrade,
+  parseDeskCardFields,
   parseGateReport,
   parseWhatBreaksIt,
   parseWhyNow,
@@ -257,6 +259,18 @@ describe("parseConvictionTrade", () => {
     ).toBeNull();
   });
 
+  it("rejects non-settlement toChain (DestChain hardening)", () => {
+    expect(
+      parseConvictionTrade({
+        fromAsset: "cash",
+        fromChain: "Ethereum",
+        toAsset: "eth",
+        toChain: "Ethereum",
+        sizeUsd: 8,
+      }),
+    ).toBeNull();
+  });
+
   it("rejects invalid payloads", () => {
     expect(parseConvictionTrade(null)).toBeNull();
     expect(parseConvictionTrade({ fromAsset: "eth" })).toBeNull();
@@ -354,6 +368,81 @@ describe("buildDeskCard", () => {
         gateReport: [{ name: "z", passed: true }],
       }),
     ).toThrow(/precede/);
+  });
+});
+
+describe("parseDeskCardFields", () => {
+  const valid = {
+    handle: "desk",
+    thesis: "Full anatomy.",
+    trade: {
+      fromAsset: "cash",
+      fromChain: "Base",
+      toAsset: "token",
+      token: {
+        chainId: 8453,
+        address: "0xSurplusTokenAddress",
+        symbol: "SURPLUS",
+      },
+      toChain: "Base",
+      sizeUsd: 8,
+    },
+    receiptSlug: "r1",
+    whyNow: [{ at: "2026-07-14T12:00:00.000Z", event: "Spike." }],
+    whatBreaksIt: "Liquidity dies.",
+    gateReport: [{ name: "UA routability", passed: true }],
+    entryAt: "2026-07-15T18:00:00.000Z",
+  };
+
+  it("accepts a complete desk payload", () => {
+    const parsed = parseDeskCardFields(valid);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.handle).toBe("desk");
+    expect(parsed.value.trade.token?.symbol).toBe("SURPLUS");
+    expect(parsed.value.entryAt).toBe("2026-07-15T18:00:00.000Z");
+  });
+
+  it("rejects partial anatomy", () => {
+    const parsed = parseDeskCardFields({
+      ...valid,
+      whatBreaksIt: undefined,
+    });
+    expect(parsed).toEqual({
+      ok: false,
+      error: "whatBreaksIt required for desk cards",
+    });
+  });
+});
+
+describe("isDeskCardIntent", () => {
+  it("is true for TokenRef or any anatomy field", () => {
+    expect(
+      isDeskCardIntent({
+        trade: {
+          fromAsset: "cash",
+          fromChain: "Base",
+          toAsset: "eth",
+          toChain: "Base",
+          sizeUsd: 5,
+        },
+        whatBreaksIt: "x",
+      }),
+    ).toBe(true);
+  });
+
+  it("is false for plain trades", () => {
+    expect(
+      isDeskCardIntent({
+        trade: {
+          fromAsset: "cash",
+          fromChain: "Base",
+          toAsset: "eth",
+          toChain: "Base",
+          sizeUsd: 5,
+        },
+      }),
+    ).toBe(false);
   });
 });
 

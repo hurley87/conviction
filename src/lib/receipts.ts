@@ -41,19 +41,35 @@ export async function saveReceipt(receipt: Receipt): Promise<boolean> {
   return true;
 }
 
-export async function getStoredReceipt(
+/** One store read — receipt payload + entry timestamp. */
+export async function getStoredReceiptRecord(
   slug: string,
-): Promise<Receipt | null> {
+): Promise<{ receipt: Receipt; entryAt: string } | null> {
   const sql = getSql();
   if (!sql) {
-    return memoryStore.get(slug)?.receipt ?? null;
+    const stored = memoryStore.get(slug);
+    if (!stored) return null;
+    return { receipt: stored.receipt, entryAt: stored.createdAt };
   }
   await ensureSchema(sql);
   const rows = await sql`
-    SELECT payload FROM receipts WHERE slug = ${slug} LIMIT 1
+    SELECT payload, created_at FROM receipts WHERE slug = ${slug} LIMIT 1
   `;
-  const row = rows[0] as { payload: Receipt } | undefined;
-  return row?.payload ?? null;
+  const row = rows[0] as
+    | { payload: Receipt; created_at: string }
+    | undefined;
+  if (!row) return null;
+  return {
+    receipt: row.payload,
+    entryAt: new Date(row.created_at).toISOString(),
+  };
+}
+
+export async function getStoredReceipt(
+  slug: string,
+): Promise<Receipt | null> {
+  const record = await getStoredReceiptRecord(slug);
+  return record?.receipt ?? null;
 }
 
 /**
@@ -63,18 +79,8 @@ export async function getStoredReceipt(
 export async function getReceiptEntryAt(
   slug: string,
 ): Promise<string | null> {
-  const sql = getSql();
-  if (!sql) {
-    const stored = memoryStore.get(slug);
-    return stored?.createdAt ?? null;
-  }
-  await ensureSchema(sql);
-  const rows = await sql`
-    SELECT created_at FROM receipts WHERE slug = ${slug} LIMIT 1
-  `;
-  const row = rows[0] as { created_at: string } | undefined;
-  if (!row) return null;
-  return new Date(row.created_at).toISOString();
+  const record = await getStoredReceiptRecord(slug);
+  return record?.entryAt ?? null;
 }
 
 /** Test helper — reset in-memory store between tests. */
