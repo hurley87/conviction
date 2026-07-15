@@ -16,6 +16,20 @@ import {
 import { getUAClient } from "@/lib/ua";
 import { useUASnapshot } from "@/hooks/use-ua-snapshot";
 import { FUNDING_TARGET } from "@/lib/funding";
+import {
+  UPGRADE_IN_PLACE_EVENT,
+  markUpgradeBeatSeen,
+  shouldRevealUpgradeBeat,
+} from "@/lib/upgrade-beat";
+
+function browserStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
 
 export function useConvictionAccount() {
   const { ready, authenticated, user, login, logout } = usePrivy();
@@ -36,6 +50,21 @@ export function useConvictionAccount() {
   const [upgraded, setUpgraded] = useState(false);
   const [isFunding, setIsFunding] = useState(false);
   const [fundingError, setFundingError] = useState<string | null>(null);
+  const [showUpgradeBeat, setShowUpgradeBeat] = useState(false);
+
+  const tryRevealUpgradeBeat = useCallback((addr: string | undefined) => {
+    const storage = browserStorage();
+    if (!storage || !shouldRevealUpgradeBeat(addr, storage)) return;
+    setShowUpgradeBeat(true);
+  }, []);
+
+  const dismissUpgradeBeat = useCallback(() => {
+    const storage = browserStorage();
+    if (address && storage) {
+      markUpgradeBeatSeen(address, storage);
+    }
+    setShowUpgradeBeat(false);
+  }, [address]);
 
   // Reflect the account's real on-chain 7702 status, so "Wallet ready" survives
   // reloads instead of resetting to "Upgrade my wallet" every load.
@@ -53,6 +82,28 @@ export function useConvictionAccount() {
     };
   }, [authenticated, address]);
 
+  // Demo beat: show once after login when we have an address (issue #19).
+  useEffect(() => {
+    if (!authenticated || !address) {
+      setShowUpgradeBeat(false);
+      return;
+    }
+    tryRevealUpgradeBeat(address);
+  }, [authenticated, address, tryRevealUpgradeBeat]);
+
+  // First-tx path: Particle emits when 7702 auth was actually signed.
+  useEffect(() => {
+    if (!authenticated || !address) return;
+    const onUpgraded = () => {
+      setUpgraded(true);
+      tryRevealUpgradeBeat(address);
+    };
+    window.addEventListener(UPGRADE_IN_PLACE_EVENT, onUpgraded);
+    return () => {
+      window.removeEventListener(UPGRADE_IN_PLACE_EVENT, onUpgraded);
+    };
+  }, [authenticated, address, tryRevealUpgradeBeat]);
+
   // On connect: persist the user's Twitter handle (ADR 0009).
   useEffect(() => {
     if (!authenticated || !address || !handle || !user?.id) return;
@@ -67,8 +118,9 @@ export function useConvictionAccount() {
     if (!ua) return;
     await ua.ensureUpgraded();
     setUpgraded(true);
+    tryRevealUpgradeBeat(address);
     await refresh();
-  }, [ua, refresh]);
+  }, [ua, refresh, tryRevealUpgradeBeat, address]);
 
   const addMoney = useCallback(async () => {
     if (!address) return;
@@ -109,5 +161,7 @@ export function useConvictionAccount() {
     fundingError,
     upgrade,
     upgraded,
+    showUpgradeBeat,
+    dismissUpgradeBeat,
   };
 }

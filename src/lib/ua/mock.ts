@@ -22,6 +22,7 @@ import {
   type DepositAddresses,
 } from "@/lib/verbs/types";
 import { sumSources } from "@/lib/verbs/map-balance";
+import { emitUpgradedInPlace } from "@/lib/upgrade-beat";
 
 /** Stub signers for mock/demo and unit tests — no real wallet (ADR 0014). */
 export const mockTradeSigners: TradeSigners = {
@@ -77,6 +78,9 @@ export class MockUAClient implements UAClient {
   async ensureUpgraded(): Promise<UpgradeResult> {
     const alreadyUpgraded = this.upgraded;
     this.upgraded = true;
+    if (!alreadyUpgraded) {
+      emitUpgradedInPlace();
+    }
     return { upgraded: !alreadyUpgraded, alreadyUpgraded };
   }
 
@@ -159,6 +163,12 @@ export class MockUAClient implements UAClient {
 
     if (raw.rootHash) {
       await signers.signRootHash(raw.rootHash);
+    }
+
+    // Mirror live first-tx upgrade auth so the beat can fire in mock/demo.
+    if (!this.upgraded) {
+      this.upgraded = true;
+      emitUpgradedInPlace();
     }
 
     const receipt = buildReceipt(

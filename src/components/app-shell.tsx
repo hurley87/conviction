@@ -7,8 +7,12 @@ import {
   ConciergeBubble,
   ConciergeBubbleProvider,
 } from "@/components/concierge-bubble";
+import { useAccount } from "@/components/account/account-context";
+import { UpgradeBeat } from "@/components/upgrade-beat";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const account = useAccount();
+
   return (
     <ConciergeBubbleProvider>
       <div className="flex min-h-screen bg-white text-zinc-900">
@@ -39,6 +43,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <ConciergeBubble />
+
+        {account.showUpgradeBeat && account.address && (
+          <UpgradeBeat
+            address={account.address}
+            balanceUsd={account.balance?.totalUsd ?? null}
+            onDismiss={account.dismissUpgradeBeat}
+          />
+        )}
       </div>
     </ConciergeBubbleProvider>
   );

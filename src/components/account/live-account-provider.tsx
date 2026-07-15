@@ -32,11 +32,13 @@ export function LiveAccountProvider({ children }: { children: React.ReactNode })
       upgraded: account.upgraded,
       isFunding: account.isFunding,
       fundingError: account.fundingError,
+      showUpgradeBeat: account.showUpgradeBeat,
       ua,
       login: account.login,
       logout: account.logout,
       addMoney: account.addMoney,
       upgrade: account.upgrade,
+      dismissUpgradeBeat: account.dismissUpgradeBeat,
     }),
     [
       account.ready,
@@ -49,11 +51,13 @@ export function LiveAccountProvider({ children }: { children: React.ReactNode })
       account.upgraded,
       account.isFunding,
       account.fundingError,
+      account.showUpgradeBeat,
       ua,
       account.login,
       account.logout,
       account.addMoney,
       account.upgrade,
+      account.dismissUpgradeBeat,
     ],
   );
 

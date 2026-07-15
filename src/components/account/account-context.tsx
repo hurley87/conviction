@@ -18,11 +18,14 @@ export type AccountContextValue = {
   upgraded: boolean;
   isFunding: boolean;
   fundingError: string | null;
+  /** Once-only upgrade-in-place beat (issue #19). */
+  showUpgradeBeat: boolean;
   ua: UAClient | null;
   login: () => void;
   logout: () => void;
   addMoney: () => Promise<void>;
   upgrade: () => Promise<void>;
+  dismissUpgradeBeat: () => void;
 };
 
 const AccountContext = createContext<AccountContextValue | null>(null);

@@ -27,6 +27,7 @@ import {
   type DepositAddresses,
 } from "@/lib/verbs/types";
 import { toUniversalBalance, type RawPrimaryAssets } from "@/lib/verbs/map-balance";
+import { emitUpgradedInPlace } from "@/lib/upgrade-beat";
 
 export type ParticleConfig = {
   ownerAddress: string;
@@ -228,6 +229,12 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
           userOpHash: pending.userOpHash,
           signature: sig,
         });
+      }
+
+      // First-tx 7702 auth is the real upgrade-in-place moment — surface it
+      // once in the UI (issue #19) without blocking the trade.
+      if (authorizations.length > 0) {
+        emitUpgradedInPlace();
       }
 
       const ua = await account();
