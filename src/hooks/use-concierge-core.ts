@@ -10,7 +10,7 @@ import {
 } from "@/lib/verbs/feed-summary";
 import {
   parseIntentHeuristic,
-  resolveDestChain,
+  pickSettlementChain,
   validateIntent,
 } from "@/lib/verbs/intent";
 import { generateReceiptSlug } from "@/lib/verbs/receipt";
@@ -137,12 +137,13 @@ export function useConciergeCore(
       }
       setClarifyContext(null);
 
-      // Default: settle where funds already are (crypto) / Arbitrum (cash).
-      // Explicit "on Arbitrum" / "on Base" wins — needed for the Base→Arb ETH
-      // money shot when the wallet is Base-funded.
+      // Explicit dest from the parser wins; otherwise settle where funds
+      // already are (crypto) / Arbitrum (cash, ADR 0005).
       const intent = {
         ...parsed.intent,
-        destChain: resolveDestChain(parsed.intent.toAsset, balance, combined),
+        destChain:
+          parsed.intent.destChain ??
+          pickSettlementChain(parsed.intent.toAsset, balance),
       };
       const validation = validateIntent(intent, balance);
       if (!validation.ok) {

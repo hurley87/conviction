@@ -56,12 +56,9 @@ export function resolveReceiptSourceChain(
   return legs[0]?.chain ?? quotedSource;
 }
 
-/** Spent-token label for the receipt: explicit fromAsset, else USDC (cash). */
+/** Spent-token label for the receipt: explicit fromAsset, else cash (USDC). */
 export function inferSpentSymbol(intent: TradeIntent): string {
-  if (intent.fromAsset) {
-    return productAssetPrimarySymbol(intent.fromAsset);
-  }
-  return "USDC";
+  return productAssetPrimarySymbol(intent.fromAsset ?? "cash");
 }
 
 /** Plain net summary for the receipt (ADR 0013). Names spent + received tokens
@@ -72,7 +69,7 @@ export function buildReceiptSummary(
   sourceChain: string,
   destChain: string,
   destSymbol: string,
-  sourceSymbol = "USDC",
+  sourceSymbol: string = productAssetPrimarySymbol("cash"),
 ): string {
   return `${formatUsd(dollarsIn)} ${sourceSymbol} from ${sourceChain} → ${formatUsd(dollarsOut)} ${destSymbol} on ${destChain}`;
 }

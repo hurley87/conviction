@@ -104,6 +104,12 @@ function parseFromAsset(text: string): ProductAsset | undefined {
   return undefined;
 }
 
+const DEST_CHAIN_WORDS: Record<string, DestChain> = {
+  arbitrum: "Arbitrum",
+  arb: "Arbitrum",
+  base: "Base",
+};
+
 function parseToAsset(text: string): ProductAsset {
   // "buy/get ETH", "buy $20 of ETH", "buy 0.5 of ETH" — the asset being
   // acquired is the dest. Allow an optional dollar amount between the verb
@@ -126,7 +132,7 @@ function parseToAsset(text: string): ProductAsset {
   );
   if (toMatch) {
     const word = toMatch[1]!.toLowerCase();
-    if (word !== "arbitrum" && word !== "base" && word !== "arb") {
+    if (!(word in DEST_CHAIN_WORDS)) {
       const asset = parseAssetWord(word);
       if (asset) return asset;
     }
@@ -134,12 +140,6 @@ function parseToAsset(text: string): ProductAsset {
   if (/\b(?:cash out|to cash|into cash)\b/i.test(text)) return "cash";
   return DEFAULT_TO_ASSET;
 }
-
-const DEST_CHAIN_WORDS: Record<string, DestChain> = {
-  arbitrum: "Arbitrum",
-  arb: "Arbitrum",
-  base: "Base",
-};
 
 /**
  * Detect an explicit settlement chain in plain English ("on Arbitrum",
@@ -157,22 +157,11 @@ export function parseExplicitDestChain(text: string): DestChain | undefined {
 }
 
 /**
- * Prefer an explicit settlement chain from the user's words; otherwise pick
- * where funds already sit (crypto buys) / Arbitrum (cash, ADR 0005).
- */
-export function resolveDestChain(
-  toAsset: ProductAsset,
-  balance: UniversalBalance,
-  userText?: string,
-): DestChain {
-  const explicit = userText ? parseExplicitDestChain(userText) : undefined;
-  return explicit ?? pickSettlementChain(toAsset, balance);
-}
-
-/**
  * Deterministic plain-English → intent parser. Fully offline and the CI test
  * target (ADR 0014); also the fallback when the LLM gateway is unavailable.
  * Never silently infers "all" when amount is missing (ADR 0012).
+ * Only sets destChain when the user named a chain; otherwise leave it unset
+ * so the caller can pickSettlementChain from live balance.
  */
 export function parseIntentHeuristic(text: string): ParseResult {
   const trimmed = text.trim();
@@ -189,10 +178,9 @@ export function parseIntentHeuristic(text: string): ParseResult {
     return { kind: "clarify", question: CLARIFY_AMOUNT };
   }
 
-  const intent: TradeIntent = {
-    toAsset,
-    destChain: parseExplicitDestChain(trimmed) ?? DEFAULT_DEST_CHAIN,
-  };
+  const intent: TradeIntent = { toAsset };
+  const destChain = parseExplicitDestChain(trimmed);
+  if (destChain) intent.destChain = destChain;
   if (fromAsset) intent.fromAsset = fromAsset;
   if (sizeUsd != null) intent.sizeUsd = sizeUsd;
   if (fraction != null) intent.fraction = fraction;
@@ -273,6 +261,11 @@ export function validateIntent(
   intent: TradeIntent,
   balance: UniversalBalance,
 ): ValidationResult {
+  if (!intent.destChain) {
+    return { ok: false, error: "Settlement chain required." };
+  }
+  const destChain = intent.destChain;
+
   if (intent.token) {
     // Concrete-token intents (deck cards) bypass the product-asset table;
     // routability is proven at quote time via the warm-up flow.
@@ -280,7 +273,7 @@ export function validateIntent(
       return { ok: false, error: "That destination isn't supported yet." };
     }
     const tokenChain = destChainFromId(intent.token.chainId);
-    if (!tokenChain || tokenChain !== intent.destChain) {
+    if (!tokenChain || tokenChain !== destChain) {
       return {
         ok: false,
         error: `${intent.token.symbol} lives on a chain we can't settle on yet.`,
@@ -318,7 +311,7 @@ export function validateIntent(
     // The target must have a known address on the settlement chain. Catches
     // assets like SOL (not an EVM chain) before quoting, with a friendly message
     // instead of a jargon error from the trade builder.
-    if (!tokenAddress(toUaTokenType(intent.toAsset), destChainId(intent.destChain))) {
+    if (!tokenAddress(toUaTokenType(intent.toAsset), destChainId(destChain))) {
       return { ok: false, error: "That destination isn't supported yet." };
     }
 
@@ -329,7 +322,7 @@ export function validateIntent(
     const hasConvertibleFunds = balance.sources.some(
       (s) =>
         s.usd > 0 &&
-        !(s.chain === intent.destChain && assetMatches(s.asset, intent.toAsset)),
+        !(s.chain === destChain && assetMatches(s.asset, intent.toAsset)),
     );
     if (!hasConvertibleFunds) {
       const label =

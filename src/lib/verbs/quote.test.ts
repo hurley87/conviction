@@ -140,27 +140,19 @@ describe("extractFeeUsd", () => {
 });
 
 describe("inferSourceChain", () => {
-  it("prefers a debit chain that isn't the destination", () => {
+  it("reads the first debit chain from the SDK changes", () => {
     expect(
-      inferSourceChain(
-        {
-          decr: [
-            { token: { chainId: 42161 } },
-            { token: { chainId: 8453 } },
-          ],
-        },
-        "Arbitrum",
-      ),
+      inferSourceChain({
+        decr: [
+          { token: { chainId: 8453 } },
+          { token: { chainId: 42161 } },
+        ],
+      }),
     ).toBe("Base");
   });
 
-  it("falls back to the first debit when all match dest", () => {
-    expect(
-      inferSourceChain(
-        { decr: [{ token: { chainId: 42161 } }] },
-        "Arbitrum",
-      ),
-    ).toBe("Arbitrum");
+  it("falls back when no debit chain is present", () => {
+    expect(inferSourceChain({})).toBe("Unknown");
   });
 });
 

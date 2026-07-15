@@ -10,7 +10,6 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import {
   CLARIFY_AMOUNT,
-  DEFAULT_DEST_CHAIN,
   DEFAULT_TO_ASSET,
   PARSER_ASSETS,
   parseIntentHeuristic,
@@ -52,7 +51,6 @@ function rawToParseResult(raw: RawParse): ParseResult {
 
   const intent: TradeIntent = {
     toAsset: (raw.toAsset as ProductAsset) ?? DEFAULT_TO_ASSET,
-    destChain: DEFAULT_DEST_CHAIN,
   };
   if (raw.fromAsset && raw.fromAsset !== "cash") {
     intent.fromAsset = raw.fromAsset as ProductAsset;
@@ -63,6 +61,8 @@ function rawToParseResult(raw: RawParse): ParseResult {
   } else if (raw.fraction != null) {
     intent.fraction = raw.fraction;
   }
+  // Leave destChain unset — the concierge resolves via pickSettlementChain
+  // (or an explicit chain phrase if the heuristic path set one).
 
   return { kind: "intent", intent };
 }

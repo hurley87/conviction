@@ -51,10 +51,7 @@ export function copyTradeSizeUsd(
  * source from wherever the backer holds them — a Base-funded back of an
  * Arbitrum-settled ETH card is the cross-chain money shot. A concrete-token
  * conviction re-targets the exact token (same address, same chain). */
-export function copyIntent(
-  trade: ConvictionTrade,
-  _balance: UniversalBalance,
-): TradeIntent {
+export function copyIntent(trade: ConvictionTrade): TradeIntent {
   if (trade.token) {
     return {
       toAsset: "token",
@@ -80,7 +77,7 @@ export async function copyConviction(
 ): Promise<CopyConvictionResult> {
   const { ua, balance, signers } = deps;
   const sizeUsd = copyTradeSizeUsd(balance, override);
-  const intent = copyIntent(entry.trade, balance);
+  const intent = copyIntent(entry.trade);
 
   const validation = validateIntent({ ...intent, sizeUsd }, balance);
   if (!validation.ok) {

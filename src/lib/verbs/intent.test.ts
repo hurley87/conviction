@@ -5,7 +5,6 @@ import {
   resolveSizeUsd,
   pickSettlementChain,
   parseExplicitDestChain,
-  resolveDestChain,
 } from "@/lib/verbs/intent";
 import type { TradeIntent, UniversalBalance } from "@/lib/verbs/types";
 
@@ -18,13 +17,13 @@ const balance: UniversalBalance = {
 };
 
 describe("parseIntent", () => {
-  it("parses a dollar amount to cash on Arbitrum", () => {
+  it("parses a dollar amount to cash without inventing a settlement chain", () => {
     const result = parseIntent("Move $25 to cash");
     expect(result.kind).toBe("intent");
     if (result.kind !== "intent") return;
     expect(result.intent.sizeUsd).toBe(25);
     expect(result.intent.toAsset).toBe("cash");
-    expect(result.intent.destChain).toBe("Arbitrum");
+    expect(result.intent.destChain).toBeUndefined();
   });
 
   it("parses 'buy ARB for $5' as an ARB buy (hero card phrasing)", () => {
@@ -354,12 +353,7 @@ describe("pickSettlementChain", () => {
   });
 });
 
-describe("parseExplicitDestChain / resolveDestChain", () => {
-  const baseHeavy: UniversalBalance = {
-    totalUsd: 100,
-    sources: [{ chain: "Base", asset: "USDC", usd: 100 }],
-  };
-
+describe("parseExplicitDestChain", () => {
   it("reads on/settle-on chain phrases", () => {
     expect(parseExplicitDestChain("buy $20 of ETH on Arbitrum")).toBe(
       "Arbitrum",
@@ -367,16 +361,6 @@ describe("parseExplicitDestChain / resolveDestChain", () => {
     expect(parseExplicitDestChain("buy $20 of ETH on ARB")).toBe("Arbitrum");
     expect(parseExplicitDestChain("settle on Base")).toBe("Base");
     expect(parseExplicitDestChain("buy $20 of ETH")).toBeUndefined();
-  });
-
-  it("forces Arbitrum for a Base-funded ETH buy when the user names it", () => {
-    expect(resolveDestChain("eth", baseHeavy, "buy $20 of ETH on Arbitrum")).toBe(
-      "Arbitrum",
-    );
-  });
-
-  it("falls back to pickSettlementChain when no chain is named", () => {
-    expect(resolveDestChain("eth", baseHeavy, "buy $20 of ETH")).toBe("Base");
   });
 });
 
