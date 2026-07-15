@@ -27,6 +27,10 @@ import {
   type DepositAddresses,
 } from "@/lib/verbs/types";
 import { toUniversalBalance, type RawPrimaryAssets } from "@/lib/verbs/map-balance";
+import {
+  warmUpTokenPair,
+  type WarmUpAccount,
+} from "@/lib/ua/warm-up";
 
 export type ParticleConfig = {
   ownerAddress: string;
@@ -36,21 +40,13 @@ export type ParticleConfig = {
 };
 
 /** Minimal structural surface of the SDK account object we depend on. */
-type ParticleAccount = {
+type ParticleAccount = WarmUpAccount & {
   getPrimaryAssets(): Promise<RawPrimaryAssets>;
   getSmartAccountOptions(): Promise<{
     smartAccountAddress?: string;
     solanaSmartAccountAddress?: string;
     ownerAddress: string;
   }>;
-  warmUpToken(token: {
-    chainId: number;
-    address: string;
-  }): Promise<{ router?: unknown | null } | null>;
-  getTokenPair(token: {
-    chainId: number;
-    address: string;
-  }): Promise<{ pair?: { address: string; factory: string } } | null>;
   createBuyTransaction(
     payload: { token: { chainId: number; address: string }; amountInUSD: string },
     tradeConfig?: Record<string, unknown>,
@@ -65,16 +61,6 @@ type ParticleAccount = {
     authorizations?: { userOpHash: string; signature: string }[],
   ): Promise<{ transactionId?: string }>;
 };
-
-const WARM_UP_POLLS = 4;
-const WARM_UP_POLL_MS = 3000;
-
-const NO_ROUTE_MESSAGE =
-  "This token has no route through your Universal Account yet, so it can't be bought here.";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export function createParticleUAClient(config: ParticleConfig): UAClient {
   let accountPromise: Promise<unknown> | null = null;
@@ -117,28 +103,6 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
     const buyableTypes: string[] =
       mod.UNIVERSAL_ACCOUNT_VERSION_V2_SUPPORTED_TOKEN_TYPES ?? [];
     return supported?.type != null && buyableTypes.includes(supported.type);
-  }
-
-  /** UniversalX-style route warm-up for tokens outside the primary set:
-   * warmUpToken registers the route, getTokenPair yields the DEX pair the
-   * buy must be quoted against. A null router means Particle can't route
-   * this token (true for ALL non-primaries on Arbitrum as of 2026-07). */
-  async function warmUpTokenPair(
-    ua: ParticleAccount,
-    token: { chainId: number; address: string },
-  ): Promise<{ address: string; factory: string }> {
-    const warm = await ua.warmUpToken(token);
-    if (!warm?.router) {
-      throw new Error(NO_ROUTE_MESSAGE);
-    }
-    for (let attempt = 0; attempt < WARM_UP_POLLS; attempt++) {
-      const pair = (await ua.getTokenPair(token))?.pair;
-      if (pair?.address) {
-        return { address: pair.address, factory: pair.factory };
-      }
-      await sleep(WARM_UP_POLL_MS);
-    }
-    throw new Error(NO_ROUTE_MESSAGE);
   }
 
   async function createTradeTransaction(
