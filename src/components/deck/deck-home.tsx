@@ -1,16 +1,19 @@
 "use client";
 
-// Home deck surface — swipe stack with sizing → confirm → receipt (issue #22).
-// Skip / save / back persist; exhausted deck points to feed + Saved (#24).
+// Home deck surface — swipe stack with add-money → sizing → confirm → receipt
+// (issues #22 / #26). Skip / save / back persist; exhausted deck points to
+// feed + Saved (#24).
 
 import { useAccount } from "@/components/account/account-context";
 import { ConfirmCard } from "@/components/confirm-card";
+import { AddMoneySheet } from "@/components/deck/add-money-sheet";
 import { Deck } from "@/components/deck/deck";
 import { SizingSheet } from "@/components/deck/sizing-sheet";
 import { ReceiptView } from "@/components/receipt-view";
 import { PRIMARY_LIGHT } from "@/components/button-styles";
 import { useDeckBackFlow } from "@/hooks/use-deck-back-flow";
 import { IS_LIVE } from "@/lib/env";
+import { backSwipeDestination } from "@/lib/verbs/deck";
 import type { ConvictionEntry, TradeSigners } from "@/lib/verbs/types";
 
 type DeckHomeProps = {
@@ -67,6 +70,9 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
     flow.status === "executing"
       ? flow.fraction
       : undefined;
+  const isSizingPhase =
+    flow.status === "sizing" || flow.status === "quoting";
+  const fundingDestination = backSwipeDestination(account.balance);
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6 pb-20">
@@ -88,16 +94,26 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
       {overlayOpen && (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/30 p-4 sm:items-center">
           <div className="w-full max-w-md">
-            {(flow.status === "sizing" || flow.status === "quoting") &&
-              sizingFraction != null && (
+            {isSizingPhase && fundingDestination === "addMoney" && (
+              <AddMoneySheet
+                deposits={account.deposits}
+                onAddMoney={account.addMoney}
+                isFunding={account.isFunding}
+                fundingError={account.fundingError}
+                onCancel={resetToBrowse}
+              />
+            )}
+
+            {isSizingPhase &&
+              fundingDestination === "sizing" &&
+              sizingFraction != null &&
+              account.balance && (
                 <SizingSheet
                   balance={account.balance}
                   selectedFraction={sizingFraction}
                   onSelectFraction={setFraction}
                   onContinue={() => void onContinueSizing()}
                   onCancel={resetToBrowse}
-                  onAddMoney={account.addMoney}
-                  isFunding={account.isFunding}
                   quoting={flow.status === "quoting"}
                 />
               )}

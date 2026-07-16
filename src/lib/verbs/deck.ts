@@ -42,3 +42,13 @@ export function fractionChipLabel(
     fraction >= 1 ? "All" : `${Math.round(fraction * 100)}%`;
   return { pct, usd: sizeUsdForFraction(balance, fraction) };
 }
+
+/**
+ * Right-swipe destination: funded → sizing; zero/unknown → add-money (issue #26).
+ * Treat null balance as unfunded so sizing never opens at 10% × $0.
+ */
+export function backSwipeDestination(
+  balance: UniversalBalance | null | undefined,
+): "sizing" | "addMoney" {
+  return balance != null && balance.totalUsd > 0 ? "sizing" : "addMoney";
+}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DECK_SIZE_FRACTIONS,
+  backSwipeDestination,
   fractionChipLabel,
   isDeckCard,
   orderDeckCards,
@@ -97,5 +98,22 @@ describe("fractionChipLabel", () => {
 
   it("labels full balance as All", () => {
     expect(fractionChipLabel(BALANCE, 1).pct).toBe("All");
+  });
+});
+
+describe("backSwipeDestination", () => {
+  it("routes zero balance to addMoney", () => {
+    expect(backSwipeDestination({ totalUsd: 0, sources: [] })).toBe(
+      "addMoney",
+    );
+  });
+
+  it("routes unknown balance to addMoney so sizing never opens at $0", () => {
+    expect(backSwipeDestination(null)).toBe("addMoney");
+    expect(backSwipeDestination(undefined)).toBe("addMoney");
+  });
+
+  it("routes funded balance straight to sizing", () => {
+    expect(backSwipeDestination(BALANCE)).toBe("sizing");
   });
 });

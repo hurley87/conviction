@@ -1,7 +1,9 @@
 "use client";
 
 // Deck back flow — browse → size → quote → confirm → execute → receipt
-// (issue #22). Swipe verbs persist so acted-on cards stay off the deck (#24).
+// (issues #22 / #26). Zero balance is handled in the UI by deriving the
+// add-money sheet from the remembered sizing entry + unified balance — no
+// effect sync. Swipe verbs persist so acted-on cards stay off the deck (#24).
 
 import { useCallback, useMemo, useState } from "react";
 import { useAccount } from "@/components/account/account-context";
@@ -62,6 +64,8 @@ export function useDeckBackFlow(
   const onSkip = useCallback(() => recordDeckVerb("skip"), [recordDeckVerb]);
   const onSave = useCallback(() => recordDeckVerb("save"), [recordDeckVerb]);
 
+  // Always remember the card as sizing intent. DeckHome derives add-money vs
+  // sizing from unified balance so funds arriving resume without an effect.
   const onBackSwipe = useCallback(
     (entry: ConvictionEntry) => {
       if (flow.status !== "browse") return;

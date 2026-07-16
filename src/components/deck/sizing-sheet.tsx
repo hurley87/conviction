@@ -1,9 +1,9 @@
 "use client";
 
 // Sizing sheet for a right-swipe back — preset fractions of unified balance,
-// dollars only, no chain vocabulary (ADR 0003 / 0016).
+// dollars only, no chain vocabulary (ADR 0003 / 0016). Caller must only mount
+// with a funded balance (issue #26 routes zero to AddMoneySheet).
 
-import { AddMoneyButton } from "@/components/add-money-button";
 import { PRIMARY_LIGHT, GHOST_LIGHT } from "@/components/button-styles";
 import { formatUsd } from "@/lib/format";
 import {
@@ -20,48 +20,17 @@ export function SizingSheet({
   onSelectFraction,
   onContinue,
   onCancel,
-  onAddMoney,
-  isFunding,
   quoting,
 }: {
-  balance: UniversalBalance | null;
+  balance: UniversalBalance;
   selectedFraction: number;
   onSelectFraction: (fraction: number) => void;
   onContinue: () => void;
   onCancel: () => void;
-  onAddMoney?: () => void | Promise<void>;
-  isFunding?: boolean;
   quoting?: boolean;
 }) {
-  const totalUsd = balance?.totalUsd ?? 0;
-  const hasFunds = totalUsd > 0;
-
-  if (!hasFunds) {
-    return (
-      <div className="w-full rounded-2xl border border-zinc-200 bg-white p-5 text-left">
-        <p className="text-xs font-medium tracking-wider text-zinc-500 uppercase">
-          Size your back
-        </p>
-        <p className="mt-3 text-sm text-zinc-600">
-          Add money to back this — we never show a percent of zero.
-        </p>
-        {onAddMoney && (
-          <div className="mt-5">
-            <AddMoneyButton onAdd={onAddMoney} isFunding={isFunding} />
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={onCancel}
-          className={`${GHOST_LIGHT} mt-3 px-5 py-2 text-sm`}
-        >
-          Cancel
-        </button>
-      </div>
-    );
-  }
-
-  const dollars = sizeUsdForFraction(balance!, selectedFraction);
+  const totalUsd = balance.totalUsd;
+  const dollars = sizeUsdForFraction(balance, selectedFraction);
 
   return (
     <div className="w-full rounded-2xl border border-zinc-200 bg-white p-5 text-left">
@@ -74,7 +43,7 @@ export function SizingSheet({
 
       <div className="mt-4 flex flex-wrap gap-2">
         {DECK_SIZE_FRACTIONS.map((fraction) => {
-          const chip = fractionChipLabel(balance!, fraction);
+          const chip = fractionChipLabel(balance, fraction);
           const selected = fraction === selectedFraction;
           return (
             <button
