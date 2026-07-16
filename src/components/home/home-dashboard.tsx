@@ -2,7 +2,6 @@
 
 import { useSyncExternalStore } from "react";
 import { useAccount } from "@/components/account/account-context";
-import { useConciergeBubble } from "@/components/concierge-bubble";
 import { BalanceHeader } from "@/components/home/balance-header";
 import { QuickActions } from "@/components/home/quick-actions";
 import { AssetList } from "@/components/home/asset-list";
@@ -32,7 +31,6 @@ function useClientHour(): number | null {
 
 export function HomeDashboard() {
   const account = useAccount();
-  const { openBubble } = useConciergeBubble();
   const greeting = greetingFor(useClientHour());
 
   if (!account.ready) {
@@ -71,26 +69,13 @@ export function HomeDashboard() {
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-7">
-      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-        <div>
-          <p className="pt-eyebrow">One balance · every network</p>
-          <h1 className="mt-2 font-display text-[clamp(2.5rem,5vw,4.25rem)] font-medium leading-[0.96] tracking-[-0.045em] text-ink">
-            {greeting.text},
-            <br className="sm:hidden" />{" "}
-            <span className="italic text-brand">{name}</span>{" "}
-            <span className="text-[0.6em] not-italic">{greeting.emoji}</span>
-          </h1>
-        </div>
-        <button
-          type="button"
-          onClick={openBubble}
-          className="group inline-flex w-fit items-center gap-2.5 rounded-full border border-line bg-surface/75 px-4 py-2.5 text-sm font-extrabold text-ink shadow-sm backdrop-blur-md transition hover:-translate-y-0.5 hover:shadow-md"
-        >
-          <span className="grid h-7 w-7 place-items-center rounded-full bg-brand text-brand-on transition-transform group-hover:rotate-6">
-            ✦
-          </span>
-          Ask your agent
-        </button>
+      <div>
+        <p className="pt-eyebrow">One balance · every network</p>
+        <h1 className="mt-2 whitespace-nowrap font-display text-[clamp(1.35rem,5vw,3.75rem)] font-medium leading-[0.96] tracking-[-0.045em] text-ink">
+          {greeting.text},{" "}
+          <span className="italic text-brand">{name}</span>{" "}
+          <span className="text-[0.6em] not-italic">{greeting.emoji}</span>
+        </h1>
       </div>
 
       <BalanceHeader

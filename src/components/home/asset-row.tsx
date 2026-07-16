@@ -15,6 +15,12 @@ type AssetRowProps = {
   /** 30-day price change, %. */
   change30d: number | null;
   loading?: boolean;
+  networkBreakdown?: {
+    chain: string;
+    color: string;
+    usd: number;
+    amount: number | null;
+  }[];
 };
 
 function formatAmount(n: number, symbol: string): string {
@@ -32,11 +38,13 @@ export function AssetRow({
   networkColor,
   change30d,
   loading,
+  networkBreakdown,
 }: AssetRowProps) {
   const isNegative = change30d != null && change30d < 0;
+  const hasBreakdown = networkBreakdown != null && networkBreakdown.length > 1;
 
-  return (
-    <div className="mb-2 grid grid-cols-1 items-center gap-3 rounded-[18px] border border-transparent bg-surface-2/65 px-4 py-3.5 transition hover:border-line hover:bg-surface hover:shadow-sm md:grid-cols-[1fr_150px_140px_90px] md:gap-4">
+  const row = (
+    <>
       <div className="flex items-center gap-3">
         <div className="relative h-9 w-9">
           {logoUri ? (
@@ -72,6 +80,22 @@ export function AssetRow({
           aria-hidden
         />
         {networkLabel}
+        {hasBreakdown && (
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="transition-transform group-open:rotate-180"
+            aria-hidden
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        )}
       </div>
 
       <div className="md:text-right">
@@ -103,6 +127,51 @@ export function AssetRow({
           </p>
         )}
       </div>
-    </div>
+    </>
+  );
+
+  if (!hasBreakdown) {
+    return (
+      <div className="mb-2 grid grid-cols-1 items-center gap-3 rounded-[18px] border border-transparent bg-surface-2/65 px-4 py-3.5 transition hover:border-line hover:bg-surface hover:shadow-sm md:grid-cols-[1fr_150px_140px_90px] md:gap-4">
+        {row}
+      </div>
+    );
+  }
+
+  return (
+    <details className="group mb-2 overflow-hidden rounded-[18px] border border-transparent bg-surface-2/65 transition open:border-line open:bg-surface hover:border-line hover:bg-surface hover:shadow-sm">
+      <summary className="grid cursor-pointer list-none grid-cols-1 items-center gap-3 px-4 py-3.5 [&::-webkit-details-marker]:hidden md:grid-cols-[1fr_150px_140px_90px] md:gap-4">
+        {row}
+      </summary>
+      <div className="border-t border-line/70 px-4 py-2">
+        {networkBreakdown.map((network) => (
+          <div
+            key={network.chain}
+            className="grid grid-cols-[1fr_auto] items-center gap-3 py-2.5 md:grid-cols-[1fr_150px_140px_90px] md:gap-4"
+          >
+            <span className="hidden md:block" aria-hidden />
+            <div className="flex items-center gap-2 text-[12.5px] font-semibold text-ink-2">
+              <span
+                className="h-3.5 w-3.5 rounded-chip"
+                style={{ background: network.color }}
+                aria-hidden
+              />
+              {network.chain}
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-bold tabular-nums text-ink">
+                {formatUsd(network.usd)}
+              </p>
+              {network.amount != null && (
+                <p className="text-xs tabular-nums text-ink-4">
+                  {formatAmount(network.amount, symbol)}
+                </p>
+              )}
+            </div>
+            <span className="hidden md:block" aria-hidden />
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
