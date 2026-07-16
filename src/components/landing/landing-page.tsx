@@ -35,18 +35,18 @@ const CARD_ANATOMY = [
 const STEPS = [
   {
     n: "01",
-    title: "Read today’s deck",
-    body: "A small set of revealed positions, each with a thesis, timing, risk, and receipt.",
+    title: "Discover what matters",
+    body: "Conviction researches across crypto and narrows the market to a small, curated set of tokens.",
   },
   {
     n: "02",
-    title: "Make the call",
-    body: "Skip what you don’t believe, save what you’re watching, or back the reasoning with one swipe.",
+    title: "Read their conviction",
+    body: "See another trader’s revealed position, why they opened it, the risk, and what would make them wrong.",
   },
   {
     n: "03",
-    title: "Choose your own size",
-    body: "Back with a fraction of your unified balance. Conviction handles the route behind the scenes.",
+    title: "Make the call",
+    body: "Skip what you don’t believe, save what you’re watching, or back it at your own size.",
   },
 ];
 
@@ -64,6 +64,10 @@ const SUPPORTED_NETWORKS = [
 ];
 
 const FAQS = [
+  {
+    q: "How does Discover help me find new tokens?",
+    a: "Crypto research is fragmented across chains, markets, and communities. Conviction does the broad discovery work and surfaces a small curated set of tokens through other people’s revealed positions. You can read their reasoning, see the risks and onchain checks, and decide what deserves a closer look.",
+  },
   {
     q: 'What does it mean to "back" a conviction?',
     a: "You put a self-sized stake behind someone’s revealed position. You choose the fraction of your own balance, so you are backing the reasoning—not blindly matching their dollar amount.",
@@ -166,11 +170,11 @@ export function LandingPage() {
           aria-label="Main navigation"
         >
           <a
-            href="#why-conviction"
-            onClick={scrollTo("why-conviction")}
+            href="#discover"
+            onClick={scrollTo("discover")}
             className="hidden transition-colors hover:text-ink md:inline"
           >
-            Why Conviction
+            Discover
           </a>
           <a
             href="#how-it-works"
@@ -202,7 +206,7 @@ export function LandingPage() {
             <div className={`${styles.fadeUp} flex items-center gap-3`}>
               <span className={styles.liveDot} aria-hidden />
               <span className="text-xs font-bold uppercase tracking-[0.16em] text-ink-3">
-                Real positions. Published reasoning.
+                Real people. Revealed positions. Curated across crypto.
               </span>
             </div>
 
@@ -221,9 +225,11 @@ export function LandingPage() {
               className={`${styles.fadeUp} mt-8 max-w-[590px] text-lg leading-[1.7] text-ink-2 sm:text-xl`}
               style={{ animationDelay: "160ms" }}
             >
-              Read revealed positions, then give your AI agent one interface to
-              manage and trade a portfolio across crypto—without making you
-              think in networks, routes, or gas.
+              It&apos;s impossible to research every token across every chain.
+              Conviction does the discovery work and brings you a curated set
+              through other people&apos;s revealed positions—their thesis,
+              timing, risk, and actual stake—so you can decide what deserves
+              your backing.
             </p>
 
             <div
@@ -244,11 +250,11 @@ export function LandingPage() {
                 </span>
               </button>
               <a
-                href="#why-conviction"
-                onClick={scrollTo("why-conviction")}
+                href="#discover"
+                onClick={scrollTo("discover")}
                 className="inline-flex items-center gap-2 px-2 py-3 text-sm font-bold text-ink-2 transition hover:text-ink"
               >
-                See what makes a card different
+                See how discovery works
                 <span aria-hidden>↓</span>
               </a>
             </div>
@@ -383,9 +389,9 @@ export function LandingPage() {
         <section className="mx-auto w-full max-w-[1180px] px-6 sm:px-10">
           <div className="grid border-y border-line py-7 sm:grid-cols-3">
             {[
-              ["A small daily deck", "Less scrolling. More deciding."],
-              ["Every card has a falsifier", "Know what would make it wrong."],
-              ["An AI portfolio agent", "One conversation across every network."],
+              ["Cross-chain discovery", "We scan broadly. You get the shortlist."],
+              ["Revealed convictions", "Read the people behind each position."],
+              ["Research you can inspect", "Reasoning, risks, and onchain checks."],
             ].map(([title, body], index) => (
               <div
                 key={title}
@@ -406,8 +412,180 @@ export function LandingPage() {
         </section>
 
         <section
-          id="why-conviction"
+          id="discover"
           className="mx-auto w-full max-w-[1280px] px-6 py-32 sm:px-10 sm:py-40 lg:px-14"
+        >
+          <div className="grid items-center gap-16 lg:grid-cols-[minmax(0,0.84fr)_minmax(500px,1.16fr)]">
+            <div className={`${styles.reveal} max-w-[560px]`}>
+              <span className="pt-eyebrow">Discover across crypto</span>
+              <h2 className="mt-5 font-display text-[clamp(3rem,6vw,5.5rem)] font-medium leading-[0.95] tracking-[-0.045em] text-ink">
+                Find the token.
+                <br />
+                Read the
+                <br className="sm:hidden" />{" "}
+                <span className="italic text-brand">conviction.</span>
+              </h2>
+              <p className="mt-7 max-w-[530px] text-base leading-[1.8] text-ink-2 sm:text-lg">
+                Crypto discovery is fragmented by chain, venue, and community.
+                No one can watch it all. Conviction researches across crypto,
+                then lets you read the revealed positions of people who have
+                already put capital behind an idea. You see what they believe,
+                why they believe it, and what could prove them wrong.
+              </p>
+              <div className="mt-9 grid gap-4 sm:grid-cols-2">
+                <div className="rounded-[22px] border border-line bg-surface/75 p-5 shadow-sm">
+                  <span className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-ink-4">
+                    Broad research
+                  </span>
+                  <p className="mt-3 font-display text-2xl font-semibold text-ink">
+                    Across crypto
+                  </p>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-3">
+                    Signals and tokens are considered across supported
+                    ecosystems, not one chain at a time.
+                  </p>
+                </div>
+                <div className="rounded-[22px] border border-line bg-surface/75 p-5 shadow-sm">
+                  <span className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-ink-4">
+                    Social conviction
+                  </span>
+                  <p className="mt-3 font-display text-2xl font-semibold text-ink">
+                    People with a position
+                  </p>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-3">
+                    Read what other traders backed, their reasoning, and the
+                    risk they accepted before you make your own call.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div
+              className={`${styles.reveal} ${styles.revealScale} relative overflow-hidden rounded-[34px] border border-line bg-surface/88 p-5 shadow-lg backdrop-blur-xl sm:p-8`}
+              style={{ transitionDelay: "120ms" }}
+            >
+              <div
+                className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-55 blur-[70px]"
+                style={{ background: "var(--pt-grad-dawn)" }}
+                aria-hidden
+              />
+              <div className="relative">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-ink-4">
+                      Conviction Discover
+                    </p>
+                    <p className="mt-2 font-display text-[30px] font-semibold leading-tight text-ink">
+                      From the whole market
+                      <br />
+                      to what matters today.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-brand-soft px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] text-brand">
+                    Always researching
+                  </span>
+                </div>
+
+                <div className="mt-8">
+                  <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-ink-4">
+                    Looking across
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {SUPPORTED_NETWORKS.slice(0, 8).map((network) => (
+                      <span
+                        key={network.name}
+                        className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-2 text-xs font-bold text-ink-2 shadow-sm"
+                      >
+                        <span
+                          className="grid h-5 w-5 place-items-center rounded-full text-[8px] font-extrabold"
+                          style={{
+                            background: network.color,
+                            color:
+                              network.name === "Solana" ||
+                              network.name === "BNB Chain"
+                                ? "#17101a"
+                                : "#ffffff",
+                          }}
+                          aria-hidden
+                        >
+                          {network.short}
+                        </span>
+                        {network.name}
+                      </span>
+                    ))}
+                    <span className="inline-flex items-center rounded-full border border-line bg-surface-2 px-3 py-2 text-xs font-extrabold text-brand">
+                      + more
+                    </span>
+                  </div>
+                </div>
+
+                <div className="my-7 flex items-center gap-3" aria-hidden>
+                  <span className="h-px flex-1 bg-line" />
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-brand text-sm text-brand-on shadow-md">
+                    ↓
+                  </span>
+                  <span className="h-px flex-1 bg-line" />
+                </div>
+
+                <div className="grid gap-3">
+                  {[
+                    [
+                      "Signal found",
+                      "Activity, narrative, or market structure worth investigating.",
+                      "var(--pt-mood-joyful)",
+                    ],
+                    [
+                      "Position revealed",
+                      "A trader puts capital behind the idea before it reaches you.",
+                      "var(--pt-mood-calm)",
+                    ],
+                    [
+                      "Conviction published",
+                      "Their why now, falsifier, risks, and onchain checks become readable.",
+                      "var(--pt-mood-sad)",
+                    ],
+                  ].map(([title, body, tint], index) => (
+                    <div
+                      key={title}
+                      className="flex gap-4 rounded-[20px] border border-line bg-surface/90 p-4 shadow-sm"
+                    >
+                      <span
+                        className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl font-mono text-[10px] font-extrabold text-ink"
+                        style={{ background: tint }}
+                      >
+                        0{index + 1}
+                      </span>
+                      <div>
+                        <p className="text-sm font-extrabold text-ink">{title}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-ink-3">
+                          {body}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-5 flex items-center gap-3 rounded-[20px] bg-brand px-5 py-4 text-brand-on shadow-md">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/12 text-sm">
+                    ✦
+                  </span>
+                  <div>
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/55">
+                      Your Discover section
+                    </p>
+                    <p className="mt-0.5 text-sm font-bold text-white">
+                      Curated tokens and the people who believe in them.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section
+          id="why-conviction"
+          className="mx-auto w-full max-w-[1280px] px-6 pb-32 sm:px-10 sm:pb-40 lg:px-14"
         >
           <div className="grid items-end gap-12 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
             <div className={`${styles.reveal} max-w-[500px]`}>
