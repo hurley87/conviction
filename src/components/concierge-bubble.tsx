@@ -1,7 +1,7 @@
 "use client";
 
-// Intercom-style concierge launcher — a fixed circle top-right that toggles
-// a floating chat panel. Panel stays mounted so chat state survives close.
+// Icon launcher + full-height concierge drawer. The drawer stays mounted so
+// chat and transaction state survive close/reopen.
 
 import {
   createContext,
@@ -15,7 +15,6 @@ import {
 import { useAccount } from "@/components/account/account-context";
 import { Concierge } from "@/components/concierge";
 import { PRIMARY_LIGHT } from "@/components/button-styles";
-import { useClickOutside } from "@/hooks/use-click-outside";
 import { IS_LIVE } from "@/lib/env";
 
 type ConciergeBubbleValue = {
@@ -57,7 +56,7 @@ export function useConciergeBubble(): ConciergeBubbleValue {
   return ctx;
 }
 
-function BubbleBody() {
+function BubbleBody({ active }: { active: boolean }) {
   const account = useAccount();
 
   if (!account.ready) {
@@ -99,104 +98,181 @@ function BubbleBody() {
       ua={account.ua}
       balance={account.balance}
       handle={account.handle}
+      active={active}
     />
   );
 }
 
 export function ConciergeBubble() {
   const { open, closeBubble, toggle } = useConciergeBubble();
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useClickOutside(containerRef, closeBubble, open);
+  const launcherRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() =>
+      closeRef.current?.focus(),
+    );
+
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeBubble();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeBubble();
+        return;
+      }
+      if (e.key !== "Tab" || !drawerRef.current) return;
+
+      const focusable = Array.from(
+        drawerRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => element.tabIndex >= 0);
+      if (focusable.length === 0) {
+        e.preventDefault();
+        drawerRef.current.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [open, closeBubble]);
 
+  useEffect(() => {
+    if (wasOpenRef.current && !open) {
+      window.requestAnimationFrame(() => launcherRef.current?.focus());
+    }
+    wasOpenRef.current = open;
+  }, [open]);
+
   return (
-    <div ref={containerRef} className="fixed bottom-24 right-5 z-50 lg:bottom-7 lg:right-8">
+    <>
       <button
+        ref={launcherRef}
         type="button"
         onClick={toggle}
         aria-expanded={open}
+        aria-controls="conviction-chat-drawer"
         aria-label={open ? "Close assistant" : "Open assistant"}
-        className="group flex h-13 items-center gap-2.5 rounded-full bg-brand px-4 text-brand-on shadow-lg transition hover:-translate-y-0.5 hover:bg-brand-hover active:translate-y-0 lg:px-5"
+        title="Ask Conviction"
+        className="group fixed bottom-24 right-5 z-40 grid h-13 w-13 place-items-center rounded-full bg-brand text-brand-on shadow-lg transition hover:-translate-y-0.5 hover:bg-brand-hover hover:shadow-xl active:translate-y-0 motion-reduce:transition-none lg:bottom-7 lg:right-8"
       >
-        {open ? (
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            aria-hidden
-          >
-            <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
-        ) : (
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-hidden
-          >
-            <path d="M12 2c.4 0 .76.24.91.61l1.7 4.13c.25.6.73 1.08 1.33 1.33l4.13 1.7a.985.985 0 0 1 0 1.82l-4.13 1.7c-.6.25-1.08.73-1.33 1.33l-1.7 4.13a.985.985 0 0 1-1.82 0l-1.7-4.13a2.46 2.46 0 0 0-1.33-1.33l-4.13-1.7a.985.985 0 0 1 0-1.82l4.13-1.7c.6-.25 1.08-.73 1.33-1.33l1.7-4.13c.15-.37.51-.61.91-.61Z" />
-            <path d="M19.5 15c.2 0 .38.12.45.3l.57 1.38c.12.3.36.54.66.66l1.38.57a.49.49 0 0 1 0 .9l-1.38.57c-.3.12-.54.36-.66.66l-.57 1.38a.49.49 0 0 1-.9 0l-.57-1.38a1.23 1.23 0 0 0-.66-.66l-1.38-.57a.49.49 0 0 1 0-.9l1.38-.57c.3-.12.54-.36.66-.66l.57-1.38a.49.49 0 0 1 .45-.3Z" />
-          </svg>
-        )}
-        <span className="hidden text-sm font-extrabold lg:inline">
-          {open ? "Close agent" : "Ask Conviction"}
+        <svg
+          width="23"
+          height="23"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.8 9.8 0 0 1-4-.8L3 21l1.7-4.4A8.5 8.5 0 1 1 21 11.5Z" />
+        </svg>
+        <span className="pointer-events-none absolute right-0 top-full mt-2 hidden whitespace-nowrap rounded-lg bg-ink px-2.5 py-1.5 text-xs font-bold text-white opacity-0 shadow-md transition group-hover:opacity-100 group-focus-visible:opacity-100 sm:block">
+          Ask Conviction
         </span>
       </button>
 
       <div
-        aria-hidden={!open}
-        className={`absolute bottom-full right-0 mb-3 flex max-h-[min(650px,calc(100vh-9rem))] w-[min(390px,calc(100vw-2.5rem))] origin-bottom-right flex-col overflow-hidden rounded-[26px] border border-line bg-surface/96 shadow-[0_28px_90px_rgba(42,26,46,0.24)] backdrop-blur-2xl transition-all duration-200 ease-out ${
-          open
-            ? "translate-y-0 scale-100 opacity-100"
-            : "pointer-events-none translate-y-2 scale-95 opacity-0"
+        className={`fixed inset-0 z-50 ${
+          open ? "pointer-events-auto" : "pointer-events-none"
         }`}
       >
-        <div className="flex items-center justify-between border-b border-line bg-surface-2/60 px-4 py-3.5">
-          <div className="flex items-center gap-2.5">
-            <span className="grid h-8 w-8 place-items-center rounded-xl bg-brand text-sm text-brand-on">
-              ✦
-            </span>
-            <div>
-              <p className="text-sm font-extrabold text-ink">Conviction agent</p>
-              <p className="text-[10px] font-bold text-success">Ready to help</p>
+        <div
+          aria-hidden
+          onMouseDown={closeBubble}
+          className={`absolute inset-0 bg-[var(--pt-overlay)] backdrop-blur-[2px] transition-opacity duration-300 motion-reduce:transition-none ${
+            open ? "opacity-100" : "opacity-0"
+          }`}
+        />
+        <section
+          ref={drawerRef}
+          id="conviction-chat-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="conviction-chat-title"
+          aria-hidden={!open}
+          inert={!open}
+          tabIndex={-1}
+          className={`absolute inset-y-0 right-0 flex h-dvh w-full flex-col overflow-hidden border-l border-line bg-surface/98 shadow-[0_0_80px_rgba(42,26,46,0.22)] backdrop-blur-2xl transition-transform duration-300 ease-out motion-reduce:transition-none sm:w-[420px] ${
+            open ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <header className="flex shrink-0 items-center justify-between border-b border-line bg-surface/90 px-5 pb-4 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur-xl">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[var(--pt-grad-dawn)] text-ink shadow-sm">
+                <svg
+                  width="21"
+                  height="21"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.8 9.8 0 0 1-4-.8L3 21l1.7-4.4A8.5 8.5 0 1 1 21 11.5Z" />
+                </svg>
+              </span>
+              <div className="min-w-0">
+                <h2
+                  id="conviction-chat-title"
+                  className="truncate text-base font-extrabold text-ink"
+                >
+                  Ask Conviction
+                </h2>
+                <p className="truncate text-xs text-ink-4">
+                  Thinks out loud, never advises
+                </p>
+              </div>
             </div>
-          </div>
-          <button
-            type="button"
-            onClick={closeBubble}
-            aria-label="Close"
-            className="grid h-8 w-8 place-items-center rounded-full text-ink-4 transition hover:bg-surface-3 hover:text-ink"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              aria-hidden
+            <button
+              ref={closeRef}
+              type="button"
+              onClick={closeBubble}
+              aria-label="Close chat"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-ink-3 transition hover:bg-surface-3 hover:text-ink"
             >
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <BubbleBody />
+              <svg
+                width="19"
+                height="19"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                aria-hidden
+              >
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </header>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <BubbleBody active={open} />
+          </div>
+        </section>
       </div>
-    </div>
+    </>
   );
 }
