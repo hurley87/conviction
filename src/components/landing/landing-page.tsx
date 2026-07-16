@@ -6,6 +6,7 @@
 // of the product. Every CTA drops the visitor into the Twitter sign-in flow.
 
 import { useState } from "react";
+import Link from "next/link";
 import { useAccount } from "@/components/account/account-context";
 
 const STEPS = [
@@ -315,9 +316,15 @@ export function LandingPage() {
             <a href="#faq" onClick={scrollTo("faq")} className="hover:text-ink">
               FAQ
             </a>
-            <span>Docs</span>
-            <span>Terms</span>
-            <span>Privacy</span>
+            <Link href="/docs" className="hover:text-ink">
+              Docs
+            </Link>
+            <Link href="/terms" className="hover:text-ink">
+              Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-ink">
+              Privacy
+            </Link>
           </nav>
         </div>
         <div className="flex flex-wrap items-center gap-4 border-t border-line pt-6">
