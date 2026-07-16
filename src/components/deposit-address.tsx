@@ -19,8 +19,8 @@ function CopyableAddress({
   const [copied, setCopied] = useState(false);
 
   return (
-    <div className="flex flex-col items-center gap-1.5">
-      <p className="text-xs font-medium uppercase tracking-[0.2em] text-zinc-500">
+    <div className="flex flex-col items-start gap-1.5 rounded-[18px] border border-line bg-surface-2/70 p-4">
+      <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-ink-4">
         {label}
       </p>
       <button
@@ -31,21 +31,21 @@ function CopyableAddress({
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }}
-        className="flex items-center gap-2 rounded-full border border-zinc-200 px-4 py-2 font-mono text-sm text-zinc-700 transition hover:bg-zinc-50"
+        className="flex w-full items-center justify-between gap-2 rounded-xl bg-surface px-3 py-2 font-mono text-sm text-ink shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
       >
         {truncateAddress(address)}
-        <span className="text-xs text-zinc-400">
+        <span className="rounded-full bg-brand-soft px-2 py-1 font-body text-[10px] font-extrabold text-brand">
           {copied ? "Copied" : "Copy"}
         </span>
       </button>
-      <p className="text-xs text-zinc-400">{hint}</p>
+      <p className="text-xs text-ink-4">{hint}</p>
     </div>
   );
 }
 
 export function DepositAddress({ deposits }: { deposits: DepositAddresses }) {
   return (
-    <div className="flex flex-col items-center gap-4">
+    <div className="grid gap-3">
       <CopyableAddress
         address={deposits.evm}
         label="EVM"

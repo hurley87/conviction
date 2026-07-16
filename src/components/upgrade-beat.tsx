@@ -20,48 +20,48 @@ export function UpgradeBeat({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/40 p-4 sm:items-center"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--pt-overlay)] p-4 backdrop-blur-sm sm:items-center"
       role="dialog"
       aria-modal="false"
       aria-labelledby="upgrade-beat-title"
     >
-      <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-lg">
-        <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="w-full max-w-md rounded-[26px] border border-line bg-surface p-6 shadow-lg">
+        <p className="pt-eyebrow">
           Your account
         </p>
         <h2
           id="upgrade-beat-title"
-          className="mt-2 text-xl font-semibold tracking-tight text-zinc-900"
+          className="mt-2 font-display text-2xl font-semibold tracking-tight text-ink"
         >
           Upgraded in place
         </h2>
-        <p className="mt-2 text-sm leading-relaxed text-zinc-600">
+        <p className="mt-2 text-sm leading-relaxed text-ink-2">
           Same address as before — no new wallet, no migration. Your account is
           now a Universal Account with one balance to spend.
         </p>
 
         <div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-          <div className="rounded-xl border border-zinc-100 bg-zinc-50 px-3 py-3 text-center">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+          <div className="rounded-[16px] border border-line bg-surface-2 px-3 py-3 text-center">
+            <p className="text-[10px] font-extrabold uppercase tracking-wide text-ink-4">
               Before
             </p>
-            <p className="mt-1 font-mono text-sm text-zinc-800">{short}</p>
+            <p className="mt-1 font-mono text-sm text-ink">{short}</p>
           </div>
-          <span className="text-zinc-300" aria-hidden>
+          <span className="text-ink-4" aria-hidden>
             →
           </span>
-          <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-center">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-emerald-700/70">
+          <div className="rounded-[16px] border border-success/20 bg-[#edf6e9] px-3 py-3 text-center">
+            <p className="text-[10px] font-extrabold uppercase tracking-wide text-success/70">
               After
             </p>
-            <p className="mt-1 font-mono text-sm text-emerald-900">{short}</p>
+            <p className="mt-1 font-mono text-sm text-success">{short}</p>
           </div>
         </div>
 
         {balanceUsd != null && (
-          <p className="mt-4 text-center text-sm text-zinc-600">
+          <p className="mt-4 text-center text-sm text-ink-2">
             Unified balance{" "}
-            <span className="font-semibold tabular-nums text-zinc-900">
+            <span className="font-bold tabular-nums text-ink">
               {formatUsd(balanceUsd)}
             </span>
           </p>

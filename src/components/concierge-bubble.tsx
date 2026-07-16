@@ -63,8 +63,8 @@ function BubbleBody() {
   if (!account.ready) {
     return (
       <div className="space-y-3 p-4">
-        <div className="h-4 w-3/4 animate-pulse rounded bg-zinc-200" />
-        <div className="h-4 w-1/2 animate-pulse rounded bg-zinc-200" />
+        <div className="h-4 w-3/4 animate-pulse rounded bg-surface-3" />
+        <div className="h-4 w-1/2 animate-pulse rounded bg-surface-3" />
       </div>
     );
   }
@@ -72,7 +72,7 @@ function BubbleBody() {
   if (IS_LIVE && !account.authenticated) {
     return (
       <div className="flex flex-col items-center gap-4 px-6 py-10 text-center">
-        <p className="text-sm text-zinc-600">
+        <p className="text-sm text-ink-2">
           Sign in to trade and get answers about your balance and the feed.
         </p>
         <button
@@ -88,7 +88,7 @@ function BubbleBody() {
 
   if (!account.ua || !account.balance) {
     return (
-      <p className="px-6 py-10 text-center text-sm text-zinc-500">
+      <p className="px-6 py-10 text-center text-sm text-ink-3">
         Setting up your account…
       </p>
     );
@@ -119,13 +119,13 @@ export function ConciergeBubble() {
   }, [open, closeBubble]);
 
   return (
-    <div ref={containerRef} className="fixed right-8 top-6 z-50">
+    <div ref={containerRef} className="fixed bottom-24 right-5 z-50 lg:bottom-7 lg:right-8">
       <button
         type="button"
         onClick={toggle}
         aria-expanded={open}
         aria-label={open ? "Close assistant" : "Open assistant"}
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-brand text-brand-on shadow-md transition hover:scale-105 hover:bg-brand-hover active:scale-95"
+        className="group flex h-13 items-center gap-2.5 rounded-full bg-brand px-4 text-brand-on shadow-lg transition hover:-translate-y-0.5 hover:bg-brand-hover active:translate-y-0 lg:px-5"
       >
         {open ? (
           <svg
@@ -152,23 +152,34 @@ export function ConciergeBubble() {
             <path d="M19.5 15c.2 0 .38.12.45.3l.57 1.38c.12.3.36.54.66.66l1.38.57a.49.49 0 0 1 0 .9l-1.38.57c-.3.12-.54.36-.66.66l-.57 1.38a.49.49 0 0 1-.9 0l-.57-1.38a1.23 1.23 0 0 0-.66-.66l-1.38-.57a.49.49 0 0 1 0-.9l1.38-.57c.3-.12.54-.36.66-.66l.57-1.38a.49.49 0 0 1 .45-.3Z" />
           </svg>
         )}
+        <span className="hidden text-sm font-extrabold lg:inline">
+          {open ? "Close agent" : "Ask Conviction"}
+        </span>
       </button>
 
       <div
         aria-hidden={!open}
-        className={`absolute right-0 top-full mt-3 flex max-h-[min(600px,calc(100vh-7rem))] w-[380px] origin-top-right flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl transition-all duration-200 ease-out ${
+        className={`absolute bottom-full right-0 mb-3 flex max-h-[min(650px,calc(100vh-9rem))] w-[min(390px,calc(100vw-2.5rem))] origin-bottom-right flex-col overflow-hidden rounded-[26px] border border-line bg-surface/96 shadow-[0_28px_90px_rgba(42,26,46,0.24)] backdrop-blur-2xl transition-all duration-200 ease-out ${
           open
             ? "translate-y-0 scale-100 opacity-100"
-            : "pointer-events-none -translate-y-1 scale-95 opacity-0"
+            : "pointer-events-none translate-y-2 scale-95 opacity-0"
         }`}
       >
-        <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
-          <p className="text-sm font-semibold text-zinc-900">Assistant</p>
+        <div className="flex items-center justify-between border-b border-line bg-surface-2/60 px-4 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-8 w-8 place-items-center rounded-xl bg-brand text-sm text-brand-on">
+              ✦
+            </span>
+            <div>
+              <p className="text-sm font-extrabold text-ink">Conviction agent</p>
+              <p className="text-[10px] font-bold text-success">Ready to help</p>
+            </div>
+          </div>
           <button
             type="button"
             onClick={closeBubble}
             aria-label="Close"
-            className="text-zinc-400 transition hover:text-zinc-600"
+            className="grid h-8 w-8 place-items-center rounded-full text-ink-4 transition hover:bg-surface-3 hover:text-ink"
           >
             <svg
               width="16"

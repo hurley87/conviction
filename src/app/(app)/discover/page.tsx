@@ -18,12 +18,26 @@ export default async function DiscoverPage({ searchParams }: DiscoverPageProps) 
   const convictions = await listConvictions();
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <h1 className="text-3xl font-bold text-zinc-900">Discover</h1>
-      <p className="mt-2 text-sm text-zinc-500">
-        The archive of drops — newest first. Saved cards live behind the chip.
-      </p>
-      <div className="mt-8">
+    <div className="mx-auto max-w-4xl">
+      <div className="max-w-3xl">
+        <div className="flex items-center gap-3">
+          <span className="h-2.5 w-2.5 rounded-full bg-success shadow-[0_0_0_5px_rgba(79,138,90,0.1)]" />
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-ink-3">
+            Curated across crypto
+          </p>
+        </div>
+        <h1 className="mt-5 font-display text-[clamp(3.25rem,7vw,5.75rem)] font-medium leading-[0.9] tracking-[-0.05em] text-ink">
+          Find what deserves
+          <br />
+          <span className="italic text-brand">a closer look.</span>
+        </h1>
+        <p className="mt-6 max-w-2xl text-base leading-relaxed text-ink-3">
+          No one can research every token across every chain. Discover brings
+          Conviction&apos;s curated drops into one place, with the reasoning
+          and risks you need to decide what to save, skip, or back.
+        </p>
+      </div>
+      <div className="mt-10">
         <FeedBoard convictions={convictions} filter={filter} />
       </div>
     </div>

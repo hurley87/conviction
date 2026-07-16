@@ -23,13 +23,13 @@ export function PostConviction({
 
   if (posted) {
     return (
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left">
-        <p className="text-sm font-medium text-emerald-700">
+      <div className="rounded-[22px] border border-success/20 bg-[#edf6e9] p-4 text-left">
+        <p className="text-sm font-bold text-success">
           Conviction posted to the feed.
         </p>
         <a
           href="/discover"
-          className="mt-2 inline-block text-xs text-blue-600 hover:underline"
+          className="mt-2 inline-block text-xs font-bold text-brand hover:underline"
         >
           View the feed →
         </a>
@@ -38,11 +38,9 @@ export function PostConviction({
   }
 
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-4 text-left">
-      <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-        Share your conviction
-      </p>
-      <p className="mt-2 text-sm text-zinc-600">
+    <div className="rounded-[22px] border border-line bg-surface p-4 text-left shadow-sm">
+      <p className="pt-eyebrow">Share your conviction</p>
+      <p className="mt-2 text-sm text-ink-2">
         Why did you make this trade? Post it to the public feed.
       </p>
       <textarea
@@ -51,7 +49,7 @@ export function PostConviction({
         placeholder="Your thesis in a sentence or two…"
         rows={3}
         disabled={posting}
-        className="mt-3 w-full resize-none rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none"
+        className="app-input mt-3 w-full resize-none rounded-[16px] px-4 py-3 text-sm"
       />
       <div className="mt-3 flex gap-2">
         <button

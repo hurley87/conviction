@@ -64,8 +64,8 @@ function ConciergePanel({
             key={`${m.role}-${i}`}
             className={
               m.role === "user"
-                ? "ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-blue-600 px-3 py-2 text-sm text-white"
-                : "mr-auto w-fit max-w-[85%] rounded-2xl rounded-bl-md bg-zinc-100 px-3 py-2 text-sm text-zinc-700"
+                ? "ml-auto w-fit max-w-[85%] rounded-[18px] rounded-br-md bg-brand px-3.5 py-2.5 text-sm leading-relaxed text-brand-on shadow-sm"
+                : "mr-auto w-fit max-w-[88%] rounded-[18px] rounded-bl-md border border-line bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-ink-2"
             }
           >
             {m.text}
@@ -106,7 +106,7 @@ function ConciergePanel({
       {c.phase !== "confirm" && c.phase !== "done" && (
         <form
           onSubmit={handleSubmit}
-          className="flex gap-2 border-t border-zinc-100 p-3"
+          className="flex gap-2 border-t border-line bg-surface-2/50 p-3"
         >
           <input
             type="text"
@@ -114,7 +114,7 @@ function ConciergePanel({
             onChange={(e) => setInput(e.target.value)}
             placeholder="Move $25 to cash… or summarize the feed"
             disabled={inputDisabled}
-            className="flex-1 rounded-full border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none"
+            className="app-input min-w-0 flex-1 rounded-full px-4 py-2 text-sm"
           />
           <button
             type="submit"
