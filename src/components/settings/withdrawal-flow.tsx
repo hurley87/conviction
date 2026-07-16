@@ -56,37 +56,35 @@ export function WithdrawalFlow({
 
   if (flow.status === "success") {
     return (
-      <div className="mt-4 rounded-2xl border border-zinc-200 bg-white p-5">
-        <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-          Sent
-        </p>
-        <p className="mt-3 text-sm text-zinc-800">{flow.result.summary}</p>
-        <dl className="mt-4 space-y-2 text-sm">
+      <div className="mt-4 rounded-[22px] border border-line bg-surface-2/60 p-5">
+        <p className="pt-eyebrow">Sent</p>
+        <p className="mt-3 text-sm text-ink">{flow.result.summary}</p>
+        <dl className="mt-4 space-y-2 rounded-[16px] bg-surface p-4 text-sm">
           <div className="flex justify-between gap-4">
-            <dt className="text-zinc-500">Amount</dt>
-            <dd className="tabular-nums text-zinc-900">
+            <dt className="text-ink-3">Amount</dt>
+            <dd className="font-bold tabular-nums text-ink">
               {flow.result.amount} {withdrawalAssetLabel(flow.result.asset)}
             </dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-zinc-500">Network</dt>
-            <dd className="text-zinc-900">{flow.result.destChain}</dd>
+            <dt className="text-ink-3">Network</dt>
+            <dd className="text-ink">{flow.result.destChain}</dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-zinc-500">Estimated debit</dt>
-            <dd className="tabular-nums text-zinc-900">
+            <dt className="text-ink-3">Estimated debit</dt>
+            <dd className="tabular-nums text-ink">
               {formatUsd(flow.result.estimatedDebitUsd)}
             </dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-zinc-500">Fee</dt>
-            <dd className="tabular-nums text-zinc-900">
+            <dt className="text-ink-3">Fee</dt>
+            <dd className="tabular-nums text-ink">
               {formatUsd(flow.result.feeUsd)}
             </dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-zinc-500">Reference</dt>
-            <dd className="font-mono text-xs text-zinc-600">
+            <dt className="text-ink-3">Reference</dt>
+            <dd className="font-mono text-xs text-ink-2">
               {flow.result.transactionId}
             </dd>
           </div>
@@ -108,54 +106,52 @@ export function WithdrawalFlow({
     const requoteNotice =
       flow.status === "confirm" ? flow.requoteNotice : null;
     return (
-      <div className="mt-4 rounded-2xl border border-zinc-200 bg-white p-5">
-        <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-          Confirm withdrawal
-        </p>
+      <div className="mt-4 rounded-[22px] border border-line bg-surface-2/60 p-5">
+        <p className="pt-eyebrow">Confirm withdrawal</p>
         {requoteNotice && (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <p className="mt-3 rounded-[14px] border border-warning/25 bg-[#fff6df] p-3 text-xs text-warning">
             {requoteNotice}
           </p>
         )}
         <div className="mt-4 space-y-3">
           <div className="flex items-baseline justify-between gap-4">
-            <span className="text-sm text-zinc-500">You&apos;re sending</span>
-            <span className="text-xl font-semibold tabular-nums text-zinc-900">
+            <span className="text-sm text-ink-3">You&apos;re sending</span>
+            <span className="text-xl font-semibold tabular-nums text-ink">
               {quote.amount} {withdrawalAssetLabel(quote.asset)}
             </span>
           </div>
           <div className="flex items-baseline justify-between gap-4">
-            <span className="text-sm text-zinc-500">To</span>
-            <span className="font-mono text-sm text-zinc-900">
+            <span className="text-sm text-ink-3">To</span>
+            <span className="font-mono text-sm text-ink">
               {truncateAddress(quote.destination)}
             </span>
           </div>
           <div className="flex items-baseline justify-between gap-4">
-            <span className="text-sm text-zinc-500">Network</span>
-            <span className="text-sm text-zinc-900">{quote.destChain}</span>
+            <span className="text-sm text-ink-3">Network</span>
+            <span className="text-sm text-ink">{quote.destChain}</span>
           </div>
-          <div className="flex items-baseline justify-between gap-4 border-t border-zinc-100 pt-3">
-            <span className="text-sm text-zinc-500">Estimated debit</span>
-            <span className="text-sm tabular-nums text-zinc-600">
+          <div className="flex items-baseline justify-between gap-4 border-t border-line pt-3">
+            <span className="text-sm text-ink-3">Estimated debit</span>
+            <span className="text-sm tabular-nums text-ink-2">
               {formatUsd(quote.estimatedDebitUsd)}
             </span>
           </div>
           <div className="flex items-baseline justify-between gap-4">
-            <span className="text-sm text-zinc-500">Fee</span>
-            <span className="text-sm tabular-nums text-zinc-600">
+            <span className="text-sm text-ink-3">Fee</span>
+            <span className="text-sm tabular-nums text-ink-2">
               {formatUsd(quote.feeUsd)}
             </span>
           </div>
           <div className="flex items-baseline justify-between gap-4">
-            <span className="text-sm text-zinc-500">ETA</span>
-            <span className="text-sm text-zinc-600">
+            <span className="text-sm text-ink-3">ETA</span>
+            <span className="text-sm text-ink-2">
               {formatEta(quote.etaSeconds)}
             </span>
           </div>
         </div>
 
         {executing ? (
-          <p className="mt-5 text-center text-sm text-zinc-500">
+          <p className="mt-5 text-center text-sm text-ink-3">
             Check your wallet to sign, then wait while we send…
           </p>
         ) : (
@@ -182,8 +178,8 @@ export function WithdrawalFlow({
 
   if (flow.status === "error") {
     return (
-      <div className="mt-4 rounded-2xl border border-red-100 bg-white p-5">
-        <p className="text-sm text-red-600">{flow.message}</p>
+      <div className="mt-4 rounded-[22px] border border-danger/20 bg-surface p-5">
+        <p className="text-sm text-danger">{flow.message}</p>
         <div className="mt-4 flex gap-2">
           <button
             type="button"
@@ -210,15 +206,13 @@ export function WithdrawalFlow({
   const chains = supportedWithdrawalChains(draft.asset);
 
   return (
-    <div className="mt-4 rounded-2xl border border-zinc-200 bg-white p-5">
+    <div className="mt-4 rounded-[22px] border border-line bg-surface-2/60 p-5">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-          Withdraw to external wallet
-        </p>
+        <p className="pt-eyebrow">Withdraw to external wallet</p>
         <button
           type="button"
           onClick={handleClose}
-          className="text-sm text-zinc-500 hover:text-zinc-700"
+          className="text-sm font-bold text-ink-3 hover:text-ink"
         >
           Close
         </button>
@@ -232,14 +226,14 @@ export function WithdrawalFlow({
         }}
       >
         <label className="block">
-          <span className="text-xs font-medium text-zinc-500">Asset</span>
+          <span className="text-xs font-bold text-ink-3">Asset</span>
           <select
             value={draft.asset}
             disabled={quoting}
             onChange={(e) =>
               setDraft({ asset: e.target.value as WithdrawalAsset })
             }
-            className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900"
+            className="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
           >
             {WITHDRAWAL_ASSETS.map((asset) => (
               <option key={asset} value={asset}>
@@ -250,14 +244,14 @@ export function WithdrawalFlow({
         </label>
 
         <label className="block">
-          <span className="text-xs font-medium text-zinc-500">Network</span>
+          <span className="text-xs font-bold text-ink-3">Network</span>
           <select
             value={draft.destChain}
             disabled={quoting}
             onChange={(e) =>
               setDraft({ destChain: e.target.value as DestChain })
             }
-            className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900"
+            className="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
           >
             {chains.map((chain) => (
               <option key={chain} value={chain}>
@@ -266,14 +260,14 @@ export function WithdrawalFlow({
             ))}
           </select>
           {draft.asset === "usdt" && (
-            <span className="mt-1 block text-xs text-zinc-400">
+            <span className="mt-1 block text-xs text-ink-4">
               USDT withdrawals are available on Arbitrum only.
             </span>
           )}
         </label>
 
         <label className="block">
-          <span className="text-xs font-medium text-zinc-500">Amount</span>
+          <span className="text-xs font-bold text-ink-3">Amount</span>
           <input
             type="text"
             inputMode="decimal"
@@ -282,12 +276,12 @@ export function WithdrawalFlow({
             value={draft.amountRaw}
             disabled={quoting}
             onChange={(e) => setDraft({ amountRaw: e.target.value })}
-            className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm tabular-nums text-zinc-900"
+            className="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm tabular-nums"
           />
         </label>
 
         <label className="block">
-          <span className="text-xs font-medium text-zinc-500">
+          <span className="text-xs font-bold text-ink-3">
             Destination address
           </span>
           <input
@@ -298,12 +292,12 @@ export function WithdrawalFlow({
             value={draft.destinationRaw}
             disabled={quoting}
             onChange={(e) => setDraft({ destinationRaw: e.target.value })}
-            className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 font-mono text-sm text-zinc-900"
+            className="app-input mt-1 w-full rounded-xl px-3 py-2 font-mono text-sm"
           />
         </label>
 
         {formError && (
-          <p className="text-xs text-red-500" role="alert">
+          <p className="text-xs text-danger" role="alert">
             {formError}
           </p>
         )}

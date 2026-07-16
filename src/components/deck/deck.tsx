@@ -24,9 +24,9 @@ type DeckProps = {
 };
 
 const HINT_CLASS: Record<SwipeVerb, string> = {
-  skip: "top-6 left-4 border border-zinc-300 bg-white text-zinc-500",
-  save: "top-4 left-1/2 -translate-x-1/2 border border-amber-200 bg-amber-50 text-amber-800",
-  back: "top-6 right-4 border border-blue-200 bg-blue-50 text-blue-700",
+  skip: "top-6 left-4 border border-line-strong bg-surface text-ink-3",
+  save: "top-4 left-1/2 -translate-x-1/2 border border-warning/25 bg-[#fff6df] text-warning",
+  back: "top-6 right-4 border border-brand/20 bg-brand-soft text-brand",
 };
 
 const HINT_LABEL: Record<SwipeVerb, string> = {
@@ -37,11 +37,14 @@ const HINT_LABEL: Record<SwipeVerb, string> = {
 
 export function DeckExhausted() {
   return (
-    <div className="flex min-h-[28rem] flex-col items-center justify-center rounded-3xl border border-dashed border-zinc-200 bg-zinc-50 px-8 text-center">
-      <p className="text-xl font-semibold text-zinc-900">Next drop tomorrow</p>
-      <p className="mt-3 max-w-sm text-sm text-zinc-500">
-        You&apos;ve seen today&apos;s cards. Scroll back through the drops on
-        Discover — the feed is the archive.
+    <div className="flex min-h-[32rem] flex-col items-center justify-center rounded-[30px] border border-dashed border-line-strong bg-surface/65 px-8 text-center shadow-sm">
+      <span className="grid h-14 w-14 place-items-center rounded-2xl bg-brand-soft font-display text-2xl italic text-brand">
+        ✓
+      </span>
+      <p className="mt-5 font-display text-3xl font-semibold text-ink">That’s today’s deck.</p>
+      <p className="mt-3 max-w-sm text-sm leading-relaxed text-ink-3">
+        You&apos;ve seen today&apos;s shortlist. Keep exploring curated drops
+        in Discover, or return to the ideas you saved.
       </p>
       <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
         <Link href="/discover" className={`${GHOST_LIGHT} px-5 py-2 text-sm`}>
@@ -49,7 +52,7 @@ export function DeckExhausted() {
         </Link>
         <Link
           href="/discover?filter=saved"
-          className="rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+          className="rounded-full bg-brand px-5 py-2 text-sm font-bold text-brand-on shadow-md transition hover:-translate-y-0.5 hover:bg-brand-hover"
         >
           View Saved
         </Link>
@@ -142,9 +145,9 @@ export function Deck({
   const rotation = offsetX / 28;
 
   return (
-    <div className="relative mx-auto h-[32rem] w-full max-w-md touch-none select-none">
+    <div className="relative mx-auto h-[35rem] w-full max-w-[470px] touch-none select-none sm:h-[37rem]">
       {next && (
-        <div className="absolute inset-0 scale-[0.96] opacity-60">
+        <div className="absolute inset-0 translate-y-3 scale-[0.965] rotate-[2deg] opacity-55">
           <DeckCard entry={next} />
         </div>
       )}
@@ -161,7 +164,7 @@ export function Deck({
       >
         {hint && (
           <div
-            className={`pointer-events-none absolute z-10 rounded-full px-4 py-1.5 text-xs font-semibold tracking-wide uppercase ${HINT_CLASS[hint]}`}
+            className={`pointer-events-none absolute z-10 rounded-full px-4 py-2 text-xs font-extrabold tracking-[0.12em] uppercase shadow-md backdrop-blur ${HINT_CLASS[hint]}`}
           >
             {HINT_LABEL[hint]}
           </div>
@@ -169,30 +172,33 @@ export function Deck({
         <DeckCard entry={current} />
       </div>
 
-      <div className="absolute -bottom-14 left-0 right-0 flex justify-center gap-3">
+      <div className="absolute -bottom-[76px] left-0 right-0 flex justify-center gap-3">
         <button
           type="button"
           disabled={!interactive}
           onClick={onSkip}
-          className={`${GHOST_LIGHT} px-5 py-2 text-sm`}
+          className="group flex h-12 items-center gap-2 rounded-full border border-line-strong bg-surface/80 px-4 text-sm font-bold text-ink-3 shadow-sm transition hover:-translate-y-0.5 hover:bg-surface hover:text-ink hover:shadow-md disabled:opacity-50"
         >
+          <span className="text-lg transition-transform group-hover:-translate-x-0.5">←</span>
           Skip
         </button>
         <button
           type="button"
           disabled={!interactive}
           onClick={onSave}
-          className="rounded-full border border-amber-200 bg-amber-50 px-5 py-2 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:opacity-50"
+          className="group flex h-12 items-center gap-2 rounded-full border border-warning/25 bg-[#fff6df] px-4 text-sm font-bold text-warning shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-50"
         >
+          <span className="text-lg transition-transform group-hover:-translate-y-0.5">↑</span>
           Save
         </button>
         <button
           type="button"
           disabled={!interactive}
           onClick={() => onBack(current)}
-          className="rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+          className="group flex h-12 items-center gap-2 rounded-full bg-brand px-5 text-sm font-bold text-brand-on shadow-md transition hover:-translate-y-0.5 hover:bg-brand-hover hover:shadow-lg disabled:opacity-50"
         >
           Back
+          <span className="text-lg transition-transform group-hover:translate-x-0.5">→</span>
         </button>
       </div>
     </div>

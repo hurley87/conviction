@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+import { usePathname } from "next/navigation";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { UserMenu } from "@/components/user-menu";
 import {
@@ -10,8 +12,23 @@ import { UpgradeBeatHost } from "@/components/upgrade-beat-host";
 import { useAccount } from "@/components/account/account-context";
 import { LandingPage } from "@/components/landing/landing-page";
 
+const ROUTE_META: Record<string, { eyebrow: string; title: string }> = {
+  "/": { eyebrow: "Today’s ritual", title: "The daily deck" },
+  "/home": { eyebrow: "Your money", title: "Portfolio" },
+  "/discover": { eyebrow: "Curated across crypto", title: "Discover" },
+  "/activity": { eyebrow: "Your trail", title: "Activity" },
+  "/settings": { eyebrow: "Your space", title: "Settings" },
+};
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { ready, authenticated } = useAccount();
+  const pathname = usePathname();
+  const routeMeta =
+    ROUTE_META[
+      Object.keys(ROUTE_META).find((route) =>
+        route === "/" ? pathname === "/" : pathname.startsWith(route),
+      ) ?? "/"
+    ];
 
   // Logged-out visitors get the marketing landing instead of the app chrome;
   // hold on a quiet canvas until Privy resolves so the deck never flashes.
@@ -24,23 +41,97 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ConciergeBubbleProvider>
-      <div className="flex min-h-screen bg-canvas text-ink">
-        <aside className="fixed inset-y-0 left-0 z-30 flex w-56 flex-col border-r border-line bg-canvas">
-          <div className="flex items-center px-4 pb-5 pt-6">
-            <span className="font-display text-xl font-semibold tracking-tight text-ink">
-              Conviction
-            </span>
+      <div className="relative flex min-h-screen overflow-x-clip bg-canvas text-ink">
+        <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden>
+          <div
+            className="absolute -right-52 -top-72 h-[650px] w-[760px] rounded-full opacity-45 blur-[110px]"
+            style={{ background: "var(--pt-grad-dawn)" }}
+          />
+          <div
+            className="absolute -bottom-80 -left-60 h-[650px] w-[680px] rounded-full opacity-15 blur-[120px]"
+            style={{ background: "var(--pt-grad-dusk)" }}
+          />
+          <div className="app-grain absolute inset-0 opacity-40" />
+        </div>
+
+        <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col border-r border-line bg-canvas/80 px-4 pb-4 pt-6 backdrop-blur-2xl lg:flex">
+          <div className="flex items-center px-2 pb-8">
+            <Image
+              src="/brand/conviction-lockup.svg"
+              alt="Conviction"
+              width={151}
+              height={38}
+              priority
+              className="h-[38px] w-auto"
+            />
           </div>
-          <div className="flex-1 overflow-y-auto px-3">
-            <SidebarNav />
+
+          <div className="flex-1 overflow-y-auto">
+            <p className="px-3 pb-3 text-[10px] font-extrabold uppercase tracking-[0.18em] text-ink-4">
+              Your Conviction
+            </p>
+            <SidebarNav mode="desktop" />
           </div>
-          <div className="p-3">
+
+          <div className="mx-1 mb-3 rounded-[20px] border border-line bg-surface/60 p-4 shadow-sm">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-success shadow-[0_0_0_4px_rgba(79,138,90,0.1)]" />
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.13em] text-ink-3">
+                Daily ritual
+              </p>
+            </div>
+            <p className="mt-3 font-display text-[21px] font-semibold leading-tight text-ink">
+              Read slowly.
+              <br />
+              Back deliberately.
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-ink-3">
+              Skip left · save up · back right
+            </p>
+          </div>
+
+          <div>
             <UserMenu />
           </div>
         </aside>
 
-        <div className="ml-56 flex min-h-screen flex-1 flex-col">
-          <main className="flex-1 px-8 py-8">{children}</main>
+        <div className="relative z-10 flex min-h-screen min-w-0 flex-1 flex-col lg:ml-[264px]">
+          <header className="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b border-line bg-canvas/82 px-5 backdrop-blur-2xl sm:px-7 lg:hidden">
+            <Image
+              src="/brand/conviction-lockup.svg"
+              alt="Conviction"
+              width={132}
+              height={34}
+              priority
+              className="h-8 w-auto"
+            />
+            <UserMenu compact />
+          </header>
+
+          <div className="hidden items-center justify-between px-10 pb-2 pt-7 lg:flex xl:px-14">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-ink-4">
+                {routeMeta.eyebrow}
+              </p>
+              <p className="mt-1 font-display text-[17px] font-semibold text-ink-2">
+                {routeMeta.title}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 rounded-full border border-line bg-surface/65 px-3 py-2 text-xs font-bold text-ink-3 shadow-sm backdrop-blur-md">
+              <span className="h-2 w-2 rounded-full bg-success" />
+              Universal account online
+            </div>
+          </div>
+
+          <main className="flex-1 px-5 pb-28 pt-7 sm:px-7 lg:px-10 lg:pb-12 lg:pt-5 xl:px-14">
+            <div key={pathname} className="app-enter">
+              {children}
+            </div>
+          </main>
+
+          <nav className="fixed inset-x-3 bottom-3 z-40 rounded-[24px] border border-line bg-surface/90 px-2 py-2 shadow-lg backdrop-blur-2xl lg:hidden">
+            <SidebarNav mode="mobile" />
+          </nav>
         </div>
 
         <ConciergeBubble />

@@ -138,3 +138,91 @@ body {
   text-transform: uppercase;
   color: var(--pt-fg-3);
 }
+
+::selection {
+  color: var(--pt-brand-on);
+  background: var(--pt-brand);
+}
+
+button,
+a,
+input,
+textarea,
+select,
+summary {
+  outline-color: var(--pt-brand);
+}
+
+.app-grain {
+  background-image: radial-gradient(rgba(75, 42, 82, 0.13) 0.55px, transparent 0.55px);
+  background-size: 7px 7px;
+  mask-image: linear-gradient(to bottom, black, transparent 88%);
+}
+
+.app-enter {
+  animation: app-enter 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.app-card {
+  border: 1px solid var(--pt-border);
+  border-radius: var(--pt-radius-lg);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: var(--pt-shadow-sm);
+  backdrop-filter: blur(16px);
+}
+
+.app-card-interactive {
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.app-card-interactive:hover {
+  border-color: var(--pt-border-strong);
+  box-shadow: var(--pt-shadow-md);
+  transform: translateY(-2px);
+}
+
+.app-input {
+  border: 1px solid var(--pt-border-strong);
+  color: var(--pt-fg-1);
+  background: rgba(255, 255, 255, 0.82);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+.app-input::placeholder {
+  color: var(--pt-fg-4);
+}
+
+.app-input:focus {
+  border-color: rgba(75, 42, 82, 0.5);
+  background: var(--pt-surface);
+  box-shadow: var(--pt-shadow-glow);
+  outline: none;
+}
+
+@keyframes app-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-enter {
+    animation: none;
+  }
+
+  .app-card-interactive {
+    transition: none;
+  }
+}

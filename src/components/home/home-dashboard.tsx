@@ -37,7 +37,7 @@ export function HomeDashboard() {
 
   if (!account.ready) {
     return (
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-8">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
         <div className="h-40 w-full animate-pulse rounded-hero bg-surface-3" />
         <div className="h-20 w-full animate-pulse rounded-card bg-surface-3" />
       </div>
@@ -70,31 +70,26 @@ export function HomeDashboard() {
     !!account.balance && account.balance.sources.length > 0;
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-7">
-      <div className="flex items-center justify-between">
-        <h1 className="font-display text-[26px] font-medium text-ink">
-          {greeting.text}, {name} {greeting.emoji}
-        </h1>
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-7">
+      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+        <div>
+          <p className="pt-eyebrow">One balance · every network</p>
+          <h1 className="mt-2 font-display text-[clamp(2.5rem,5vw,4.25rem)] font-medium leading-[0.96] tracking-[-0.045em] text-ink">
+            {greeting.text},
+            <br className="sm:hidden" />{" "}
+            <span className="italic text-brand">{name}</span>{" "}
+            <span className="text-[0.6em] not-italic">{greeting.emoji}</span>
+          </h1>
+        </div>
         <button
           type="button"
           onClick={openBubble}
-          title="Ask Conviction"
-          aria-label="Ask Conviction"
-          className="grid h-[42px] w-[42px] place-items-center rounded-full bg-brand text-brand-on shadow-md transition hover:bg-brand-hover"
+          className="group inline-flex w-fit items-center gap-2.5 rounded-full border border-line bg-surface/75 px-4 py-2.5 text-sm font-extrabold text-ink shadow-sm backdrop-blur-md transition hover:-translate-y-0.5 hover:shadow-md"
         >
-          <svg
-            width="19"
-            height="19"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <path d="M21 12a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-2.9-.37-4.1-1.02L3 21l1.52-5.4A8.5 8.5 0 1 1 21 12Z" />
-          </svg>
+          <span className="grid h-7 w-7 place-items-center rounded-full bg-brand text-brand-on transition-transform group-hover:rotate-6">
+            ✦
+          </span>
+          Ask your agent
         </button>
       </div>
 
@@ -105,7 +100,22 @@ export function HomeDashboard() {
 
       <QuickActions />
 
-      {hasHoldings && <AssetList sources={account.balance!.sources} />}
+      {hasHoldings ? (
+        <AssetList sources={account.balance!.sources} />
+      ) : (
+        <div className="app-card flex flex-col items-center px-6 py-12 text-center">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-brand-soft text-xl text-brand">
+            +
+          </span>
+          <p className="mt-4 font-display text-2xl font-semibold text-ink">
+            Your portfolio is ready for its first move.
+          </p>
+          <p className="mt-2 max-w-md text-sm leading-relaxed text-ink-3">
+            Add money or send crypto to your universal account. Everything
+            appears here as one spendable balance.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

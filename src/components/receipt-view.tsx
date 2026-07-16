@@ -15,45 +15,46 @@ export function ReceiptView({
   onDismiss?: () => void;
 }) {
   return (
-    <div className="w-full rounded-2xl border border-zinc-200 bg-white p-4 text-left">
-      <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-        Receipt
-      </p>
+    <div className="w-full rounded-[26px] border border-line bg-surface p-5 text-left shadow-lg">
+      <div className="flex items-center gap-2">
+        <span className="grid h-8 w-8 place-items-center rounded-xl bg-[#e5f1df] text-success">✓</span>
+        <p className="pt-eyebrow">Receipt</p>
+      </div>
 
-      <p className="mt-3 text-sm text-zinc-600">{receipt.summary}</p>
+      <p className="mt-4 font-display text-xl font-medium leading-relaxed text-ink">{receipt.summary}</p>
 
-      <dl className="mt-4 space-y-2 text-sm">
+      <dl className="mt-4 space-y-2 rounded-[18px] bg-surface-2 p-4 text-sm">
         <div className="flex justify-between">
-          <dt className="text-zinc-500">Spent</dt>
-          <dd className="tabular-nums text-zinc-900">
+          <dt className="text-ink-3">Spent</dt>
+          <dd className="font-bold tabular-nums text-ink">
             {formatUsd(receipt.dollarsIn)}
           </dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-zinc-500">Received</dt>
-          <dd className="tabular-nums text-emerald-600">
+          <dt className="text-ink-3">Received</dt>
+          <dd className="font-bold tabular-nums text-success">
             {formatUsd(receipt.dollarsOut)}
           </dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-zinc-500">Fee</dt>
-          <dd className="tabular-nums text-zinc-600">
+          <dt className="text-ink-3">Fee</dt>
+          <dd className="tabular-nums text-ink-2">
             {formatUsd(receipt.feeUsd)}
           </dd>
         </div>
       </dl>
 
       {receipt.legs.length > 0 && (
-        <ul className="mt-4 space-y-2 border-t border-zinc-100 pt-4">
+        <ul className="mt-4 space-y-2 border-t border-line pt-4">
           {receipt.legs.map((leg) => (
             <li key={`${leg.chain}-${leg.txHash}`} className="text-sm">
-              <span className="font-medium text-zinc-900">{leg.chain}</span>
+              <span className="font-bold text-ink">{leg.chain}</span>
               {" · "}
               <a
                 href={leg.explorerUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 underline-offset-2 hover:underline"
+                className="font-bold text-brand underline-offset-2 hover:underline"
               >
                 View on explorer
               </a>
@@ -63,11 +64,11 @@ export function ReceiptView({
       )}
 
       {permalink && (
-        <p className="mt-4 break-all text-xs text-zinc-500">
+        <p className="mt-4 break-all text-xs text-ink-3">
           Share:{" "}
           <a
             href={permalink}
-            className="text-blue-600 underline-offset-2 hover:underline"
+            className="font-bold text-brand underline-offset-2 hover:underline"
           >
             {permalink}
           </a>

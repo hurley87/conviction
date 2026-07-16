@@ -28,12 +28,12 @@ type ConvictionCardProps = {
 function BackedByList({ handles }: { handles: string[] }) {
   if (handles.length === 0) return null;
   return (
-    <p className="mt-3 text-xs text-zinc-400">
+    <p className="mt-3 text-xs text-ink-4">
       Backed by{" "}
       {handles.map((h, i) => (
         <span key={h}>
           {i > 0 && (i === handles.length - 1 ? " and " : ", ")}
-          <span className="text-zinc-600">@{h}</span>
+          <span className="font-bold text-ink-2">@{h}</span>
         </span>
       ))}
     </p>
@@ -62,20 +62,20 @@ function BackButton({
   };
 
   return (
-    <div className="mt-4 border-t border-zinc-100 pt-4">
+    <div className="mt-5 border-t border-line pt-4">
       <BackedByList handles={state.backedBy} />
 
       {state.receipt && (
         <Link
           href={`/r/${state.receipt.slug}`}
-          className="mt-2 inline-block text-xs text-blue-600 hover:underline"
+          className="mt-2 inline-block text-xs font-bold text-brand underline-offset-4 hover:underline"
         >
           View your back receipt
         </Link>
       )}
 
       {state.error && (
-        <p className="mt-2 text-xs text-red-500">{state.error}</p>
+        <p className="mt-2 text-xs text-danger">{state.error}</p>
       )}
 
       {!hasBacked &&
@@ -101,7 +101,7 @@ function BackButton({
                 {advancedOpen ? "Hide" : "Advanced"}
               </button>
             </div>
-            <p className="text-xs text-zinc-400">
+            <p className="text-xs leading-relaxed text-ink-4">
               Mirrors this trade at {defaultPct}% of your balance (up to{" "}
               {formatUsd(COPY_TRADE_CAP_USD)}).
             </p>
@@ -123,7 +123,7 @@ function BackButton({
                   value={overrideInput}
                   onChange={(e) => setOverrideInput(e.target.value)}
                   placeholder="Custom amount ($)"
-                  className="w-36 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none"
+                  className="app-input w-40 rounded-full px-4 py-2 text-sm"
                 />
                 <button
                   type="submit"
@@ -138,8 +138,8 @@ function BackButton({
         ))}
 
       {hasBacked && state.phase !== "backing" && (
-        <p className="mt-3 text-xs text-emerald-600">
-          You backed this conviction.
+        <p className="mt-3 inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1.5 text-xs font-bold text-success">
+          <span>✓</span> You backed this conviction.
         </p>
       )}
     </div>
@@ -148,6 +148,7 @@ function BackButton({
 
 export function ConvictionCard({ entry, backer, saved = false }: ConvictionCardProps) {
   const [series, setSeries] = useState<number[]>([]);
+  const initial = entry.handle.slice(0, 1).toUpperCase();
 
   useEffect(() => {
     let cancelled = false;
@@ -166,33 +167,49 @@ export function ConvictionCard({ entry, backer, saved = false }: ConvictionCardP
   }, [entry.trade.toAsset, entry.trade.token?.symbol]);
 
   return (
-    <article className="rounded-2xl border border-zinc-200 bg-white p-5 text-left shadow-sm">
-      <header className="flex items-start justify-between gap-4">
-        <div>
+    <article className="app-card app-card-interactive relative overflow-hidden p-5 text-left sm:p-6">
+      <div
+        className="pointer-events-none absolute -right-28 -top-36 h-72 w-80 rounded-full opacity-25 blur-[70px]"
+        style={{ background: "var(--pt-grad-dawn)" }}
+        aria-hidden
+      />
+      <header className="relative flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full font-display text-base font-bold text-ink"
+            style={{ background: "var(--pt-mood-sad)" }}
+          >
+            {initial}
+          </span>
+          <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold text-zinc-900">@{entry.handle}</p>
+            <p className="truncate text-sm font-extrabold text-ink">@{entry.handle}</p>
             {saved && (
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-amber-800 uppercase">
-                Saved
+              <span className="rounded-full bg-[#fff1c9] px-2 py-0.5 text-[9px] font-extrabold tracking-[0.1em] text-warning uppercase">
+                ↑ Saved
               </span>
             )}
           </div>
-          <p className="mt-1 text-xs text-zinc-400">
+          <p className="mt-1 text-xs text-ink-4">
             {formatTimestamp(entry.createdAt)}
           </p>
+          </div>
         </div>
         <Sparkline series={series} />
       </header>
 
-      <p className="mt-4 text-sm leading-relaxed text-zinc-700">
+      <p className="pt-eyebrow relative mt-6">The thesis</p>
+      <p className="relative mt-2 font-display text-[1.45rem] font-medium leading-[1.35] tracking-[-0.018em] text-ink">
         {entry.thesis}
       </p>
 
-      <CardAnatomy entry={entry} />
+      <div className="relative">
+        <CardAnatomy entry={entry} />
+      </div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-4">
+      <div className="relative mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
         <TokenChip asset={entry.trade.toAsset} token={entry.trade.token} />
-        <p className="text-xs text-zinc-400">
+        <p className="rounded-full bg-surface-2 px-3 py-1.5 text-xs font-bold text-ink-3">
           {formatUsd(entry.trade.sizeUsd)} position
         </p>
       </div>
@@ -200,7 +217,7 @@ export function ConvictionCard({ entry, backer, saved = false }: ConvictionCardP
       {entry.receiptSlug && (
         <Link
           href={`/r/${entry.receiptSlug}`}
-          className="mt-3 inline-block text-xs text-blue-600 hover:underline"
+          className="relative mt-3 inline-block text-xs font-bold text-brand underline-offset-4 hover:underline"
         >
           View receipt
         </Link>

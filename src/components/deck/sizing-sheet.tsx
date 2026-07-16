@@ -33,11 +33,9 @@ export function SizingSheet({
   const dollars = sizeUsdForFraction(balance, selectedFraction);
 
   return (
-    <div className="w-full rounded-2xl border border-zinc-200 bg-white p-5 text-left">
-      <p className="text-xs font-medium tracking-wider text-zinc-500 uppercase">
-        Size your back
-      </p>
-      <p className="mt-2 text-sm text-zinc-500">
+    <div className="w-full rounded-[26px] border border-line bg-surface p-5 text-left shadow-lg">
+      <p className="pt-eyebrow">Size your back</p>
+      <p className="mt-2 text-sm text-ink-3">
         Fraction of your balance · dollars only
       </p>
 
@@ -52,8 +50,8 @@ export function SizingSheet({
               onClick={() => onSelectFraction(fraction)}
               className={`rounded-full px-4 py-2 text-sm font-medium transition ${
                 selected
-                  ? "bg-blue-600 text-white"
-                  : "border border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100"
+                  ? "bg-brand text-brand-on shadow-md"
+                  : "border border-line bg-surface-2 text-ink-2 hover:border-line-strong hover:bg-surface"
               }`}
             >
               {chip.pct}
@@ -65,10 +63,10 @@ export function SizingSheet({
         })}
       </div>
 
-      <p className="mt-5 text-3xl font-semibold tabular-nums text-zinc-900">
+      <p className="mt-5 font-display text-4xl font-semibold tabular-nums text-ink">
         {formatUsd(dollars)}
       </p>
-      <p className="mt-1 text-xs text-zinc-400">
+      <p className="mt-1 text-xs text-ink-4">
         {selectedFraction === DEFAULT_COPY_FRACTION
           ? "Default size"
           : "Custom size"}{" "}

@@ -15,10 +15,10 @@ export function BalanceHeader({
   subline,
 }: BalanceHeaderProps) {
   return (
-    <div className="relative overflow-hidden rounded-hero bg-surface px-10 py-9 text-center shadow-md">
+    <div className="relative overflow-hidden rounded-[32px] border border-line bg-surface/90 px-6 py-10 text-center shadow-lg sm:px-10 sm:py-12">
       {/* Dawn/dusk gradient blobs — the hero's warm glow. */}
       <div
-        className="pointer-events-none absolute -left-20 -top-28 h-[300px] w-[360px] rounded-full opacity-55 blur-[60px]"
+        className="pointer-events-none absolute -left-20 -top-28 h-[300px] w-[360px] rounded-full opacity-65 blur-[60px]"
         style={{ background: "var(--pt-grad-dawn)" }}
         aria-hidden
       />
@@ -28,16 +28,21 @@ export function BalanceHeader({
         aria-hidden
       />
 
-      <div className="relative flex flex-col items-center gap-2">
+      <div className="absolute left-5 top-5 flex items-center gap-2 rounded-full border border-line bg-surface/70 px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-[0.1em] text-success shadow-sm backdrop-blur sm:left-7 sm:top-7">
+        <span className="h-1.5 w-1.5 rounded-full bg-success" />
+        Live balance
+      </div>
+
+      <div className="relative flex flex-col items-center gap-3 pt-5">
         <span className="pt-eyebrow">Your portfolio</span>
-        <p className="font-display text-[52px] font-semibold leading-none tracking-tight tabular-nums text-ink">
+        <p className="font-display text-[clamp(3.3rem,9vw,5.7rem)] font-medium leading-none tracking-[-0.055em] tabular-nums text-ink">
           {loading || totalUsd == null ? (
             <span className="text-ink-4">—</span>
           ) : (
             formatUsd(totalUsd)
           )}
         </p>
-        <p className="text-sm text-ink-3">
+        <p className="max-w-md text-sm leading-relaxed text-ink-3">
           {subline ?? "Your unified balance across every chain, spendable as one."}
         </p>
       </div>

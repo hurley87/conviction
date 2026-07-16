@@ -38,8 +38,8 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
 
   if (!account.ready) {
     return (
-      <div className="mx-auto flex w-full max-w-md flex-col gap-8">
-        <div className="h-96 w-full animate-pulse rounded-3xl bg-zinc-100" />
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
+        <div className="h-96 w-full animate-pulse rounded-[32px] bg-surface-3" />
       </div>
     );
   }
@@ -47,8 +47,8 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
   if (IS_LIVE && !account.authenticated) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
-        <h1 className="text-3xl font-bold text-zinc-900">Welcome to Conviction</h1>
-        <p className="mt-3 max-w-md text-zinc-500">
+        <h1 className="font-display text-4xl font-semibold text-ink">Welcome to Conviction</h1>
+        <p className="mt-3 max-w-md text-ink-3">
           Sign in to flip today&apos;s deck and back real positions.
         </p>
         <button
@@ -75,24 +75,96 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
   const fundingDestination = backSwipeDestination(account.balance);
 
   return (
-    <div className="mx-auto flex w-full max-w-lg flex-col gap-6 pb-20">
-      <div>
-        <h1 className="text-3xl font-bold text-zinc-900">Deck</h1>
-        <p className="mt-2 text-sm text-zinc-500">
-          Today&apos;s drops — skip left, save up, back right.
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-7 pb-16">
+      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+        <div>
+          <div className="flex items-center gap-3">
+            <span className="h-2.5 w-2.5 rounded-full bg-success shadow-[0_0_0_5px_rgba(79,138,90,0.1)]" />
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-ink-3">
+              Today’s curated drop · {cards.length} {cards.length === 1 ? "card" : "cards"} left
+            </p>
+          </div>
+          <h1 className="mt-4 font-display text-[clamp(3.25rem,7vw,6rem)] font-medium leading-[0.88] tracking-[-0.055em] text-ink">
+            Discover what
+            <br />
+            <span className="italic text-brand">deserves backing.</span>
+          </h1>
+        </div>
+        <p className="max-w-sm text-sm leading-relaxed text-ink-3 sm:pb-2">
+          It&apos;s impossible to research every token across every chain. We
+          narrow crypto to a small daily stack: skip what you don&apos;t
+          believe, save what you&apos;re watching, or back it at your own size.
         </p>
       </div>
 
-      <Deck
-        cards={cards}
-        onSkip={onSkip}
-        onSave={onSave}
-        onBack={onBackSwipe}
-        interactive={!overlayOpen}
-      />
+      <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,1fr)_270px]">
+        <div className="relative flex min-h-[660px] items-start justify-center rounded-[34px] border border-line bg-surface/32 px-3 pb-24 pt-8 shadow-sm backdrop-blur-sm sm:px-8">
+          <div
+            className="pointer-events-none absolute left-[12%] top-12 h-60 w-60 rounded-full opacity-35 blur-[70px]"
+            style={{ background: "var(--pt-grad-dawn)" }}
+            aria-hidden
+          />
+          <Deck
+            cards={cards}
+            onSkip={onSkip}
+            onSave={onSave}
+            onBack={onBackSwipe}
+            interactive={!overlayOpen}
+          />
+        </div>
+
+        <aside className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+          {[
+            {
+              n: "01",
+              action: "Skip",
+              gesture: "Swipe left",
+              copy: "Not for you? Move on cleanly.",
+              tint: "var(--pt-mood-tired)",
+            },
+            {
+              n: "02",
+              action: "Save",
+              gesture: "Swipe up",
+              copy: "Interesting, but not actionable yet.",
+              tint: "var(--pt-mood-joyful)",
+            },
+            {
+              n: "03",
+              action: "Back",
+              gesture: "Swipe right",
+              copy: "Choose your own size before confirming.",
+              tint: "var(--pt-mood-calm)",
+            },
+          ].map((item) => (
+            <div
+              key={item.action}
+              className="app-card app-card-interactive p-4 lg:p-5"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span
+                  className="grid h-8 w-8 place-items-center rounded-xl text-[10px] font-extrabold text-ink"
+                  style={{ background: item.tint }}
+                >
+                  {item.n}
+                </span>
+                <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-ink-4">
+                  {item.gesture}
+                </span>
+              </div>
+              <p className="mt-4 font-display text-xl font-semibold text-ink">
+                {item.action}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-ink-3">
+                {item.copy}
+              </p>
+            </div>
+          ))}
+        </aside>
+      </div>
 
       {overlayOpen && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/30 p-4 sm:items-center">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--pt-overlay)] p-4 backdrop-blur-sm sm:items-center">
           <div className="w-full max-w-md">
             {isSizingPhase && fundingDestination === "addMoney" && (
               <AddMoneySheet
@@ -136,8 +208,8 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
             )}
 
             {flow.status === "error" && (
-              <div className="rounded-2xl border border-red-100 bg-white p-5 text-left">
-                <p className="text-sm text-red-600">{flow.message}</p>
+              <div className="rounded-[24px] border border-danger/20 bg-surface p-5 text-left shadow-lg">
+                <p className="text-sm text-danger">{flow.message}</p>
                 <button
                   type="button"
                   onClick={resetToBrowse}

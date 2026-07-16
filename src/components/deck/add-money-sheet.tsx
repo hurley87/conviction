@@ -22,11 +22,9 @@ export function AddMoneySheet({
   onCancel: () => void;
 }) {
   return (
-    <div className="w-full rounded-2xl border border-zinc-200 bg-white p-5 text-left">
-      <p className="text-xs font-medium tracking-wider text-zinc-500 uppercase">
-        Add money
-      </p>
-      <p className="mt-3 text-sm text-zinc-600">
+    <div className="w-full rounded-[26px] border border-line bg-surface p-5 text-left shadow-lg">
+      <p className="pt-eyebrow">Add money</p>
+      <p className="mt-3 text-sm text-ink-2">
         Add money to back this — we never show a percent of zero.
       </p>
 
@@ -34,17 +32,17 @@ export function AddMoneySheet({
         <AddMoneyButton onAdd={onAddMoney} isFunding={isFunding} />
       </div>
       {fundingError && (
-        <p className="mt-2 text-xs text-red-500">{fundingError}</p>
+        <p className="mt-2 text-xs text-danger">{fundingError}</p>
       )}
 
-      <div className="mt-6 border-t border-zinc-100 pt-5">
-        <p className="mb-4 text-xs font-medium tracking-wider text-zinc-500 uppercase">
+      <div className="mt-6 border-t border-line pt-5">
+        <p className="pt-eyebrow mb-4">
           Or send crypto
         </p>
         {deposits ? (
           <DepositAddress deposits={deposits} />
         ) : (
-          <p className="text-sm text-zinc-400">Loading deposit addresses…</p>
+          <p className="text-sm text-ink-4">Loading deposit addresses…</p>
         )}
       </div>
 

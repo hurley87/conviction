@@ -12,10 +12,10 @@ export function TradePendingStatus() {
     <div
       role="status"
       aria-live="polite"
-      className="rounded-xl border border-blue-100 bg-blue-50/80 px-3 py-3 text-sm leading-relaxed text-blue-900"
+      className="rounded-[16px] border border-brand/15 bg-brand-soft/65 px-3 py-3 text-sm leading-relaxed text-brand"
     >
       <p className="font-medium">{ROUTING_PENDING_COPY}</p>
-      <p className="mt-1 text-xs text-blue-700/80">
+      <p className="mt-1 text-xs text-brand/70">
         This can take a few seconds — hang tight.
       </p>
     </div>

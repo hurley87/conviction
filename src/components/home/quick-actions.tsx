@@ -57,7 +57,7 @@ export function QuickActions() {
 
   return (
     <div className="w-full">
-      <div className="grid grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {ACTIONS.map((action) => {
           const primary = action.id === "trade";
           return (
@@ -76,13 +76,19 @@ export function QuickActions() {
                 setActive(action.id);
               }}
               disabled={action.id === "deposit" && account.isFunding}
-              className={`flex flex-col items-center gap-2 rounded-card px-3 py-[18px] transition disabled:opacity-50 ${
+              className={`group flex items-center gap-3 rounded-[20px] border px-4 py-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-50 sm:flex-col sm:justify-center sm:gap-2 sm:px-3 sm:py-[18px] sm:text-center ${
                 primary
-                  ? "bg-brand text-brand-on shadow-md hover:bg-brand-hover"
-                  : "bg-brand-soft text-ink shadow-sm hover:brightness-[0.97]"
+                  ? "border-brand bg-brand text-brand-on hover:bg-brand-hover"
+                  : "border-line bg-surface/70 text-ink hover:border-line-strong hover:bg-surface"
               }`}
             >
-              <span>{action.icon}</span>
+              <span
+                className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-transform group-hover:scale-105 ${
+                  primary ? "bg-white/12" : "bg-brand-soft text-brand"
+                }`}
+              >
+                {action.icon}
+              </span>
               <span className="text-[13px] font-bold">{action.label}</span>
             </button>
           );
@@ -96,7 +102,7 @@ export function QuickActions() {
       )}
 
       {active === "receive" && account.deposits && (
-        <div className="mt-8 rounded-card border border-line bg-surface p-6 shadow-sm">
+        <div className="app-card mt-6 p-6">
           <p className="mb-4 text-center text-sm font-semibold text-ink-2">
             Send assets to your wallet
           </p>
@@ -112,7 +118,7 @@ export function QuickActions() {
       )}
 
       {active === "send" && (
-        <div className="mt-8 rounded-card border border-line bg-surface p-6 text-center shadow-sm">
+        <div className="app-card mt-6 p-6 text-center">
           <p className="text-sm text-ink-2">
             Send is coming soon. Use Trade to move funds between assets for now.
           </p>

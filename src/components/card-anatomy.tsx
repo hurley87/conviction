@@ -9,11 +9,11 @@ function WhyNowList({ events }: { events: WhyNowEvent[] }) {
   return (
     <ul className="mt-1 space-y-1.5">
       {events.map((e) => (
-        <li key={`${e.at}-${e.event}`} className="text-xs text-zinc-600">
-          <time className="font-medium text-zinc-800" dateTime={e.at}>
+        <li key={`${e.at}-${e.event}`} className="text-xs leading-relaxed text-ink-2">
+          <time className="font-bold text-ink" dateTime={e.at}>
             {formatTimestamp(e.at)}
           </time>
-          <span className="text-zinc-400"> — </span>
+          <span className="text-ink-4"> — </span>
           {e.event}
         </li>
       ))}
@@ -27,13 +27,13 @@ function GateReportList({ checks }: { checks: GateCheck[] }) {
       {checks.map((c) => (
         <li
           key={c.id ?? c.name}
-          className="flex flex-wrap items-baseline gap-x-2 text-xs text-zinc-600"
+          className="flex flex-wrap items-baseline gap-x-2 text-xs text-ink-2"
         >
           <span
             className={
               c.passed
-                ? "font-medium text-emerald-600"
-                : "font-medium text-red-500"
+                ? "font-bold text-success"
+                : "font-bold text-danger"
             }
           >
             {c.passed ? "Pass" : "Fail"}
@@ -44,7 +44,7 @@ function GateReportList({ checks }: { checks: GateCheck[] }) {
               href={c.evidenceUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+              className="font-bold text-brand hover:underline"
             >
               Evidence
             </a>
@@ -66,34 +66,34 @@ export function CardAnatomy({
 
   return (
     <details
-      className="mt-4 rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2"
+      className="mt-4 rounded-[18px] border border-line bg-surface-2/75 px-3 py-2"
       open={defaultOpen || undefined}
     >
-      <summary className="cursor-pointer text-xs font-medium text-zinc-500 select-none">
+      <summary className="cursor-pointer text-xs font-bold text-ink-3 select-none">
         Card details
       </summary>
-      <div className="mt-3 space-y-3 border-t border-zinc-100 pt-3">
+      <div className="mt-3 grid gap-2.5 border-t border-line pt-3">
         {entry.whyNow && entry.whyNow.length > 0 && (
-          <section>
-            <h3 className="text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
+          <section className="rounded-[14px] bg-surface/70 p-3">
+            <h3 className="text-[10px] font-extrabold tracking-[0.12em] text-warning uppercase">
               Why now
             </h3>
             <WhyNowList events={entry.whyNow} />
           </section>
         )}
         {entry.whatBreaksIt && (
-          <section>
-            <h3 className="text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
+          <section className="rounded-[14px] bg-surface/70 p-3">
+            <h3 className="text-[10px] font-extrabold tracking-[0.12em] text-brand uppercase">
               What breaks it
             </h3>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-600">
+            <p className="mt-1 text-xs leading-relaxed text-ink-2">
               {entry.whatBreaksIt}
             </p>
           </section>
         )}
         {entry.gateReport && entry.gateReport.length > 0 && (
-          <section>
-            <h3 className="text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
+          <section className="rounded-[14px] bg-surface/70 p-3">
+            <h3 className="text-[10px] font-extrabold tracking-[0.12em] text-success uppercase">
               Gate report
             </h3>
             <GateReportList checks={entry.gateReport} />

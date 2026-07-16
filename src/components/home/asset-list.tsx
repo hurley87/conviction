@@ -152,14 +152,14 @@ export function AssetList({ sources }: AssetListProps) {
   ];
 
   return (
-    <div className="w-full">
-      <div className="flex items-center gap-6 border-b border-line">
+    <div className="app-card w-full overflow-hidden p-4 sm:p-6">
+      <div className="flex items-center gap-5 overflow-x-auto border-b border-line">
         {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`-mb-px border-b-2 pb-2.5 text-sm transition ${
+            className={`-mb-px shrink-0 border-b-2 pb-3 text-sm transition ${
               tab === t.id
                 ? "border-brand font-bold text-ink"
                 : "border-transparent font-semibold text-ink-3 hover:text-ink-2"
@@ -168,7 +168,7 @@ export function AssetList({ sources }: AssetListProps) {
             {t.label}
           </button>
         ))}
-        <div className="ml-auto flex items-center gap-2 pb-2.5 text-[13px] font-bold text-ink-2">
+        <div className="ml-auto hidden shrink-0 items-center gap-2 pb-3 text-[13px] font-bold text-ink-2 sm:flex">
           <span className="flex">
             {networkColors.map((color, i) => (
               <span
