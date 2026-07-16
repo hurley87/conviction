@@ -5,14 +5,19 @@ import { useLiFiTokens } from "@/hooks/use-lifi-tokens";
 import { assetMatches } from "@/lib/verbs/assets";
 import type { BalanceSource, ProductAsset } from "@/lib/verbs/types";
 import { AssetRow } from "@/components/home/asset-row";
+import { MULTI_NETWORK, networkColor } from "@/lib/networks";
 
-type AssetTab = "coins" | "collectibles" | "orders";
+type HoldingsTab = "holdings" | "convictions" | "activity";
 
 type AggregatedAsset = {
   symbol: string;
   name: string;
   usd: number;
   productAsset: ProductAsset;
+  /** Chain holding the largest USD slice of this symbol. */
+  chain: string;
+  /** True when the symbol is spread across more than one chain. */
+  multiChain: boolean;
 };
 
 /** Concrete holding products (excludes the `cash` aggregate). */
@@ -33,29 +38,50 @@ function symbolToProductAsset(symbol: string): ProductAsset {
   return DISPLAY_PRODUCTS.find((p) => assetMatches(symbol, p)) ?? "usdc";
 }
 
+function displayName(symbol: string): string {
+  return DISPLAY_NAMES[symbol.toUpperCase()] ?? symbol;
+}
+
+/** Per-symbol accumulator; the dominant chain + multiChain flag are derived once
+ * at the end from `chains` rather than seeded and overwritten. */
+type SymbolAcc = {
+  symbol: string;
+  name: string;
+  usd: number;
+  productAsset: ProductAsset;
+  chains: Map<string, number>;
+};
+
 function aggregateSources(sources: BalanceSource[]): AggregatedAsset[] {
-  const bySymbol = new Map<string, AggregatedAsset>();
+  const bySymbol = new Map<string, SymbolAcc>();
 
   for (const source of sources) {
     const symbol = source.asset.toUpperCase();
     const existing = bySymbol.get(symbol);
     if (existing) {
       existing.usd += source.usd;
+      existing.chains.set(
+        source.chain,
+        (existing.chains.get(source.chain) ?? 0) + source.usd,
+      );
     } else {
       bySymbol.set(symbol, {
         symbol,
         name: displayName(symbol),
         usd: source.usd,
         productAsset: symbolToProductAsset(symbol),
+        chains: new Map([[source.chain, source.usd]]),
       });
     }
   }
 
-  return [...bySymbol.values()].sort((a, b) => b.usd - a.usd);
-}
-
-function displayName(symbol: string): string {
-  return DISPLAY_NAMES[symbol.toUpperCase()] ?? symbol;
+  return [...bySymbol.values()]
+    .map(({ chains, ...asset }) => {
+      // Dominant chain = the one holding the most USD of this symbol.
+      const dominant = [...chains.entries()].sort((a, b) => b[1] - a[1])[0]!;
+      return { ...asset, chain: dominant[0], multiChain: chains.size > 1 };
+    })
+    .sort((a, b) => b.usd - a.usd);
 }
 
 function pctChangeFromSeries(series: number[]): number | null {
@@ -68,15 +94,14 @@ function pctChangeFromSeries(series: number[]): number | null {
 
 type AssetListProps = {
   sources: BalanceSource[];
-  totalUsd: number;
 };
 
-export function AssetList({ sources, totalUsd }: AssetListProps) {
-  const [tab, setTab] = useState<AssetTab>("coins");
+export function AssetList({ sources }: AssetListProps) {
+  const [tab, setTab] = useState<HoldingsTab>("holdings");
   const { tokenForAsset, loading: tokensLoading } = useLiFiTokens();
   const assets = useMemo(() => aggregateSources(sources), [sources]);
-  // Chart % change keyed by product asset (history depends on the asset, not
-  // on the held USD amount) so a balance refresh doesn't refetch unchanged data.
+  // 30d change keyed by product asset (history depends on the asset, not on the
+  // held USD amount) so a balance refresh doesn't refetch unchanged data.
   const assetKey = useMemo(
     () => [...new Set(assets.map((a) => a.productAsset))].join(","),
     [assets],
@@ -110,36 +135,57 @@ export function AssetList({ sources, totalUsd }: AssetListProps) {
     };
   }, [assetKey]);
 
-  const tabs: { id: AssetTab; label: string }[] = [
-    { id: "coins", label: "Coins" },
-    { id: "collectibles", label: "Collectibles" },
-    { id: "orders", label: "Orders" },
+  // Distinct networks present — stacked into the "All networks" chip.
+  const networkColors = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const asset of assets) {
+      const key = asset.chain.toLowerCase();
+      if (!seen.has(key)) seen.set(key, networkColor(asset.chain));
+    }
+    return [...seen.values()].slice(0, 4);
+  }, [assets]);
+
+  const tabs: { id: HoldingsTab; label: string }[] = [
+    { id: "holdings", label: "Holdings" },
+    { id: "convictions", label: "My convictions" },
+    { id: "activity", label: "Activity" },
   ];
 
   return (
     <div className="w-full">
-      <div className="flex items-center justify-between border-b border-zinc-200">
-        <div className="flex gap-6">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={`border-b-2 pb-3 text-sm font-semibold transition ${
-                tab === t.id
-                  ? "border-zinc-900 text-zinc-900"
-                  : "border-transparent text-zinc-400 hover:text-zinc-600"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <span className="flex items-center gap-1 text-sm text-zinc-400">
-          All Networks
+      <div className="flex items-center gap-6 border-b border-line">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`-mb-px border-b-2 pb-2.5 text-sm transition ${
+              tab === t.id
+                ? "border-brand font-bold text-ink"
+                : "border-transparent font-semibold text-ink-3 hover:text-ink-2"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+        <div className="ml-auto flex items-center gap-2 pb-2.5 text-[13px] font-bold text-ink-2">
+          <span className="flex">
+            {networkColors.map((color, i) => (
+              <span
+                key={color}
+                className="h-4 w-4 rounded-chip ring-2 ring-canvas"
+                style={{
+                  background: color,
+                  marginLeft: i === 0 ? 0 : -6,
+                }}
+                aria-hidden
+              />
+            ))}
+          </span>
+          All networks
           <svg
-            width="16"
-            height="16"
+            width="14"
+            height="14"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -150,33 +196,37 @@ export function AssetList({ sources, totalUsd }: AssetListProps) {
           >
             <path d="m6 9 6 6 6-6" />
           </svg>
-        </span>
+        </div>
       </div>
 
-      {tab !== "coins" ? (
-        <p className="py-12 text-center text-sm text-zinc-400">
-          No {tab} yet.
+      {tab === "convictions" ? (
+        <p className="py-12 text-center text-sm text-ink-3">
+          Convictions you back will appear here.
+        </p>
+      ) : tab === "activity" ? (
+        <p className="py-12 text-center text-sm text-ink-3">
+          Your recent moves will appear here.
         </p>
       ) : assets.length === 0 ? (
-        <p className="py-12 text-center text-sm text-zinc-400">
+        <p className="py-12 text-center text-sm text-ink-3">
           No assets yet — deposit to get started.
         </p>
       ) : (
-        <div className="mt-2">
-          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-4 px-2 py-3 text-xs font-medium uppercase tracking-wider text-zinc-400 max-md:hidden">
+        <div className="mt-5">
+          <div className="grid grid-cols-[1fr_150px_140px_90px] gap-4 px-4 pb-2.5 text-[11.5px] font-bold uppercase tracking-[0.04em] text-ink-4 max-md:hidden">
             <span>Asset</span>
-            <span className="w-28 text-right">Balance</span>
-            <span className="w-20 text-right">Portfolio</span>
-            <span className="w-24 text-right">Price</span>
+            <span>Network</span>
+            <span className="text-right">Balance</span>
+            <span className="text-right">30d</span>
           </div>
           {assets.map((asset) => {
             const token = tokenForAsset(asset.productAsset);
             const price = token?.priceUSD ?? null;
-            const amount =
-              price != null && price > 0 ? asset.usd / price : null;
-            const portfolioPct =
-              totalUsd > 0 ? (asset.usd / totalUsd) * 100 : 0;
-            const change24h = changes[asset.productAsset] ?? null;
+            const amount = price != null && price > 0 ? asset.usd / price : null;
+            const change30d = changes[asset.productAsset] ?? null;
+            const meta = asset.multiChain
+              ? MULTI_NETWORK
+              : { label: asset.chain, color: networkColor(asset.chain) };
 
             return (
               <AssetRow
@@ -186,9 +236,9 @@ export function AssetList({ sources, totalUsd }: AssetListProps) {
                 logoUri={token?.logoURI}
                 balanceUsd={asset.usd}
                 amount={amount}
-                portfolioPct={portfolioPct}
-                priceUsd={price}
-                change24h={change24h}
+                networkLabel={meta.label}
+                networkColor={meta.color}
+                change30d={change30d}
                 loading={tokensLoading}
               />
             );

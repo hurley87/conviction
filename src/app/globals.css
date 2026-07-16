@@ -1,19 +1,124 @@
 @import "tailwindcss";
 
+/* =========================================================================
+   Pocket-Therapy design system — warm (cream + plum), light mode.
+   Imported from the Conviction Home design doc. Fonts are wired to the
+   next/font variables set on <html> in app/layout.tsx.
+   ========================================================================= */
 :root {
-  --background: #ffffff;
-  --foreground: #18181b;
+  --pt-font-display: var(--font-newsreader), "Iowan Old Style", Cambria, Georgia,
+    serif;
+  --pt-font-body: var(--font-manrope), -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  --pt-font-mono: var(--font-jetbrains-mono), ui-monospace, "SF Mono", Menlo,
+    monospace;
+
+  /* Surfaces */
+  --pt-bg: #f7f1e8;
+  --pt-surface: #ffffff;
+  --pt-surface-2: #fbf6ee;
+  --pt-surface-3: #f2e9da;
+  --pt-overlay: rgba(36, 22, 38, 0.45);
+
+  /* Foreground — aubergine ink */
+  --pt-fg-1: #2a1a2e;
+  --pt-fg-2: #5c4a5a;
+  --pt-fg-3: #8c7a87;
+  --pt-fg-4: #bfb1b7;
+
+  /* Brand — plum */
+  --pt-brand: #4b2a52;
+  --pt-brand-hover: #3b1d44;
+  --pt-brand-press: #2e1437;
+  --pt-brand-soft: #e8daea;
+  --pt-brand-on: #ffffff;
+
+  /* Semantic */
+  --pt-success: #4f8a5a;
+  --pt-warning: #c58a2a;
+  --pt-danger: #b5402f;
+  --pt-info: #4a6e8e;
+
+  /* Borders / dividers */
+  --pt-border: rgba(74, 42, 82, 0.1);
+  --pt-border-strong: rgba(74, 42, 82, 0.2);
+
+  /* Shadows (warm, soft) */
+  --pt-shadow-sm: 0 1px 2px rgba(74, 42, 82, 0.05),
+    0 1px 3px rgba(74, 42, 82, 0.04);
+  --pt-shadow-md: 0 4px 12px rgba(74, 42, 82, 0.08),
+    0 2px 4px rgba(74, 42, 82, 0.04);
+  --pt-shadow-lg: 0 12px 32px rgba(74, 42, 82, 0.12),
+    0 4px 8px rgba(74, 42, 82, 0.05);
+  --pt-shadow-glow: 0 0 0 4px rgba(75, 42, 82, 0.1);
+
+  /* Gradient shapes (hero blobs, brand fills) */
+  --pt-grad-dawn: linear-gradient(160deg, #f9d9b5 0%, #e8b5c9 60%, #b49ad4 100%);
+  --pt-grad-dusk: linear-gradient(180deg, #c7aedb 0%, #8e6caa 100%);
+  --pt-grad-brand: linear-gradient(135deg, #5e3766 0%, #3b1d44 100%);
+
+  --background: var(--pt-bg);
+  --foreground: var(--pt-fg-1);
 }
 
+/* Expose the tokens as Tailwind utilities: bg-canvas, text-ink, bg-brand,
+   border-line, font-display, etc. */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-canvas: var(--pt-bg);
+  --color-surface: var(--pt-surface);
+  --color-surface-2: var(--pt-surface-2);
+  --color-surface-3: var(--pt-surface-3);
+
+  --color-ink: var(--pt-fg-1);
+  --color-ink-2: var(--pt-fg-2);
+  --color-ink-3: var(--pt-fg-3);
+  --color-ink-4: var(--pt-fg-4);
+
+  --color-brand: var(--pt-brand);
+  --color-brand-hover: var(--pt-brand-hover);
+  --color-brand-soft: var(--pt-brand-soft);
+  --color-brand-on: var(--pt-brand-on);
+
+  --color-success: var(--pt-success);
+  --color-danger: var(--pt-danger);
+  --color-warning: var(--pt-warning);
+  --color-info: var(--pt-info);
+
+  --color-line: var(--pt-border);
+  --color-line-strong: var(--pt-border-strong);
+
+  --font-display: var(--pt-font-display);
+  --font-body: var(--pt-font-body);
+  --font-mono: var(--pt-font-mono);
+
+  /* Elevation scale — warm, soft shadows own the app-wide shadow-{sm,md,lg}
+     utilities so surfaces never fall back to Tailwind's neutral-black shadows. */
+  --shadow-sm: var(--pt-shadow-sm);
+  --shadow-md: var(--pt-shadow-md);
+  --shadow-lg: var(--pt-shadow-lg);
+
+  /* Corner-radius tokens for the reused card/hero/chip geometry. */
+  --radius-card: 22px;
+  --radius-hero: 28px;
+  --radius-chip: 5px;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  background: var(--pt-bg);
+  color: var(--pt-fg-1);
+  font-family: var(--pt-font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01" on, "cv11" on;
+}
+
+/* All-caps tracked label used above hero numbers and section titles. */
+.pt-eyebrow {
+  font-family: var(--pt-font-body);
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pt-fg-3);
 }
