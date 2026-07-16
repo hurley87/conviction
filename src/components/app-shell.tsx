@@ -7,8 +7,21 @@ import {
   ConciergeBubbleProvider,
 } from "@/components/concierge-bubble";
 import { UpgradeBeatHost } from "@/components/upgrade-beat-host";
+import { useAccount } from "@/components/account/account-context";
+import { LandingPage } from "@/components/landing/landing-page";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const { ready, authenticated } = useAccount();
+
+  // Logged-out visitors get the marketing landing instead of the app chrome;
+  // hold on a quiet canvas until Privy resolves so the deck never flashes.
+  if (!ready) {
+    return <div className="min-h-screen bg-canvas" />;
+  }
+  if (!authenticated) {
+    return <LandingPage />;
+  }
+
   return (
     <ConciergeBubbleProvider>
       <div className="flex min-h-screen bg-canvas text-ink">
