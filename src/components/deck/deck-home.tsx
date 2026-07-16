@@ -70,6 +70,9 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
     flow.status === "executing"
       ? flow.fraction
       : undefined;
+  const isSizingPhase =
+    flow.status === "sizing" || flow.status === "quoting";
+  const fundingDestination = backSwipeDestination(account.balance);
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6 pb-20">
@@ -91,7 +94,7 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
       {overlayOpen && (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/30 p-4 sm:items-center">
           <div className="w-full max-w-md">
-            {flow.status === "addMoney" && (
+            {isSizingPhase && fundingDestination === "addMoney" && (
               <AddMoneySheet
                 deposits={account.deposits}
                 onAddMoney={account.addMoney}
@@ -101,10 +104,10 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
               />
             )}
 
-            {(flow.status === "sizing" || flow.status === "quoting") &&
+            {isSizingPhase &&
+              fundingDestination === "sizing" &&
               sizingFraction != null &&
-              account.balance != null &&
-              backSwipeDestination(account.balance) === "sizing" && (
+              account.balance && (
                 <SizingSheet
                   balance={account.balance}
                   selectedFraction={sizingFraction}

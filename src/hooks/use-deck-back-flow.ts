@@ -1,10 +1,11 @@
 "use client";
 
-// Deck back flow — browse → (add-money?) → size → quote → confirm → execute →
-// receipt (issues #22 / #26). Swipe verbs persist so acted-on cards stay off
-// the deck (#24).
+// Deck back flow — browse → size → quote → confirm → execute → receipt
+// (issues #22 / #26). Zero balance is handled in the UI by deriving the
+// add-money sheet from the remembered sizing entry + unified balance — no
+// effect sync. Swipe verbs persist so acted-on cards stay off the deck (#24).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useAccount } from "@/components/account/account-context";
 import { useSwipeState } from "@/hooks/use-swipe-state";
 import {
@@ -13,19 +14,17 @@ import {
   quoteCopyConviction,
   type QuotedCopy,
 } from "@/lib/verbs/copy";
-import { backSwipeDestination, sizeUsdForFraction } from "@/lib/verbs/deck";
+import { sizeUsdForFraction } from "@/lib/verbs/deck";
 import { remainingDeckCards } from "@/lib/verbs/swipe-state";
 import { persistCopyResult } from "@/lib/persist-copy-result";
 import type {
   ConvictionEntry,
   Receipt,
   TradeSigners,
-  UniversalBalance,
 } from "@/lib/verbs/types";
 
 export type DeckFlow =
   | { status: "browse" }
-  | { status: "addMoney"; entry: ConvictionEntry }
   | { status: "sizing" | "quoting"; entry: ConvictionEntry; fraction: number }
   | {
       status: "confirm" | "executing";
@@ -35,20 +34,6 @@ export type DeckFlow =
     }
   | { status: "receipt"; receipt: Receipt }
   | { status: "error"; message: string };
-
-type BackSwipeFlow =
-  | { status: "addMoney"; entry: ConvictionEntry }
-  | { status: "sizing"; entry: ConvictionEntry; fraction: number };
-
-/** Next overlay after a back gesture (or when balance catches up to intent). */
-function flowAfterBackSwipe(
-  entry: ConvictionEntry,
-  balance: UniversalBalance | null | undefined,
-): BackSwipeFlow {
-  return backSwipeDestination(balance) === "addMoney"
-    ? { status: "addMoney", entry }
-    : { status: "sizing", entry, fraction: DEFAULT_COPY_FRACTION };
-}
 
 export function useDeckBackFlow(
   signers: TradeSigners,
@@ -79,6 +64,8 @@ export function useDeckBackFlow(
   const onSkip = useCallback(() => recordDeckVerb("skip"), [recordDeckVerb]);
   const onSave = useCallback(() => recordDeckVerb("save"), [recordDeckVerb]);
 
+  // Always remember the card as sizing intent. DeckHome derives add-money vs
+  // sizing from unified balance so funds arriving resume without an effect.
   const onBackSwipe = useCallback(
     (entry: ConvictionEntry) => {
       if (flow.status !== "browse") return;
@@ -86,26 +73,14 @@ export function useDeckBackFlow(
         account.login();
         return;
       }
-      setFlow(flowAfterBackSwipe(entry, account.balance));
+      setFlow({
+        status: "sizing",
+        entry,
+        fraction: DEFAULT_COPY_FRACTION,
+      });
     },
     [account, flow.status],
   );
-
-  // Keep add-money ↔ sizing in sync with unified balance so the overlay never
-  // blanks (onramp refresh, deposit, or mid-flow balance dip).
-  useEffect(() => {
-    if (flow.status === "addMoney") {
-      if (backSwipeDestination(account.balance) === "sizing") {
-        setFlow(flowAfterBackSwipe(flow.entry, account.balance));
-      }
-      return;
-    }
-    if (flow.status === "sizing" || flow.status === "quoting") {
-      if (backSwipeDestination(account.balance) === "addMoney") {
-        setFlow(flowAfterBackSwipe(flow.entry, account.balance));
-      }
-    }
-  }, [account.balance, flow]);
 
   const setFraction = useCallback((fraction: number) => {
     setFlow((prev) => {
