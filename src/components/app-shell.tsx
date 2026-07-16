@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { UserMenu } from "@/components/user-menu";
 import {
@@ -14,15 +13,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <ConciergeBubbleProvider>
       <div className="flex min-h-screen bg-canvas text-ink">
         <aside className="fixed inset-y-0 left-0 z-30 flex w-56 flex-col border-r border-line bg-canvas">
-          <div className="flex items-center gap-2.5 px-4 pb-5 pt-6">
-            <Image
-              src="/logo.png"
-              alt="Conviction"
-              width={30}
-              height={30}
-              className="rounded-lg"
-              priority
-            />
+          <div className="flex items-center px-4 pb-5 pt-6">
             <span className="font-display text-xl font-semibold tracking-tight text-ink">
               Conviction
             </span>
