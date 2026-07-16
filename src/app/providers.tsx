@@ -22,7 +22,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         appearance: {
           theme: "light",
           accentColor: "#4B2A52",
-          logo: "/logo.png",
+          logo: "/brand/conviction-mark.png",
         },
       }}
     >
