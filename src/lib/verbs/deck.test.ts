@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   DECK_SIZE_FRACTIONS,
+  backSwipeDestination,
   fractionChipLabel,
   isDeckCard,
   orderDeckCards,
+  resumeSizingAfterFunds,
   sizeUsdForFraction,
 } from "@/lib/verbs/deck";
 import { copyTradeSizeUsd, DEFAULT_COPY_FRACTION } from "@/lib/verbs/copy";
@@ -97,5 +99,63 @@ describe("fractionChipLabel", () => {
 
   it("labels full balance as All", () => {
     expect(fractionChipLabel(BALANCE, 1).pct).toBe("All");
+  });
+});
+
+describe("backSwipeDestination", () => {
+  it("routes zero balance to addMoney", () => {
+    expect(backSwipeDestination({ totalUsd: 0, sources: [] })).toBe(
+      "addMoney",
+    );
+  });
+
+  it("routes unknown balance to addMoney so sizing never opens at $0", () => {
+    expect(backSwipeDestination(null)).toBe("addMoney");
+    expect(backSwipeDestination(undefined)).toBe("addMoney");
+  });
+
+  it("routes funded balance straight to sizing", () => {
+    expect(backSwipeDestination(BALANCE)).toBe("sizing");
+  });
+});
+
+describe("resumeSizingAfterFunds", () => {
+  const entry = DECK_SEED_CARDS[0]!;
+
+  it("returns sizing for the same card once funds arrive", () => {
+    const next = resumeSizingAfterFunds(
+      "addMoney",
+      entry,
+      BALANCE,
+      DEFAULT_COPY_FRACTION,
+    );
+    expect(next).toEqual({
+      status: "sizing",
+      entry,
+      fraction: DEFAULT_COPY_FRACTION,
+    });
+    expect(next?.entry.entryId).toBe(entry.entryId);
+  });
+
+  it("stays put while balance is still zero", () => {
+    expect(
+      resumeSizingAfterFunds(
+        "addMoney",
+        entry,
+        { totalUsd: 0, sources: [] },
+        DEFAULT_COPY_FRACTION,
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores balance flips when not on addMoney", () => {
+    expect(
+      resumeSizingAfterFunds(
+        "browse",
+        entry,
+        BALANCE,
+        DEFAULT_COPY_FRACTION,
+      ),
+    ).toBeNull();
   });
 });

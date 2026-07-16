@@ -1,10 +1,12 @@
 "use client";
 
-// Home deck surface — swipe stack with sizing → confirm → receipt (issue #22).
-// Skip / save / back persist; exhausted deck points to feed + Saved (#24).
+// Home deck surface — swipe stack with add-money → sizing → confirm → receipt
+// (issues #22 / #26). Skip / save / back persist; exhausted deck points to
+// feed + Saved (#24).
 
 import { useAccount } from "@/components/account/account-context";
 import { ConfirmCard } from "@/components/confirm-card";
+import { AddMoneySheet } from "@/components/deck/add-money-sheet";
 import { Deck } from "@/components/deck/deck";
 import { SizingSheet } from "@/components/deck/sizing-sheet";
 import { ReceiptView } from "@/components/receipt-view";
@@ -88,6 +90,16 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
       {overlayOpen && (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/30 p-4 sm:items-center">
           <div className="w-full max-w-md">
+            {flow.status === "addMoney" && (
+              <AddMoneySheet
+                deposits={account.deposits}
+                onAddMoney={account.addMoney}
+                isFunding={account.isFunding}
+                fundingError={account.fundingError}
+                onCancel={resetToBrowse}
+              />
+            )}
+
             {(flow.status === "sizing" || flow.status === "quoting") &&
               sizingFraction != null && (
                 <SizingSheet
@@ -96,8 +108,6 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
                   onSelectFraction={setFraction}
                   onContinue={() => void onContinueSizing()}
                   onCancel={resetToBrowse}
-                  onAddMoney={account.addMoney}
-                  isFunding={account.isFunding}
                   quoting={flow.status === "quoting"}
                 />
               )}

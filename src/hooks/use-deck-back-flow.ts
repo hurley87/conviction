@@ -1,9 +1,10 @@
 "use client";
 
-// Deck back flow — browse → size → quote → confirm → execute → receipt
-// (issue #22). Swipe verbs persist so acted-on cards stay off the deck (#24).
+// Deck back flow — browse → (add-money?) → size → quote → confirm → execute →
+// receipt (issues #22 / #26). Swipe verbs persist so acted-on cards stay off
+// the deck (#24).
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount } from "@/components/account/account-context";
 import { useSwipeState } from "@/hooks/use-swipe-state";
 import {
@@ -12,7 +13,11 @@ import {
   quoteCopyConviction,
   type QuotedCopy,
 } from "@/lib/verbs/copy";
-import { sizeUsdForFraction } from "@/lib/verbs/deck";
+import {
+  backSwipeDestination,
+  resumeSizingAfterFunds,
+  sizeUsdForFraction,
+} from "@/lib/verbs/deck";
 import { remainingDeckCards } from "@/lib/verbs/swipe-state";
 import { persistCopyResult } from "@/lib/persist-copy-result";
 import type {
@@ -23,6 +28,7 @@ import type {
 
 export type DeckFlow =
   | { status: "browse" }
+  | { status: "addMoney"; entry: ConvictionEntry }
   | { status: "sizing" | "quoting"; entry: ConvictionEntry; fraction: number }
   | {
       status: "confirm" | "executing";
@@ -69,6 +75,10 @@ export function useDeckBackFlow(
         account.login();
         return;
       }
+      if (backSwipeDestination(account.balance) === "addMoney") {
+        setFlow({ status: "addMoney", entry });
+        return;
+      }
       setFlow({
         status: "sizing",
         entry,
@@ -77,6 +87,19 @@ export function useDeckBackFlow(
     },
     [account, flow.status],
   );
+
+  // After funds arrive (onramp refresh or deposit), resume sizing for the
+  // remembered card — never leave the user stuck on add-money with a balance.
+  useEffect(() => {
+    if (flow.status !== "addMoney") return;
+    const next = resumeSizingAfterFunds(
+      flow.status,
+      flow.entry,
+      account.balance,
+      DEFAULT_COPY_FRACTION,
+    );
+    if (next) setFlow(next);
+  }, [account.balance, flow]);
 
   const setFraction = useCallback((fraction: number) => {
     setFlow((prev) => {
