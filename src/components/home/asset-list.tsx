@@ -5,9 +5,10 @@ import { useLiFiTokens } from "@/hooks/use-lifi-tokens";
 import { assetMatches } from "@/lib/verbs/assets";
 import type { BalanceSource, ProductAsset } from "@/lib/verbs/types";
 import { AssetRow } from "@/components/home/asset-row";
+import { NetworkFilter } from "@/components/home/network-filter";
 import { MULTI_NETWORK, networkColor } from "@/lib/networks";
 
-type HoldingsTab = "holdings" | "convictions" | "activity";
+type HoldingsTab = "holdings" | "convictions";
 
 type AggregatedAsset = {
   symbol: string;
@@ -16,8 +17,8 @@ type AggregatedAsset = {
   productAsset: ProductAsset;
   /** Chain holding the largest USD slice of this symbol. */
   chain: string;
-  /** True when the symbol is spread across more than one chain. */
-  multiChain: boolean;
+  /** Per-network slices, largest first. */
+  networks: { chain: string; usd: number }[];
 };
 
 /** Concrete holding products (excludes the `cash` aggregate). */
@@ -77,9 +78,10 @@ function aggregateSources(sources: BalanceSource[]): AggregatedAsset[] {
 
   return [...bySymbol.values()]
     .map(({ chains, ...asset }) => {
-      // Dominant chain = the one holding the most USD of this symbol.
-      const dominant = [...chains.entries()].sort((a, b) => b[1] - a[1])[0]!;
-      return { ...asset, chain: dominant[0], multiChain: chains.size > 1 };
+      const networks = [...chains.entries()]
+        .map(([chain, usd]) => ({ chain, usd }))
+        .sort((a, b) => b.usd - a.usd);
+      return { ...asset, chain: networks[0]!.chain, networks };
     })
     .sort((a, b) => b.usd - a.usd);
 }
@@ -98,8 +100,37 @@ type AssetListProps = {
 
 export function AssetList({ sources }: AssetListProps) {
   const [tab, setTab] = useState<HoldingsTab>("holdings");
+  const [selectedNetwork, setSelectedNetwork] = useState("all");
   const { tokenForAsset, loading: tokensLoading } = useLiFiTokens();
-  const assets = useMemo(() => aggregateSources(sources), [sources]);
+  const networks = useMemo(
+    () =>
+      [...new Set(sources.map((source) => source.chain))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [sources],
+  );
+  const networkTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const source of sources) {
+      totals[source.chain] = (totals[source.chain] ?? 0) + source.usd;
+    }
+    return totals;
+  }, [sources]);
+  const activeNetwork =
+    selectedNetwork === "all" || networks.includes(selectedNetwork)
+      ? selectedNetwork
+      : "all";
+  const filteredSources = useMemo(
+    () =>
+      activeNetwork === "all"
+        ? sources
+        : sources.filter((source) => source.chain === activeNetwork),
+    [activeNetwork, sources],
+  );
+  const assets = useMemo(
+    () => aggregateSources(filteredSources),
+    [filteredSources],
+  );
   // 30d change keyed by product asset (history depends on the asset, not on the
   // held USD amount) so a balance refresh doesn't refetch unchanged data.
   const assetKey = useMemo(
@@ -135,77 +166,41 @@ export function AssetList({ sources }: AssetListProps) {
     };
   }, [assetKey]);
 
-  // Distinct networks present — stacked into the "All networks" chip.
-  const networkColors = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const asset of assets) {
-      const key = asset.chain.toLowerCase();
-      if (!seen.has(key)) seen.set(key, networkColor(asset.chain));
-    }
-    return [...seen.values()].slice(0, 4);
-  }, [assets]);
-
   const tabs: { id: HoldingsTab; label: string }[] = [
     { id: "holdings", label: "Holdings" },
     { id: "convictions", label: "My convictions" },
-    { id: "activity", label: "Activity" },
   ];
 
   return (
-    <div className="app-card w-full overflow-hidden p-4 sm:p-6">
-      <div className="flex items-center gap-5 overflow-x-auto border-b border-line">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={`-mb-px shrink-0 border-b-2 pb-3 text-sm transition ${
-              tab === t.id
-                ? "border-brand font-bold text-ink"
-                : "border-transparent font-semibold text-ink-3 hover:text-ink-2"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-        <div className="ml-auto hidden shrink-0 items-center gap-2 pb-3 text-[13px] font-bold text-ink-2 sm:flex">
-          <span className="flex">
-            {networkColors.map((color, i) => (
-              <span
-                key={color}
-                className="h-4 w-4 rounded-chip ring-2 ring-canvas"
-                style={{
-                  background: color,
-                  marginLeft: i === 0 ? 0 : -6,
-                }}
-                aria-hidden
-              />
-            ))}
-          </span>
-          All networks
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <path d="m6 9 6 6 6-6" />
-          </svg>
+    <div className="app-card relative w-full overflow-visible p-4 sm:p-6">
+      <div className="flex items-end gap-4 border-b border-line">
+        <div className="flex min-w-0 flex-1 items-center gap-5 overflow-x-auto">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={`-mb-px shrink-0 border-b-2 pb-3 text-sm transition ${
+                tab === t.id
+                  ? "border-brand font-bold text-ink"
+                  : "border-transparent font-semibold text-ink-3 hover:text-ink-2"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
+        <NetworkFilter
+          networks={networks}
+          networkTotals={networkTotals}
+          value={activeNetwork}
+          onChange={setSelectedNetwork}
+        />
       </div>
 
       {tab === "convictions" ? (
         <p className="py-12 text-center text-sm text-ink-3">
           Convictions you back will appear here.
-        </p>
-      ) : tab === "activity" ? (
-        <p className="py-12 text-center text-sm text-ink-3">
-          Your recent moves will appear here.
         </p>
       ) : assets.length === 0 ? (
         <p className="py-12 text-center text-sm text-ink-3">
@@ -224,9 +219,18 @@ export function AssetList({ sources }: AssetListProps) {
             const price = token?.priceUSD ?? null;
             const amount = price != null && price > 0 ? asset.usd / price : null;
             const change30d = changes[asset.productAsset] ?? null;
-            const meta = asset.multiChain
+            const multiChain = asset.networks.length > 1;
+            const meta = multiChain
               ? MULTI_NETWORK
               : { label: asset.chain, color: networkColor(asset.chain) };
+            const networkBreakdown = multiChain
+              ? asset.networks.map((network) => ({
+                  ...network,
+                  color: networkColor(network.chain),
+                  amount:
+                    price != null && price > 0 ? network.usd / price : null,
+                }))
+              : undefined;
 
             return (
               <AssetRow
@@ -240,6 +244,7 @@ export function AssetList({ sources }: AssetListProps) {
                 networkColor={meta.color}
                 change30d={change30d}
                 loading={tokensLoading}
+                networkBreakdown={networkBreakdown}
               />
             );
           })}
