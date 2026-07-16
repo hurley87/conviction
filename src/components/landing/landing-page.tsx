@@ -62,19 +62,30 @@ export function LandingPage() {
   const { login } = useAccount();
   const [openFaq, setOpenFaq] = useState(0);
 
+  // Smooth in-page jumps for the nav/footer anchors. Handled in JS rather than
+  // global `scroll-behavior` so it stays scoped to the landing.
+  const scrollTo = (id: string) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+  };
+
   return (
-    <div className="pt-page relative flex min-h-screen flex-col overflow-hidden bg-canvas">
-      {/* Warm hero blobs */}
+    <div className="pt-page relative flex min-h-screen flex-col bg-canvas">
+      {/* Warm hero blobs — clipped by their own wrapper so the scrolling root
+          never becomes an `overflow:hidden` scroll trap (breaks Safari). */}
       <div
-        className="pointer-events-none absolute -right-[120px] -top-[220px] h-[520px] w-[680px] rounded-full opacity-50 blur-[100px]"
-        style={{ background: "var(--pt-grad-dawn)" }}
+        className="pointer-events-none absolute inset-0 overflow-hidden"
         aria-hidden
-      />
-      <div
-        className="pointer-events-none absolute -bottom-[260px] -left-[160px] h-[480px] w-[620px] rounded-full opacity-[0.28] blur-[110px]"
-        style={{ background: "var(--pt-grad-dusk)" }}
-        aria-hidden
-      />
+      >
+        <div
+          className="absolute -right-[120px] -top-[220px] h-[520px] w-[680px] rounded-full opacity-50 blur-[100px]"
+          style={{ background: "var(--pt-grad-dawn)" }}
+        />
+        <div
+          className="absolute -bottom-[260px] -left-[160px] h-[480px] w-[620px] rounded-full opacity-[0.28] blur-[110px]"
+          style={{ background: "var(--pt-grad-dusk)" }}
+        />
+      </div>
 
       {/* Nav */}
       <header className="relative flex items-center justify-between px-6 py-6 sm:px-11">
@@ -82,10 +93,18 @@ export function LandingPage() {
           Conviction
         </div>
         <nav className="flex items-center gap-5 text-sm font-semibold text-ink-3 sm:gap-7">
-          <a href="#how-it-works" className="hidden hover:text-ink sm:inline">
+          <a
+            href="#how-it-works"
+            onClick={scrollTo("how-it-works")}
+            className="hidden hover:text-ink sm:inline"
+          >
             How it works
           </a>
-          <a href="#faq" className="hidden hover:text-ink sm:inline">
+          <a
+            href="#faq"
+            onClick={scrollTo("faq")}
+            className="hidden hover:text-ink sm:inline"
+          >
             FAQ
           </a>
           <button
@@ -286,10 +305,14 @@ export function LandingPage() {
             </div>
           </div>
           <nav className="flex flex-wrap gap-7 text-[13.5px] text-ink-3">
-            <a href="#how-it-works" className="hover:text-ink">
+            <a
+              href="#how-it-works"
+              onClick={scrollTo("how-it-works")}
+              className="hover:text-ink"
+            >
               How it works
             </a>
-            <a href="#faq" className="hover:text-ink">
+            <a href="#faq" onClick={scrollTo("faq")} className="hover:text-ink">
               FAQ
             </a>
             <span>Docs</span>
