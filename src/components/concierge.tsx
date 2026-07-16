@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useConciergeCore } from "@/hooks/use-concierge-core";
 import { useLiveTradeSigners } from "@/hooks/use-live-trade-signers";
+import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 import { useAccount } from "@/components/account/account-context";
 import { ConfirmCard } from "@/components/confirm-card";
 import { PostConviction } from "@/components/post-conviction";
@@ -22,11 +23,13 @@ function ConciergePanel({
   balance,
   signers,
   handle,
+  active,
 }: {
   ua: UAClient;
   balance: UniversalBalance;
   signers: TradeSigners;
   handle: string | null;
+  active: boolean;
 }) {
   const { markUpgraded } = useAccount();
   const c = useConciergeCore(ua, balance, signers, handle, markUpgraded);
@@ -39,6 +42,12 @@ function ConciergePanel({
       : undefined;
 
   const inputDisabled = c.phase === "executing" || c.phase === "quoting";
+  const composerVisible = c.phase !== "confirm" && c.phase !== "done";
+  const speech = useSpeechRecognition({
+    draft: input,
+    enabled: active && composerVisible && !inputDisabled,
+    onDraftChange: setInput,
+  });
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -49,6 +58,7 @@ function ConciergePanel({
     e.preventDefault();
     const text = input.trim();
     if (!text || inputDisabled) return;
+    speech.cancel();
     setInput("");
     void c.submitText(text);
   };
@@ -103,27 +113,85 @@ function ConciergePanel({
         )}
       </div>
 
-      {c.phase !== "confirm" && c.phase !== "done" && (
-        <form
-          onSubmit={handleSubmit}
-          className="flex gap-2 border-t border-line bg-surface-2/50 p-3"
-        >
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Move $25 to cash… or summarize the feed"
-            disabled={inputDisabled}
-            className="app-input min-w-0 flex-1 rounded-full px-4 py-2 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={inputDisabled}
-            className={`${PRIMARY_LIGHT} px-4 py-2 text-sm`}
-          >
-            Send
-          </button>
-        </form>
+      {composerVisible && (
+        <div className="border-t border-line bg-surface-2/80 px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-xl">
+          <form onSubmit={handleSubmit} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                speech.clearError();
+              }}
+              placeholder={
+                speech.listening
+                  ? "Listening…"
+                  : "Move $25 to cash… or summarize the feed"
+              }
+              disabled={inputDisabled}
+              readOnly={speech.listening}
+              aria-describedby={speech.error ? "speech-input-error" : undefined}
+              className="app-input min-w-0 flex-1 rounded-full px-4 py-2.5 text-sm"
+            />
+            {speech.supported && (
+              <button
+                type="button"
+                onClick={speech.toggle}
+                disabled={inputDisabled}
+                aria-label={
+                  speech.listening ? "Stop dictation" : "Start dictation"
+                }
+                aria-pressed={speech.listening}
+                title={
+                  speech.listening ? "Stop dictation" : "Speak to type"
+                }
+                className={`relative grid h-11 w-11 shrink-0 place-items-center rounded-full border transition disabled:pointer-events-none disabled:opacity-50 ${
+                  speech.listening
+                    ? "border-danger/30 bg-danger text-white shadow-[0_0_0_5px_rgba(181,64,47,0.12)]"
+                    : "border-line-strong bg-surface text-ink-2 shadow-sm hover:border-brand/30 hover:text-brand"
+                }`}
+              >
+                {speech.listening && (
+                  <span
+                    className="absolute inset-0 animate-ping rounded-full bg-danger/20 motion-reduce:animate-none"
+                    aria-hidden
+                  />
+                )}
+                <svg
+                  width="19"
+                  height="19"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                  className="relative"
+                >
+                  <rect x="9" y="2" width="6" height="12" rx="3" />
+                  <path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8" />
+                </svg>
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={inputDisabled || !input.trim()}
+              className={`${PRIMARY_LIGHT} px-4 py-2.5 text-sm`}
+            >
+              Send
+            </button>
+          </form>
+          {speech.error && (
+            <p
+              id="speech-input-error"
+              role="status"
+              className="px-2 pt-2 text-xs leading-relaxed text-danger"
+            >
+              {speech.error}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -134,14 +202,22 @@ export function LiveConcierge({
   ua,
   balance,
   handle,
+  active,
 }: {
   ua: UAClient;
   balance: UniversalBalance;
   handle: string | null;
+  active: boolean;
 }) {
   const signers = useLiveTradeSigners();
   return (
-    <ConciergePanel ua={ua} balance={balance} signers={signers} handle={handle} />
+    <ConciergePanel
+      ua={ua}
+      balance={balance}
+      signers={signers}
+      handle={handle}
+      active={active}
+    />
   );
 }
 
@@ -150,13 +226,22 @@ export function Concierge({
   ua,
   balance,
   handle = "demo-trader",
+  active = true,
 }: {
   ua: UAClient;
   balance: UniversalBalance;
   handle?: string | null;
+  active?: boolean;
 }) {
   if (IS_LIVE) {
-    return <LiveConcierge ua={ua} balance={balance} handle={handle} />;
+    return (
+      <LiveConcierge
+        ua={ua}
+        balance={balance}
+        handle={handle}
+        active={active}
+      />
+    );
   }
   return (
     <ConciergePanel
@@ -164,6 +249,7 @@ export function Concierge({
       balance={balance}
       signers={mockTradeSigners}
       handle={handle}
+      active={active}
     />
   );
 }
