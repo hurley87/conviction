@@ -15,7 +15,7 @@ export function BalanceHeader({
   subline,
 }: BalanceHeaderProps) {
   return (
-    <div className="relative overflow-hidden rounded-[28px] bg-surface px-10 py-9 text-center shadow-[var(--pt-shadow-md)]">
+    <div className="relative overflow-hidden rounded-hero bg-surface px-10 py-9 text-center shadow-md">
       {/* Dawn/dusk gradient blobs — the hero's warm glow. */}
       <div
         className="pointer-events-none absolute -left-20 -top-28 h-[300px] w-[360px] rounded-full opacity-55 blur-[60px]"

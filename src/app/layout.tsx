@@ -9,7 +9,6 @@ import { Providers } from "./providers";
 const newsreader = Newsreader({
   variable: "--font-newsreader",
   subsets: ["latin"],
-  style: ["normal", "italic"],
 });
 
 const manrope = Manrope({

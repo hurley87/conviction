@@ -125,7 +125,7 @@ export function SidebarNav() {
             aria-current={active ? "page" : undefined}
             className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm transition ${
               active
-                ? "bg-surface font-bold text-ink shadow-[var(--pt-shadow-sm)]"
+                ? "bg-surface font-bold text-ink shadow-sm"
                 : "font-semibold text-ink-3 hover:bg-surface-3 hover:text-ink"
             }`}
           >

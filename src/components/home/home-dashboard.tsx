@@ -38,8 +38,8 @@ export function HomeDashboard() {
   if (!account.ready) {
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-8">
-        <div className="h-40 w-full animate-pulse rounded-[28px] bg-surface-3" />
-        <div className="h-20 w-full animate-pulse rounded-[22px] bg-surface-3" />
+        <div className="h-40 w-full animate-pulse rounded-hero bg-surface-3" />
+        <div className="h-20 w-full animate-pulse rounded-card bg-surface-3" />
       </div>
     );
   }
@@ -80,7 +80,7 @@ export function HomeDashboard() {
           onClick={openBubble}
           title="Ask Conviction"
           aria-label="Ask Conviction"
-          className="grid h-[42px] w-[42px] place-items-center rounded-full bg-brand text-brand-on shadow-[var(--pt-shadow-md)] transition hover:bg-brand-hover"
+          className="grid h-[42px] w-[42px] place-items-center rounded-full bg-brand text-brand-on shadow-md transition hover:bg-brand-hover"
         >
           <svg
             width="19"

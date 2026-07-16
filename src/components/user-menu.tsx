@@ -77,7 +77,7 @@ export function UserMenu() {
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-50 mb-2 w-72 rounded-2xl border border-line bg-surface p-4 shadow-[var(--pt-shadow-lg)]">
+        <div className="absolute bottom-full left-0 z-50 mb-2 w-72 rounded-2xl border border-line bg-surface p-4 shadow-lg">
           <p className="pt-eyebrow mb-3">Your wallets</p>
           {account.deposits ? (
             <DepositAddress deposits={account.deposits} />

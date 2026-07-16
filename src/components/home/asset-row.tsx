@@ -36,7 +36,7 @@ export function AssetRow({
   const isNegative = change30d != null && change30d < 0;
 
   return (
-    <div className="mb-2.5 grid grid-cols-1 items-center gap-3 rounded-2xl bg-surface px-4 py-3.5 shadow-[var(--pt-shadow-sm)] transition hover:brightness-[0.99] md:grid-cols-[1fr_150px_140px_90px] md:gap-4">
+    <div className="mb-2.5 grid grid-cols-1 items-center gap-3 rounded-2xl bg-surface px-4 py-3.5 shadow-sm transition hover:brightness-[0.99] md:grid-cols-[1fr_150px_140px_90px] md:gap-4">
       <div className="flex items-center gap-3">
         <div className="relative h-9 w-9">
           {logoUri ? (
@@ -54,7 +54,7 @@ export function AssetRow({
             </span>
           )}
           <span
-            className="absolute -bottom-0.5 -right-0.5 h-[15px] w-[15px] rounded-[5px] border-2 border-surface"
+            className="absolute -bottom-0.5 -right-0.5 h-[15px] w-[15px] rounded-chip border-2 border-surface"
             style={{ background: networkColor }}
             aria-hidden
           />
@@ -67,7 +67,7 @@ export function AssetRow({
 
       <div className="flex items-center gap-2 text-[12.5px] font-semibold text-ink-2 max-md:hidden">
         <span
-          className="h-4 w-4 rounded-[5px]"
+          className="h-4 w-4 rounded-chip"
           style={{ background: networkColor }}
           aria-hidden
         />

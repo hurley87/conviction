@@ -5,7 +5,7 @@ import { useLiFiTokens } from "@/hooks/use-lifi-tokens";
 import { assetMatches } from "@/lib/verbs/assets";
 import type { BalanceSource, ProductAsset } from "@/lib/verbs/types";
 import { AssetRow } from "@/components/home/asset-row";
-import { MULTI_NETWORK, networkMeta } from "@/lib/networks";
+import { MULTI_NETWORK, networkColor } from "@/lib/networks";
 
 type HoldingsTab = "holdings" | "convictions" | "activity";
 
@@ -42,11 +42,18 @@ function displayName(symbol: string): string {
   return DISPLAY_NAMES[symbol.toUpperCase()] ?? symbol;
 }
 
+/** Per-symbol accumulator; the dominant chain + multiChain flag are derived once
+ * at the end from `chains` rather than seeded and overwritten. */
+type SymbolAcc = {
+  symbol: string;
+  name: string;
+  usd: number;
+  productAsset: ProductAsset;
+  chains: Map<string, number>;
+};
+
 function aggregateSources(sources: BalanceSource[]): AggregatedAsset[] {
-  const bySymbol = new Map<
-    string,
-    AggregatedAsset & { chains: Map<string, number> }
-  >();
+  const bySymbol = new Map<string, SymbolAcc>();
 
   for (const source of sources) {
     const symbol = source.asset.toUpperCase();
@@ -63,8 +70,6 @@ function aggregateSources(sources: BalanceSource[]): AggregatedAsset[] {
         name: displayName(symbol),
         usd: source.usd,
         productAsset: symbolToProductAsset(symbol),
-        chain: source.chain,
-        multiChain: false,
         chains: new Map([[source.chain, source.usd]]),
       });
     }
@@ -74,11 +79,7 @@ function aggregateSources(sources: BalanceSource[]): AggregatedAsset[] {
     .map(({ chains, ...asset }) => {
       // Dominant chain = the one holding the most USD of this symbol.
       const dominant = [...chains.entries()].sort((a, b) => b[1] - a[1])[0]!;
-      return {
-        ...asset,
-        chain: dominant[0],
-        multiChain: chains.size > 1,
-      };
+      return { ...asset, chain: dominant[0], multiChain: chains.size > 1 };
     })
     .sort((a, b) => b.usd - a.usd);
 }
@@ -138,8 +139,8 @@ export function AssetList({ sources }: AssetListProps) {
   const networkColors = useMemo(() => {
     const seen = new Map<string, string>();
     for (const asset of assets) {
-      const meta = networkMeta(asset.chain);
-      if (!seen.has(meta.label)) seen.set(meta.label, meta.color);
+      const key = asset.chain.toLowerCase();
+      if (!seen.has(key)) seen.set(key, networkColor(asset.chain));
     }
     return [...seen.values()].slice(0, 4);
   }, [assets]);
@@ -172,7 +173,7 @@ export function AssetList({ sources }: AssetListProps) {
             {networkColors.map((color, i) => (
               <span
                 key={color}
-                className="h-4 w-4 rounded-[5px] ring-2 ring-canvas"
+                className="h-4 w-4 rounded-chip ring-2 ring-canvas"
                 style={{
                   background: color,
                   marginLeft: i === 0 ? 0 : -6,
@@ -225,7 +226,7 @@ export function AssetList({ sources }: AssetListProps) {
             const change30d = changes[asset.productAsset] ?? null;
             const meta = asset.multiChain
               ? MULTI_NETWORK
-              : networkMeta(asset.chain);
+              : { label: asset.chain, color: networkColor(asset.chain) };
 
             return (
               <AssetRow

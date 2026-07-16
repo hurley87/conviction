@@ -76,10 +76,10 @@ export function QuickActions() {
                 setActive(action.id);
               }}
               disabled={action.id === "deposit" && account.isFunding}
-              className={`flex flex-col items-center gap-2 rounded-[22px] px-3 py-[18px] transition disabled:opacity-50 ${
+              className={`flex flex-col items-center gap-2 rounded-card px-3 py-[18px] transition disabled:opacity-50 ${
                 primary
-                  ? "bg-brand text-brand-on shadow-[var(--pt-shadow-md)] hover:bg-brand-hover"
-                  : "bg-brand-soft text-ink shadow-[var(--pt-shadow-sm)] hover:brightness-[0.97]"
+                  ? "bg-brand text-brand-on shadow-md hover:bg-brand-hover"
+                  : "bg-brand-soft text-ink shadow-sm hover:brightness-[0.97]"
               }`}
             >
               <span>{action.icon}</span>
@@ -96,7 +96,7 @@ export function QuickActions() {
       )}
 
       {active === "receive" && account.deposits && (
-        <div className="mt-8 rounded-[22px] border border-line bg-surface p-6 shadow-[var(--pt-shadow-sm)]">
+        <div className="mt-8 rounded-card border border-line bg-surface p-6 shadow-sm">
           <p className="mb-4 text-center text-sm font-semibold text-ink-2">
             Send assets to your wallet
           </p>
@@ -112,7 +112,7 @@ export function QuickActions() {
       )}
 
       {active === "send" && (
-        <div className="mt-8 rounded-[22px] border border-line bg-surface p-6 text-center shadow-[var(--pt-shadow-sm)]">
+        <div className="mt-8 rounded-card border border-line bg-surface p-6 text-center shadow-sm">
           <p className="text-sm text-ink-2">
             Send is coming soon. Use Trade to move funds between assets for now.
           </p>

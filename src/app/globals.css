@@ -90,6 +90,17 @@
   --font-display: var(--pt-font-display);
   --font-body: var(--pt-font-body);
   --font-mono: var(--pt-font-mono);
+
+  /* Elevation scale — warm, soft shadows own the app-wide shadow-{sm,md,lg}
+     utilities so surfaces never fall back to Tailwind's neutral-black shadows. */
+  --shadow-sm: var(--pt-shadow-sm);
+  --shadow-md: var(--pt-shadow-md);
+  --shadow-lg: var(--pt-shadow-lg);
+
+  /* Corner-radius tokens for the reused card/hero/chip geometry. */
+  --radius-card: 22px;
+  --radius-hero: 28px;
+  --radius-chip: 5px;
 }
 
 body {

@@ -1,30 +1,25 @@
-// Per-chain display metadata for the Home holdings table. Chain names appear in
-// the holdings view (a wallet-style breakdown) — the one place the design lets a
-// network badge surface. Colors match each chain's brand mark.
+// Per-chain badge color for the Home holdings table. Chain display names come
+// from BalanceSource.chain (already set via chainName in map-balance), so the
+// only new data here is the brand color, keyed by that same name. The holdings
+// view is the one place the design lets a network badge surface.
 
-type NetworkMeta = {
-  /** Human label shown next to the badge. */
-  label: string;
-  /** Badge swatch color. */
-  color: string;
+/** Muted swatch for unknown or multi-chain assets (the design system's --pt-fg-3). */
+const NEUTRAL_COLOR = "var(--pt-fg-3)";
+
+const CHAIN_COLORS: Record<string, string> = {
+  base: "#0052FF",
+  arbitrum: "#28A0F0",
+  ethereum: "#627EEA",
+  hyperliquid: "#97FCE4",
+  solana: "#14F195",
+  optimism: "#FF0420",
+  polygon: "#8247E5",
 };
 
-const NETWORKS: Record<string, NetworkMeta> = {
-  base: { label: "Base", color: "#0052FF" },
-  arbitrum: { label: "Arbitrum", color: "#28A0F0" },
-  ethereum: { label: "Ethereum", color: "#627EEA" },
-  hyperliquid: { label: "Hyperliquid", color: "#97FCE4" },
-  solana: { label: "Solana", color: "#14F195" },
-  optimism: { label: "Optimism", color: "#FF0420" },
-  polygon: { label: "Polygon", color: "#8247E5" },
-};
-
-const FALLBACK: NetworkMeta = { label: "Multiple", color: "#8C7A87" };
-
-/** Resolve a chain name (case-insensitive) to its badge label + color. */
-export function networkMeta(chain: string): NetworkMeta {
-  return NETWORKS[chain.trim().toLowerCase()] ?? { label: chain, color: "#8C7A87" };
+/** Badge swatch color for a chain display name (case-insensitive). */
+export function networkColor(chain: string): string {
+  return CHAIN_COLORS[chain.trim().toLowerCase()] ?? NEUTRAL_COLOR;
 }
 
 /** Badge for assets spread across more than one chain. */
-export const MULTI_NETWORK = FALLBACK;
+export const MULTI_NETWORK = { label: "Multiple", color: NEUTRAL_COLOR };

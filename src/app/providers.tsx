@@ -20,8 +20,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
           ethereum: { createOnLogin: "users-without-wallets" },
         },
         appearance: {
-          theme: "dark",
-          accentColor: "#6C7BFF",
+          theme: "light",
+          accentColor: "#4B2A52",
           logo: "/logo.png",
         },
       }}
