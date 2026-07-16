@@ -23,7 +23,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 const title = "Conviction — Back the reasoning, not the noise";
 const description =
-  "An EIP-7702 social trading app with a daily deck of revealed positions, an AI portfolio agent, and MCP access across ten networks.";
+  "A universal trading interface for crypto agents. Manage and trade one EIP-7702 portfolio across supported chains through Conviction MCP.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://getconviction.xyz"),

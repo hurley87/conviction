@@ -221,9 +221,9 @@ export function LandingPage() {
               className={`${styles.fadeUp} mt-8 max-w-[590px] text-lg leading-[1.7] text-ink-2 sm:text-xl`}
               style={{ animationDelay: "160ms" }}
             >
-              A daily deck of revealed positions. Read the thesis, see what
-              would make it wrong, then use an AI agent to manage and act from
-              one portfolio across supported networks.
+              Read revealed positions, then give your AI agent one interface to
+              manage and trade a portfolio across crypto—without making you
+              think in networks, routes, or gas.
             </p>
 
             <div
@@ -522,24 +522,22 @@ export function LandingPage() {
           <div className="grid items-center gap-16 lg:grid-cols-[minmax(0,0.84fr)_minmax(500px,1.16fr)]">
             <div className={`${styles.reveal} max-w-[560px]`}>
               <div className="flex flex-wrap items-center gap-3">
-                <span className="pt-eyebrow">
-                  EIP-7702 Universal Account
-                </span>
+                <span className="pt-eyebrow">A universal trading interface</span>
                 <span className={styles.availableBadge}>
                   <span aria-hidden />
-                  Available in-app
+                  MCP ready
                 </span>
               </div>
               <h2 className="mt-6 font-display text-[clamp(3rem,6vw,5.5rem)] font-medium leading-[0.95] tracking-[-0.045em] text-ink">
-                One conversation.
+                Give your agent
                 <br />
-                <span className="italic text-brand">Your whole portfolio.</span>
+                <span className="italic text-brand">the whole market.</span>
               </h2>
               <p className="mt-7 max-w-[530px] text-base leading-[1.8] text-ink-2 sm:text-lg">
-                EIP-7702 upgrades the wallet you already have into a Universal
-                Account—same address, no asset migration. Your agent sees one
-                unified balance across ten networks, so you can review, move,
-                and act on your portfolio in plain English.
+                Conviction MCP gives an AI agent one safe interface to read
+                balances, find routes, and trade across supported chains. You
+                express the goal; the agent and your EIP-7702 Universal Account
+                handle the crypto complexity underneath.
               </p>
 
               <div
@@ -572,10 +570,9 @@ export function LandingPage() {
                     ✦
                   </span>
                   <div>
-                    <strong>Available now</strong>
+                    <strong>Intent becomes execution</strong>
                     <p>
-                      Use the in-app agent to understand and act—with your
-                      confirmation.
+                      Ask in plain English. Review the result. Confirm the move.
                     </p>
                   </div>
                 </div>
@@ -584,10 +581,10 @@ export function LandingPage() {
                     ↗
                   </span>
                   <div>
-                    <strong>Connect through MCP</strong>
+                    <strong>One MCP across crypto</strong>
                     <p>
-                      Give an external agent its own capped, withdrawal-free
-                      Conviction account.
+                      Connect once instead of building a separate integration
+                      for every chain.
                     </p>
                   </div>
                 </div>
@@ -646,7 +643,7 @@ export function LandingPage() {
 
               <div className={styles.networkCloud} aria-label="Supported networks">
                 <div className={styles.networkCloudHeader}>
-                  <span>One portfolio across</span>
+                  <span>Agent trading access across</span>
                   <strong>10 networks</strong>
                 </div>
                 <div className={styles.networkGrid}>
@@ -686,7 +683,7 @@ export function LandingPage() {
                 </span>
                 <span>
                   <strong>Conviction MCP</strong>
-                  <small>Capped agent accounts · Ready to connect</small>
+                  <small>One interface · 10 networks · Ready</small>
                 </span>
                 <span className={styles.mcpArrow} aria-hidden>
                   →
