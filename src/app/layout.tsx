@@ -21,9 +21,9 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
 });
 
-const title = "Conviction — Trade across every chain";
+const title = "Conviction — Back the reasoning, not the noise";
 const description =
-  "Trade your Solana, Base, and Arbitrum assets from one balance — no bridging. Post the trades you believe in, and let anyone back them from any chain. Powered by Particle Network Universal Accounts.";
+  "A universal trading interface for crypto agents. Manage and trade one EIP-7702 portfolio across supported chains through Conviction MCP.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://getconviction.xyz"),
@@ -39,7 +39,7 @@ export const metadata: Metadata = {
         url: "/conviction-og.jpg",
         width: 1731,
         height: 909,
-        alt: "Conviction — trade & share convictions across Solana, Base, and Arbitrum",
+        alt: "Conviction — back the reasoning, not the noise",
       },
     ],
   },
