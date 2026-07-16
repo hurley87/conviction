@@ -2,7 +2,6 @@
 
 import { useSyncExternalStore } from "react";
 import { useAccount } from "@/components/account/account-context";
-import { BalanceHeader } from "@/components/home/balance-header";
 import { QuickActions } from "@/components/home/quick-actions";
 import { AssetList } from "@/components/home/asset-list";
 import { PRIMARY_LIGHT } from "@/components/button-styles";
@@ -35,9 +34,10 @@ export function HomeDashboard() {
 
   if (!account.ready) {
     return (
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
-        <div className="h-40 w-full animate-pulse rounded-hero bg-surface-3" />
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-7">
+        <div className="h-16 w-2/3 animate-pulse rounded-card bg-surface-3" />
         <div className="h-20 w-full animate-pulse rounded-card bg-surface-3" />
+        <div className="h-64 w-full animate-pulse rounded-card bg-surface-3" />
       </div>
     );
   }
@@ -77,11 +77,6 @@ export function HomeDashboard() {
           <span className="text-[0.6em] not-italic">{greeting.emoji}</span>
         </h1>
       </div>
-
-      <BalanceHeader
-        totalUsd={account.balance?.totalUsd ?? null}
-        loading={!account.balance}
-      />
 
       <QuickActions />
 

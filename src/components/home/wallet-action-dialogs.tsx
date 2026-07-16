@@ -11,6 +11,7 @@ import type { DepositAddresses } from "@/lib/verbs/types";
 
 type WalletNetwork = {
   name: ReceiveNetwork;
+  label?: string;
   address: string;
   color: string;
   mark: string;
@@ -29,6 +30,29 @@ function walletNetworks(deposits: DepositAddresses): WalletNetwork[] {
       address: deposits.evm,
       color: "#213147",
       mark: "A",
+    },
+  ];
+  if (deposits.solana) {
+    networks.push({
+      name: "Solana",
+      address: deposits.solana,
+      color: "#087f65",
+      mark: "S",
+    });
+  }
+  return networks;
+}
+
+function depositWalletNetworks(
+  deposits: DepositAddresses,
+): WalletNetwork[] {
+  const networks: WalletNetwork[] = [
+    {
+      name: "Base",
+      label: "EVM",
+      address: deposits.evm,
+      color: "#4b2a52",
+      mark: "E",
     },
   ];
   if (deposits.solana) {
@@ -74,7 +98,7 @@ function NetworkSelector({
             >
               {network.mark}
             </span>
-            {network.name}
+            {network.label ?? network.name}
           </button>
         );
       })}
@@ -146,7 +170,7 @@ function AddressBlock({
         <rect x="9" y="9" width="11" height="11" rx="2" />
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
       </svg>
-      <span className="min-w-0 flex-1 break-all font-mono text-sm">
+      <span className="min-w-0 flex-1 truncate whitespace-nowrap font-mono text-sm">
         {address}
       </span>
       <span className="shrink-0 text-xs font-bold text-white/70">
@@ -163,7 +187,7 @@ export function DepositDialogContent({
 }) {
   const { copied, copy } = useCopyFeedback();
   const networks = useMemo(
-    () => (deposits ? walletNetworks(deposits) : []),
+    () => (deposits ? depositWalletNetworks(deposits) : []),
     [deposits],
   );
   const [selected, setSelected] = useState<ReceiveNetwork>("Base");
@@ -197,8 +221,9 @@ export function DepositDialogContent({
       />
 
       <p className="rounded-[16px] border border-warning/20 bg-[#fff6df] p-3 text-xs leading-relaxed text-warning">
-        Send only USDC on {network.name} to this address. Using another asset
-        or network may permanently lose funds.
+        Send only USDC on{" "}
+        {network.label === "EVM" ? "Base or Arbitrum" : network.name} to this
+        address. Using another asset or network may permanently lose funds.
       </p>
     </div>
   );
