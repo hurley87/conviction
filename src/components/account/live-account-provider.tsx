@@ -38,6 +38,7 @@ export function LiveAccountProvider({ children }: { children: React.ReactNode })
       addMoney: account.addMoney,
       upgrade: account.upgrade,
       markUpgraded: account.markUpgraded,
+      refreshBalance: account.refreshBalance,
     }),
     [
       account.ready,
@@ -56,6 +57,7 @@ export function LiveAccountProvider({ children }: { children: React.ReactNode })
       account.addMoney,
       account.upgrade,
       account.markUpgraded,
+      account.refreshBalance,
     ],
   );
 

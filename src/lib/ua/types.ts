@@ -8,6 +8,9 @@ import type {
   TradeSigners,
   UniversalBalance,
   DepositAddresses,
+  WithdrawalQuote,
+  WithdrawalRequest,
+  WithdrawalResult,
 } from "@/lib/verbs/types";
 
 export type UpgradeResult = { upgraded: boolean; alreadyUpgraded: boolean };
@@ -25,6 +28,16 @@ export type ExecuteTradeParams = {
   receiptSlug: string;
 };
 
+export type QuoteWithdrawalParams = {
+  request: WithdrawalRequest;
+};
+
+export type ExecuteWithdrawalParams = {
+  /** Quote is the sole source of truth — transfer fields come from here. */
+  agreedQuote: WithdrawalQuote;
+  signers: TradeSigners;
+};
+
 export interface UAClient {
   /** getUniversalBalance() verb — wraps the SDK's getPrimaryAssets(). */
   getUniversalBalance(): Promise<UniversalBalance>;
@@ -36,4 +49,8 @@ export interface UAClient {
   quoteTrade(params: QuoteTradeParams): Promise<TradeQuote>;
   /** executeTrade() verb — cross-chain move via UA with floor enforcement. */
   executeTrade(params: ExecuteTradeParams): Promise<TradeResult>;
+  /** quoteWithdrawal() — external transfer quote via createTransferTransaction. */
+  quoteWithdrawal(params: QuoteWithdrawalParams): Promise<WithdrawalQuote>;
+  /** executeWithdrawal() — sign + send transfer with debit ceiling re-check. */
+  executeWithdrawal(params: ExecuteWithdrawalParams): Promise<WithdrawalResult>;
 }

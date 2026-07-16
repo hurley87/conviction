@@ -65,10 +65,16 @@ function rowToEntry(row: {
   };
 }
 
+/**
+ * Persist an activity row. Insert-once: a colliding id is ignored so retries
+ * stay idempotent and clients cannot overwrite another row by picking its id.
+ */
 export async function saveActivity(entry: ActivityEntry): Promise<boolean> {
   const sql = getSql();
   if (!sql) {
-    memoryStore.set(entry.id, entry);
+    if (!memoryStore.has(entry.id)) {
+      memoryStore.set(entry.id, entry);
+    }
     return false;
   }
   await ensureSchema(sql);
@@ -84,13 +90,7 @@ export async function saveActivity(entry: ActivityEntry): Promise<boolean> {
       ${JSON.stringify(entry.metadata)}::jsonb,
       ${entry.createdAt}
     )
-    ON CONFLICT (id) DO UPDATE SET
-      handle = EXCLUDED.handle,
-      kind = EXCLUDED.kind,
-      summary = EXCLUDED.summary,
-      amount_usd = EXCLUDED.amount_usd,
-      receipt_slug = EXCLUDED.receipt_slug,
-      metadata = EXCLUDED.metadata
+    ON CONFLICT (id) DO NOTHING
   `;
   return true;
 }

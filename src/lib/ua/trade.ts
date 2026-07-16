@@ -1,6 +1,6 @@
 // Shared trade payload builders for the UA adapter (issue #2).
 
-import type { ProductAsset, TradeIntent } from "@/lib/verbs/types";
+import type { ProductAsset, TradeIntent, TradeSigners } from "@/lib/verbs/types";
 import { DEFAULT_FLOOR_TOLERANCE, type RawTokenChanges } from "@/lib/verbs/quote";
 import { destChainId, tokenAddress } from "@/lib/verbs/chains";
 import { toUaTokenType } from "@/lib/verbs/assets";
@@ -123,4 +123,49 @@ export function userOpsNeeding7702(
     }
   }
   return pending;
+}
+
+export type SignAndSendResult = {
+  transactionId: string;
+  signed7702Auth: boolean;
+  raw: RawTransaction;
+};
+
+/**
+ * Shared Particle rootHash + optional 7702 auth → sendTransaction path used by
+ * both trades and withdrawals so the two execute verbs can't drift.
+ */
+export async function signAndSendRaw(
+  raw: RawTransaction,
+  signers: TradeSigners,
+  send: (
+    transaction: RawTransaction,
+    signature: string,
+    authorizations?: { userOpHash: string; signature: string }[],
+  ) => Promise<{ transactionId?: string }>,
+  fallbackTransactionId: string,
+): Promise<SignAndSendResult> {
+  if (!raw.rootHash) {
+    throw new Error("Transaction missing root hash");
+  }
+
+  const rootHashSig = await signers.signRootHash(raw.rootHash);
+
+  const authorizations: { userOpHash: string; signature: string }[] = [];
+  for (const pending of userOpsNeeding7702(raw.userOps)) {
+    const sig = await signers.sign7702(pending.auth);
+    authorizations.push({
+      userOpHash: pending.userOpHash,
+      signature: sig,
+    });
+  }
+
+  const result = await send(raw, rootHashSig, authorizations);
+
+  return {
+    transactionId:
+      result.transactionId ?? raw.transactionId ?? fallbackTransactionId,
+    signed7702Auth: authorizations.length > 0,
+    raw,
+  };
 }

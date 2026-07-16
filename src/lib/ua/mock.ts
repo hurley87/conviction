@@ -4,22 +4,39 @@
 
 import type {
   ExecuteTradeParams,
+  ExecuteWithdrawalParams,
   QuoteTradeParams,
+  QuoteWithdrawalParams,
   UAClient,
   UpgradeResult,
 } from "@/lib/ua/types";
 import type { RawTransaction } from "@/lib/ua/trade";
-import { ARBITRUM_CHAIN_ID, BASE_CHAIN_ID } from "@/lib/verbs/chains";
+import {
+  ARBITRUM_CHAIN_ID,
+  BASE_CHAIN_ID,
+  destChainId,
+} from "@/lib/verbs/chains";
 import { buildReceipt, inferSpentSymbol } from "@/lib/verbs/receipt";
 import { shapeQuote, isBelowFloor } from "@/lib/verbs/quote";
 import { narrateResult } from "@/lib/verbs/intent";
 import {
+  isAboveMaxDebit,
+  narrateWithdrawal,
+  requestFromQuote,
+  shapeWithdrawalQuote,
+  withdrawalTokenRef,
+} from "@/lib/verbs/withdrawal";
+import {
   FloorAbortError,
+  WithdrawalStaleQuoteError,
   type TradeQuote,
   type TradeResult,
   type TradeSigners,
   type UniversalBalance,
   type DepositAddresses,
+  type WithdrawalQuote,
+  type WithdrawalRequest,
+  type WithdrawalResult,
 } from "@/lib/verbs/types";
 import { sumSources } from "@/lib/verbs/map-balance";
 
@@ -36,6 +53,10 @@ export type MockSeed = {
   solana?: string | null;
   /** When true, executeTrade simulates a stale quote below the floor. */
   simulateStaleQuote?: boolean;
+  /** When true, executeWithdrawal simulates a debit above the agreed ceiling. */
+  simulateStaleWithdrawal?: boolean;
+  /** When true, quote/execute withdrawal omit rootHash (error path). */
+  omitWithdrawalRootHash?: boolean;
 };
 
 const DEFAULT_SOURCES: UniversalBalance["sources"] = [
@@ -51,11 +72,19 @@ export type MockTradeRecord = {
   destChain: string;
 };
 
+/** Mock records withdrawals for unit tests. */
+export type MockWithdrawalRecord = {
+  request: WithdrawalRequest;
+  estimatedDebitUsd: number;
+};
+
 export class MockUAClient implements UAClient {
   private upgraded = false;
   private lastQuote: TradeQuote | null = null;
   /** Exposed for unit tests (ADR 0014 differentiator). */
   readonly tradeRecords: MockTradeRecord[] = [];
+  /** Exposed for withdrawal unit tests. */
+  readonly withdrawalRecords: MockWithdrawalRecord[] = [];
 
   constructor(private readonly seed: MockSeed = {}) {}
 
@@ -191,6 +220,117 @@ export class MockUAClient implements UAClient {
         freshQuote.receivedSymbol,
       ),
       receipt,
+      signed7702Auth,
+    };
+  }
+
+  private mockWithdrawalTokenChanges(
+    request: WithdrawalRequest,
+    stale = false,
+  ) {
+    const amount = Number(request.amount);
+    // Stables ~1:1; ETH mock uses a fixed $2500/ETH so debit is deterministic.
+    const baseDebit =
+      request.asset === "eth" ? amount * 2500 : amount;
+    const fee = Math.max(0.01, baseDebit * 0.005);
+    const estimatedDebitUsd = stale ? baseDebit * 1.05 + fee : baseDebit + fee;
+    return {
+      totalDecrAmountInUSD: estimatedDebitUsd.toFixed(2),
+      totalIncrAmountInUSD: "0",
+      totalFeeInUSD: fee.toFixed(2),
+      decr: [{ token: { chainId: destChainId(request.destChain) } }],
+      incr: [],
+    };
+  }
+
+  private mockWithdrawalRaw(
+    request: WithdrawalRequest,
+    transactionId: string,
+    stale = false,
+  ): RawTransaction {
+    const token = withdrawalTokenRef(request.asset, request.destChain);
+    if (!token) {
+      throw new Error(
+        `Unsupported withdrawal: ${request.asset} on ${request.destChain}`,
+      );
+    }
+    return {
+      transactionId,
+      rootHash: this.seed.omitWithdrawalRootHash
+        ? undefined
+        : `0xmockwithdrawroot${transactionId}`,
+      tokenChanges: this.mockWithdrawalTokenChanges(request, stale),
+      userOps: [
+        {
+          chainId: token.chainId,
+          userOpHash: `0xmockwithdrawop${transactionId}`,
+        },
+      ],
+    };
+  }
+
+  async quoteWithdrawal(
+    params: QuoteWithdrawalParams,
+  ): Promise<WithdrawalQuote> {
+    const { request } = params;
+    const txId = `mock-withdraw-quote-${Date.now()}`;
+    const raw = this.mockWithdrawalRaw(request, txId);
+    const quote = shapeWithdrawalQuote(
+      raw.tokenChanges!,
+      request,
+      txId,
+      raw,
+    );
+    this.withdrawalRecords.push({
+      request,
+      estimatedDebitUsd: quote.estimatedDebitUsd,
+    });
+    return quote;
+  }
+
+  async executeWithdrawal(
+    params: ExecuteWithdrawalParams,
+  ): Promise<WithdrawalResult> {
+    const { agreedQuote, signers } = params;
+    const request = requestFromQuote(agreedQuote);
+    const stale = this.seed.simulateStaleWithdrawal ?? false;
+    const txId = `mock-withdraw-exec-${Date.now()}`;
+    const raw = this.mockWithdrawalRaw(request, txId, stale);
+
+    const freshQuote = shapeWithdrawalQuote(
+      raw.tokenChanges!,
+      request,
+      txId,
+      raw,
+    );
+
+    if (isAboveMaxDebit(freshQuote.estimatedDebitUsd, agreedQuote.maxDebitUsd)) {
+      throw new WithdrawalStaleQuoteError(
+        "The quote moved — please confirm again.",
+        freshQuote,
+      );
+    }
+
+    if (!raw.rootHash) {
+      throw new Error("Transaction missing root hash");
+    }
+
+    await signers.signRootHash(raw.rootHash);
+
+    const signed7702Auth = !this.upgraded;
+    if (signed7702Auth) {
+      this.upgraded = true;
+    }
+
+    return {
+      transactionId: txId,
+      summary: narrateWithdrawal(request),
+      estimatedDebitUsd: freshQuote.estimatedDebitUsd,
+      feeUsd: freshQuote.feeUsd,
+      asset: request.asset,
+      destChain: request.destChain,
+      amount: request.amount,
+      destination: request.destination,
       signed7702Auth,
     };
   }

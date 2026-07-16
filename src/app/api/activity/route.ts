@@ -3,6 +3,8 @@ import { listActivityByHandle, saveActivity, type ActivityEntry } from "@/lib/ac
 export const dynamic = "force-dynamic";
 
 type PostBody = {
+  /** Optional stable id (e.g. Particle transfer transactionId) for idempotent sends. */
+  id?: string;
   handle?: string;
   kind?: ActivityEntry["kind"];
   summary?: string;
@@ -35,7 +37,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "invalid json" }, { status: 400 });
   }
 
-  const { handle, kind, summary, amountUsd, receiptSlug, metadata } = body;
+  const { id, handle, kind, summary, amountUsd, receiptSlug, metadata } = body;
 
   if (!handle || typeof handle !== "string") {
     return Response.json({ error: "handle required" }, { status: 400 });
@@ -46,9 +48,14 @@ export async function POST(request: Request) {
   if (!summary || typeof summary !== "string") {
     return Response.json({ error: "summary required" }, { status: 400 });
   }
+  if (id != null && (typeof id !== "string" || !id.trim())) {
+    return Response.json({ error: "invalid id" }, { status: 400 });
+  }
 
   const entry: ActivityEntry = {
-    id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id:
+      id?.trim() ||
+      `act-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     handle,
     kind,
     summary,

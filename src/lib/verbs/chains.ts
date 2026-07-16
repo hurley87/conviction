@@ -40,6 +40,10 @@ const TOKEN_ADDRESSES: Record<string, Record<number, string>> = {
     [BASE_CHAIN_ID]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     [ARBITRUM_CHAIN_ID]: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
   },
+  // Particle lists USDT as a primary on Arbitrum, not Base.
+  usdt: {
+    [ARBITRUM_CHAIN_ID]: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+  },
   // Buy targets, per Particle's SUPPORTED_PRIMARY_TOKENS. ETH is native (zero
   // address) on both chains; BTC is WBTC. Wired on Base + Arbitrum so a buy can
   // settle wherever the funds already are (no bridge). Solana isn't an EVM
