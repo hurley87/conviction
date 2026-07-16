@@ -57,6 +57,22 @@
   --pt-grad-dusk: linear-gradient(180deg, #c7aedb 0%, #8e6caa 100%);
   --pt-grad-brand: linear-gradient(135deg, #5e3766 0%, #3b1d44 100%);
 
+  /* Pastel mood/data accents — used for avatars and numbered step chips. */
+  --pt-mood-anxious: #f4b26a;
+  --pt-mood-sad: #c7a8e0;
+  --pt-mood-angry: #e89a8a;
+  --pt-mood-calm: #a9d4a0;
+  --pt-mood-joyful: #f7cb6b;
+  --pt-mood-tired: #b6c9d8;
+  --pt-mood-confused: #d8c28f;
+
+  /* Radius scale mirrored from the design system for reused geometry. */
+  --pt-radius-sm: 10px;
+  --pt-radius-md: 16px;
+  --pt-radius-lg: 22px;
+  --pt-radius-xl: 28px;
+  --pt-radius-pill: 999px;
+
   --background: var(--pt-bg);
   --foreground: var(--pt-fg-1);
 }
