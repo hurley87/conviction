@@ -57,45 +57,54 @@ export function QuickActions() {
 
   return (
     <div className="w-full">
-      <div className="grid grid-cols-4 gap-3">
-        {ACTIONS.map((action) => (
-          <button
-            key={action.id}
-            type="button"
-            onClick={() => {
-              if (action.id === "trade") {
-                openBubble();
-                return;
-              }
-              if (action.id === "deposit") {
-                void account.addMoney();
-                return;
-              }
-              setActive(action.id);
-            }}
-            disabled={action.id === "deposit" && account.isFunding}
-            className="flex flex-col items-center gap-2 rounded-2xl bg-blue-50 px-5 py-4 text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
-          >
-            <span className="text-blue-600">{action.icon}</span>
-            <span className="text-sm font-semibold">{action.label}</span>
-          </button>
-        ))}
+      <div className="grid grid-cols-4 gap-3.5">
+        {ACTIONS.map((action) => {
+          const primary = action.id === "trade";
+          return (
+            <button
+              key={action.id}
+              type="button"
+              onClick={() => {
+                if (action.id === "trade") {
+                  openBubble();
+                  return;
+                }
+                if (action.id === "deposit") {
+                  void account.addMoney();
+                  return;
+                }
+                setActive(action.id);
+              }}
+              disabled={action.id === "deposit" && account.isFunding}
+              className={`flex flex-col items-center gap-2 rounded-[22px] px-3 py-[18px] transition disabled:opacity-50 ${
+                primary
+                  ? "bg-brand text-brand-on shadow-[var(--pt-shadow-md)] hover:bg-brand-hover"
+                  : "bg-brand-soft text-ink shadow-[var(--pt-shadow-sm)] hover:brightness-[0.97]"
+              }`}
+            >
+              <span>{action.icon}</span>
+              <span className="text-[13px] font-bold">{action.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {account.fundingError && (
-        <p className="mt-3 text-center text-xs text-red-500">{account.fundingError}</p>
+        <p className="mt-3 text-center text-xs text-danger">
+          {account.fundingError}
+        </p>
       )}
 
       {active === "receive" && account.deposits && (
-        <div className="mt-8 rounded-2xl border border-zinc-200 bg-white p-6">
-          <p className="mb-4 text-center text-sm font-medium text-zinc-700">
+        <div className="mt-8 rounded-[22px] border border-line bg-surface p-6 shadow-[var(--pt-shadow-sm)]">
+          <p className="mb-4 text-center text-sm font-semibold text-ink-2">
             Send assets to your wallet
           </p>
           <DepositAddress deposits={account.deposits} />
           <button
             type="button"
             onClick={() => setActive(null)}
-            className="mt-4 w-full text-sm text-zinc-500 hover:text-zinc-700"
+            className="mt-4 w-full text-sm text-ink-3 hover:text-ink"
           >
             Close
           </button>
@@ -103,8 +112,8 @@ export function QuickActions() {
       )}
 
       {active === "send" && (
-        <div className="mt-8 rounded-2xl border border-zinc-200 bg-white p-6 text-center">
-          <p className="text-sm text-zinc-600">
+        <div className="mt-8 rounded-[22px] border border-line bg-surface p-6 text-center shadow-[var(--pt-shadow-sm)]">
+          <p className="text-sm text-ink-2">
             Send is coming soon. Use Trade to move funds between assets for now.
           </p>
           <button

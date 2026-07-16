@@ -125,7 +125,7 @@ export function ConciergeBubble() {
         onClick={toggle}
         aria-expanded={open}
         aria-label={open ? "Close assistant" : "Open assistant"}
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg transition hover:scale-105 hover:bg-blue-700 active:scale-95"
+        className="flex h-12 w-12 items-center justify-center rounded-full bg-brand text-brand-on shadow-[var(--pt-shadow-md)] transition hover:scale-105 hover:bg-brand-hover active:scale-95"
       >
         {open ? (
           <svg

@@ -8,9 +8,12 @@ type AssetRowProps = {
   logoUri?: string;
   balanceUsd: number;
   amount: number | null;
-  portfolioPct: number;
-  priceUsd: number | null;
-  change24h: number | null;
+  /** Network badge label, e.g. "Base" (or "Multiple" when spread). */
+  networkLabel: string;
+  /** Network badge swatch color. */
+  networkColor: string;
+  /** 30-day price change, %. */
+  change30d: number | null;
   loading?: boolean;
 };
 
@@ -25,62 +28,79 @@ export function AssetRow({
   logoUri,
   balanceUsd,
   amount,
-  portfolioPct,
-  priceUsd,
-  change24h,
+  networkLabel,
+  networkColor,
+  change30d,
   loading,
 }: AssetRowProps) {
-  const isNegative = change24h != null && change24h < 0;
+  const isNegative = change30d != null && change30d < 0;
 
   return (
-    <div className="grid grid-cols-1 items-center gap-3 border-b border-zinc-100 px-2 py-4 transition hover:bg-zinc-50 md:grid-cols-[1fr_auto_auto_auto] md:gap-4">
+    <div className="mb-2.5 grid grid-cols-1 items-center gap-3 rounded-2xl bg-surface px-4 py-3.5 shadow-[var(--pt-shadow-sm)] transition hover:brightness-[0.99] md:grid-cols-[1fr_150px_140px_90px] md:gap-4">
       <div className="flex items-center gap-3">
-        {logoUri ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={logoUri} alt="" width={40} height={40} className="rounded-full" />
-        ) : (
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-100 text-xs font-bold uppercase text-zinc-500">
-            {symbol.slice(0, 3)}
-          </span>
-        )}
+        <div className="relative h-9 w-9">
+          {logoUri ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logoUri}
+              alt=""
+              width={36}
+              height={36}
+              className="h-9 w-9 rounded-full"
+            />
+          ) : (
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-soft text-xs font-extrabold uppercase text-ink">
+              {symbol.slice(0, 1)}
+            </span>
+          )}
+          <span
+            className="absolute -bottom-0.5 -right-0.5 h-[15px] w-[15px] rounded-[5px] border-2 border-surface"
+            style={{ background: networkColor }}
+            aria-hidden
+          />
+        </div>
         <div>
-          <p className="font-semibold text-zinc-900">{name}</p>
-          <p className="text-sm text-zinc-400">{symbol}</p>
+          <p className="text-sm font-bold text-ink">{name}</p>
+          <p className="text-xs text-ink-4">{symbol}</p>
         </div>
       </div>
 
-      <div className="md:w-28 md:text-right">
-        <p className="font-semibold tabular-nums text-zinc-900">{formatUsd(balanceUsd)}</p>
+      <div className="flex items-center gap-2 text-[12.5px] font-semibold text-ink-2 max-md:hidden">
+        <span
+          className="h-4 w-4 rounded-[5px]"
+          style={{ background: networkColor }}
+          aria-hidden
+        />
+        {networkLabel}
+      </div>
+
+      <div className="md:text-right">
+        <p className="text-sm font-bold tabular-nums text-ink">
+          {formatUsd(balanceUsd)}
+        </p>
         {amount != null && (
-          <p className="text-sm tabular-nums text-zinc-400">
+          <p className="text-xs tabular-nums text-ink-4">
             {formatAmount(amount, symbol)}
           </p>
         )}
       </div>
 
-      <div className="hidden text-right text-sm tabular-nums text-zinc-600 md:block md:w-20">
-        {portfolioPct.toFixed(1)}%
-      </div>
-
-      <div className="md:w-24 md:text-right">
+      <div className="md:text-right">
         {loading ? (
-          <p className="text-sm text-zinc-300">…</p>
-        ) : priceUsd != null ? (
-          <>
-            <p className="text-sm tabular-nums text-zinc-900">{formatUsd(priceUsd)}</p>
-            {change24h != null && (
-              <p
-                className={`text-xs tabular-nums ${
-                  isNegative ? "text-red-500" : "text-emerald-600"
-                }`}
-              >
-                {isNegative ? "" : "+"}
-                {change24h.toFixed(2)}%
-              </p>
-            )}
-          </>
+          <p className="text-sm text-ink-4">…</p>
+        ) : change30d != null ? (
+          <p
+            className={`text-[13px] font-bold tabular-nums ${
+              isNegative ? "text-danger" : "text-success"
+            }`}
+          >
+            {isNegative ? "−" : "+"}
+            {Math.abs(change30d).toFixed(1)}%
+          </p>
         ) : (
-          <p className="text-sm text-zinc-400">—</p>
+          <p className="text-[13px] font-semibold tabular-nums text-ink-4">
+            0.0%
+          </p>
         )}
       </div>
     </div>

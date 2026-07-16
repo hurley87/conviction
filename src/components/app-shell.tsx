@@ -12,25 +12,25 @@ import { UpgradeBeatHost } from "@/components/upgrade-beat-host";
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <ConciergeBubbleProvider>
-      <div className="flex min-h-screen bg-white text-zinc-900">
-        <aside className="fixed inset-y-0 left-0 z-30 flex w-56 flex-col bg-white">
-          <div className="flex items-center gap-2.5 px-3 pb-4 pt-6">
+      <div className="flex min-h-screen bg-canvas text-ink">
+        <aside className="fixed inset-y-0 left-0 z-30 flex w-56 flex-col border-r border-line bg-canvas">
+          <div className="flex items-center gap-2.5 px-4 pb-5 pt-6">
             <Image
               src="/logo.png"
               alt="Conviction"
-              width={32}
-              height={32}
+              width={30}
+              height={30}
               className="rounded-lg"
               priority
             />
-            <span className="text-xl font-bold tracking-tight text-zinc-900">
+            <span className="font-display text-xl font-semibold tracking-tight text-ink">
               Conviction
             </span>
           </div>
           <div className="flex-1 overflow-y-auto px-3">
             <SidebarNav />
           </div>
-          <div className="border-t border-zinc-200 p-3">
+          <div className="p-3">
             <UserMenu />
           </div>
         </aside>
