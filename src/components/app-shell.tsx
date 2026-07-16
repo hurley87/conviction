@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { SidebarNav } from "@/components/sidebar-nav";
+import { SidebarWallet } from "@/components/sidebar-wallet";
 import { UserMenu } from "@/components/user-menu";
 import {
   ConciergeBubble,
@@ -73,22 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <SidebarNav mode="desktop" />
           </div>
 
-          <div className="mx-1 mb-3 rounded-[20px] border border-line bg-surface/60 p-4 shadow-sm">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-success shadow-[0_0_0_4px_rgba(79,138,90,0.1)]" />
-              <p className="text-[10px] font-extrabold uppercase tracking-[0.13em] text-ink-3">
-                Daily ritual
-              </p>
-            </div>
-            <p className="mt-3 font-display text-[21px] font-semibold leading-tight text-ink">
-              Read slowly.
-              <br />
-              Back deliberately.
-            </p>
-            <p className="mt-2 text-xs leading-relaxed text-ink-3">
-              Skip left · save up · back right
-            </p>
-          </div>
+          <SidebarWallet />
 
           <div>
             <UserMenu />
@@ -108,7 +94,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <UserMenu compact />
           </header>
 
-          <div className="hidden items-center justify-between px-10 pb-2 pt-7 lg:flex xl:px-14">
+          <div className="hidden items-center px-10 pb-2 pt-7 lg:flex xl:px-14">
             <div>
               <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-ink-4">
                 {routeMeta.eyebrow}
@@ -116,10 +102,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <p className="mt-1 font-display text-[17px] font-semibold text-ink-2">
                 {routeMeta.title}
               </p>
-            </div>
-            <div className="flex items-center gap-2 rounded-full border border-line bg-surface/65 px-3 py-2 text-xs font-bold text-ink-3 shadow-sm backdrop-blur-md">
-              <span className="h-2 w-2 rounded-full bg-success" />
-              Universal account online
             </div>
           </div>
 

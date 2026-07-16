@@ -1,19 +1,39 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useAccount } from "@/components/account/account-context";
-import { DepositAddress } from "@/components/deposit-address";
-import { PRIMARY_LIGHT, GHOST_LIGHT } from "@/components/button-styles";
+import { PRIMARY_LIGHT } from "@/components/button-styles";
 import { useClickOutside } from "@/hooks/use-click-outside";
 
 export function UserMenu({ compact = false }: { compact?: boolean }) {
   const account = useAccount();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const firstItemRef = useRef<HTMLAnchorElement>(null);
 
   const close = useCallback(() => setOpen(false), []);
   useClickOutside(menuRef, close, open);
+
+  useEffect(() => {
+    if (!open) return;
+    const focusFrame = window.requestAnimationFrame(() =>
+      firstItemRef.current?.focus(),
+    );
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   if (!account.ready) {
     return (
@@ -26,36 +46,44 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
 
   if (!account.authenticated) {
     return (
-      <button type="button" onClick={() => account.login()} className={`${PRIMARY_LIGHT} w-full py-2 text-sm`}>
+      <button
+        type="button"
+        onClick={() => account.login()}
+        className={`${PRIMARY_LIGHT} w-full py-2 text-sm`}
+      >
         Sign in with Twitter
       </button>
     );
   }
 
-  const handleLabel = account.handle ? `@${account.handle}` : "Account";
+  const handleLabel = account.handle ?? "Account";
 
   return (
     <div ref={menuRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-2.5 rounded-[18px] border border-transparent text-left transition hover:border-line hover:bg-surface/70 hover:shadow-sm ${
-          compact ? "p-1.5" : "w-full px-2.5 py-2.5"
+        className={`flex items-center rounded-[18px] border border-transparent text-left transition hover:border-line hover:bg-surface/70 hover:shadow-sm ${
+          compact ? "gap-2.5 p-1.5" : "w-full gap-3 px-2 py-2.5"
         }`}
         aria-expanded={open}
+        aria-haspopup="menu"
       >
         {account.pfp ? (
           <Image
             src={account.pfp}
             alt=""
-            width={30}
-            height={30}
-            className="rounded-full"
+            width={compact ? 30 : 42}
+            height={compact ? 30 : 42}
+            className="shrink-0 rounded-full"
             unoptimized
           />
         ) : (
           <span
-            className="flex h-[30px] w-[30px] items-center justify-center rounded-full text-xs font-extrabold text-ink"
+            className={`flex shrink-0 items-center justify-center rounded-full font-extrabold text-ink ${
+              compact ? "h-[30px] w-[30px] text-xs" : "h-[42px] w-[42px] text-sm"
+            }`}
             style={{ background: "var(--pt-grad-dawn)" }}
           >
             {account.handle?.slice(0, 1).toUpperCase() ?? "?"}
@@ -63,8 +91,19 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
         )}
         {!compact && (
           <>
-            <span className="min-w-0 flex-1 truncate text-sm font-bold text-ink">
-              {handleLabel}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-extrabold text-ink">
+                {handleLabel}
+              </span>
+              <span
+                className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                  account.upgraded
+                    ? "bg-[#e5f1df] text-success"
+                    : "bg-surface-3 text-ink-3"
+                }`}
+              >
+                {account.upgraded ? "Wallet ready" : "Setup pending"}
+              </span>
             </span>
             <svg
               width="14"
@@ -73,7 +112,9 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
-              className={`shrink-0 text-ink-4 transition ${open ? "rotate-180" : ""}`}
+              className={`shrink-0 -rotate-90 text-ink-3 transition ${
+                open ? "-translate-y-0.5" : ""
+              }`}
               aria-hidden
             >
               <path d="m6 9 6 6 6-6" />
@@ -84,28 +125,38 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
 
       {open && (
         <div
-          className={`absolute z-50 w-72 rounded-[22px] border border-line bg-surface/95 p-4 shadow-lg backdrop-blur-xl ${
+          role="menu"
+          aria-label="Account menu"
+          className={`absolute z-50 w-60 rounded-[20px] border border-line bg-surface/95 p-2 shadow-lg backdrop-blur-xl ${
             compact ? "right-0 top-full mt-2" : "bottom-full left-0 mb-2"
           }`}
         >
-          <p className="pt-eyebrow mb-3">Your wallets</p>
-          {account.deposits ? (
-            <DepositAddress deposits={account.deposits} />
-          ) : (
-            <p className="text-sm text-ink-3">Loading wallets…</p>
-          )}
-          <div className="mt-4 border-t border-line pt-3">
-            <button
-              type="button"
-              onClick={() => {
-                account.logout();
-                setOpen(false);
-              }}
-              className={`${GHOST_LIGHT} w-full py-2 text-sm`}
-            >
-              Sign out
-            </button>
-          </div>
+          <Link
+            ref={firstItemRef}
+            href="/settings"
+            role="menuitem"
+            onClick={close}
+            className="flex items-center gap-3 rounded-[14px] px-3 py-3 text-sm font-bold text-ink transition hover:bg-surface-2 focus:bg-surface-2"
+          >
+            <span aria-hidden className="text-lg">
+              ⚙
+            </span>
+            Settings
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              account.logout();
+              setOpen(false);
+            }}
+            className="flex w-full items-center gap-3 rounded-[14px] px-3 py-3 text-left text-sm font-bold text-danger transition hover:bg-[#fff0ed] focus:bg-[#fff0ed]"
+          >
+            <span aria-hidden className="text-xl leading-none">
+              ↪
+            </span>
+            Sign Out
+          </button>
         </div>
       )}
     </div>
