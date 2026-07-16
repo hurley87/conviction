@@ -33,8 +33,9 @@ export default async function DiscoverPage({ searchParams }: DiscoverPageProps) 
         </h1>
         <p className="mt-6 max-w-2xl text-base leading-relaxed text-ink-3">
           No one can research every token across every chain. Discover brings
-          Conviction&apos;s curated drops into one place, with the reasoning
-          and risks you need to decide what to save, skip, or back.
+          you a curated set through other people&apos;s revealed positions, so
+          you can read what they believe, why they backed it, and the risks
+          before deciding what to save, skip, or back.
         </p>
       </div>
       <div className="mt-10">

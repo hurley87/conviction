@@ -91,9 +91,9 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
           </h1>
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-ink-3 sm:pb-2">
-          It&apos;s impossible to research every token across every chain. We
-          narrow crypto to a small daily stack: skip what you don&apos;t
-          believe, save what you&apos;re watching, or back it at your own size.
+          Read other people&apos;s revealed positions from across crypto—their
+          thesis, timing, and risk. Skip what you don&apos;t believe, save what
+          you&apos;re watching, or back it at your own size.
         </p>
       </div>
 
