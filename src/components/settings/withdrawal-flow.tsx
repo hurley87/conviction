@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useWithdrawalFlow } from "@/hooks/use-withdrawal-flow";
 import { PRIMARY_LIGHT, GHOST_LIGHT } from "@/components/button-styles";
 import { formatUsd, truncateAddress } from "@/lib/format";
@@ -26,6 +27,8 @@ type WithdrawalFlowProps = {
   onSuccess?: () => Promise<void> | void;
   onUpgraded?: () => void;
   onClose: () => void;
+  embedded?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 };
 
 export function WithdrawalFlow({
@@ -37,6 +40,8 @@ export function WithdrawalFlow({
   onSuccess,
   onUpgraded,
   onClose,
+  embedded = false,
+  onBusyChange,
 }: WithdrawalFlowProps) {
   const { flow, setDraft, requestQuote, confirmSend, backToEdit, reset } =
     useWithdrawalFlow({
@@ -49,6 +54,11 @@ export function WithdrawalFlow({
       onUpgraded,
     });
 
+  useEffect(() => {
+    onBusyChange?.(flow.status === "executing");
+    return () => onBusyChange?.(false);
+  }, [flow.status, onBusyChange]);
+
   const handleClose = () => {
     reset();
     onClose();
@@ -56,7 +66,13 @@ export function WithdrawalFlow({
 
   if (flow.status === "success") {
     return (
-      <div className="mt-4 rounded-[22px] border border-line bg-surface-2/60 p-5">
+      <div
+        className={
+          embedded
+            ? ""
+            : "mt-4 rounded-[22px] border border-line bg-surface-2/60 p-5"
+        }
+      >
         <p className="pt-eyebrow">Sent</p>
         <p className="mt-3 text-sm text-ink">{flow.result.summary}</p>
         <dl className="mt-4 space-y-2 rounded-[16px] bg-surface p-4 text-sm">
@@ -106,8 +122,14 @@ export function WithdrawalFlow({
     const requoteNotice =
       flow.status === "confirm" ? flow.requoteNotice : null;
     return (
-      <div className="mt-4 rounded-[22px] border border-line bg-surface-2/60 p-5">
-        <p className="pt-eyebrow">Confirm withdrawal</p>
+      <div
+        className={
+          embedded
+            ? ""
+            : "mt-4 rounded-[22px] border border-line bg-surface-2/60 p-5"
+        }
+      >
+        <p className="pt-eyebrow">Confirm send</p>
         {requoteNotice && (
           <p className="mt-3 rounded-[14px] border border-warning/25 bg-[#fff6df] p-3 text-xs text-warning">
             {requoteNotice}
@@ -178,7 +200,13 @@ export function WithdrawalFlow({
 
   if (flow.status === "error") {
     return (
-      <div className="mt-4 rounded-[22px] border border-danger/20 bg-surface p-5">
+      <div
+        className={
+          embedded
+            ? "rounded-[18px] border border-danger/20 bg-surface-2 p-4"
+            : "mt-4 rounded-[22px] border border-danger/20 bg-surface p-5"
+        }
+      >
         <p className="text-sm text-danger">{flow.message}</p>
         <div className="mt-4 flex gap-2">
           <button
@@ -206,16 +234,24 @@ export function WithdrawalFlow({
   const chains = supportedWithdrawalChains(draft.asset);
 
   return (
-    <div className="mt-4 rounded-[22px] border border-line bg-surface-2/60 p-5">
+    <div
+      className={
+        embedded
+          ? ""
+          : "mt-4 rounded-[22px] border border-line bg-surface-2/60 p-5"
+      }
+    >
       <div className="flex items-center justify-between gap-3">
-        <p className="pt-eyebrow">Withdraw to external wallet</p>
-        <button
-          type="button"
-          onClick={handleClose}
-          className="text-sm font-bold text-ink-3 hover:text-ink"
-        >
-          Close
-        </button>
+        <p className="pt-eyebrow">Send to external wallet</p>
+        {!embedded && (
+          <button
+            type="button"
+            onClick={handleClose}
+            className="text-sm font-bold text-ink-3 hover:text-ink"
+          >
+            Close
+          </button>
+        )}
       </div>
 
       <form
@@ -261,7 +297,7 @@ export function WithdrawalFlow({
           </select>
           {draft.asset === "usdt" && (
             <span className="mt-1 block text-xs text-ink-4">
-              USDT withdrawals are available on Arbitrum only.
+              USDT sends are available on Arbitrum only.
             </span>
           )}
         </label>

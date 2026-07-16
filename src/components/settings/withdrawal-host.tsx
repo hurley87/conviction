@@ -11,14 +11,20 @@ import type { TradeSigners } from "@/lib/verbs/types";
 
 type WithdrawalHostProps = {
   onClose: () => void;
+  embedded?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 };
 
 function WithdrawalBoard({
   signers,
   onClose,
+  embedded,
+  onBusyChange,
 }: {
   signers: TradeSigners;
   onClose: () => void;
+  embedded?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const account = useAccount();
 
@@ -32,18 +38,48 @@ function WithdrawalBoard({
       onSuccess={account.refreshBalance}
       onUpgraded={account.markUpgraded}
       onClose={onClose}
+      embedded={embedded}
+      onBusyChange={onBusyChange}
     />
   );
 }
 
-function LiveWithdrawalHost({ onClose }: WithdrawalHostProps) {
+function LiveWithdrawalHost({
+  onClose,
+  embedded,
+  onBusyChange,
+}: WithdrawalHostProps) {
   const signers = useLiveTradeSigners();
-  return <WithdrawalBoard signers={signers} onClose={onClose} />;
+  return (
+    <WithdrawalBoard
+      signers={signers}
+      onClose={onClose}
+      embedded={embedded}
+      onBusyChange={onBusyChange}
+    />
+  );
 }
 
-export function WithdrawalHost({ onClose }: WithdrawalHostProps) {
+export function WithdrawalHost({
+  onClose,
+  embedded,
+  onBusyChange,
+}: WithdrawalHostProps) {
   if (IS_LIVE) {
-    return <LiveWithdrawalHost onClose={onClose} />;
+    return (
+      <LiveWithdrawalHost
+        onClose={onClose}
+        embedded={embedded}
+        onBusyChange={onBusyChange}
+      />
+    );
   }
-  return <WithdrawalBoard signers={mockTradeSigners} onClose={onClose} />;
+  return (
+    <WithdrawalBoard
+      signers={mockTradeSigners}
+      onClose={onClose}
+      embedded={embedded}
+      onBusyChange={onBusyChange}
+    />
+  );
 }

@@ -227,7 +227,7 @@ export function useWithdrawalFlow({
         message:
           err instanceof Error
             ? err.message
-            : "Withdrawal failed. Please try again.",
+            : "Send failed. Please try again.",
       });
     } finally {
       executingRef.current = false;

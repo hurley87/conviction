@@ -12,6 +12,7 @@ import type {
 import {
   assetMatches,
   isBuyOnlyAsset,
+  isTradeFundingAsset,
   productAssetPrimarySymbol,
   toUaTokenType,
 } from "@/lib/verbs/assets";
@@ -279,10 +280,10 @@ export function validateIntent(
         error: `${intent.token.symbol} lives on a chain we can't settle on yet.`,
       };
     }
-    if (intent.fromAsset) {
+    if (intent.fromAsset && !isTradeFundingAsset(intent.fromAsset)) {
       return {
         ok: false,
-        error: `Buy ${intent.token.symbol} with cash instead — converting another asset into it isn't supported yet.`,
+        error: `${intent.fromAsset.toUpperCase()} can't fund this trade yet. Choose Any balance or a supported primary asset.`,
       };
     }
   } else {
