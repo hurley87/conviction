@@ -110,7 +110,7 @@ export function SettingsView() {
                 disabled={!account.ua}
                 className={`${GHOST_LIGHT} w-full py-2.5 text-sm disabled:opacity-50`}
               >
-                Withdraw to another wallet
+                Send to another wallet
               </button>
             ) : (
               <WithdrawalHost onClose={() => setWithdrawOpen(false)} />

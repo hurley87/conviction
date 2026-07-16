@@ -10,6 +10,8 @@ type AssetInfo = {
   uaTokenType: string;
   /** Balance symbols (uppercase) that satisfy this product. */
   matchSymbols: string[];
+  /** May be selected as createBuyTransaction's usePrimaryTokens source. */
+  tradeFunding?: true;
   /** Not a UA primary token: valid as a buy target (createBuyTransaction takes
    * its address directly) but can't fund a trade or be a convert destination. */
   buyOnly?: true;
@@ -17,11 +19,23 @@ type AssetInfo = {
 
 const ASSETS: Record<ProductAsset, AssetInfo> = {
   cash: { uaTokenType: "usdc", matchSymbols: ["USDC", "USDT"] },
-  usdc: { uaTokenType: "usdc", matchSymbols: ["USDC"] },
-  usdt: { uaTokenType: "usdt", matchSymbols: ["USDT"] },
-  eth: { uaTokenType: "eth", matchSymbols: ["ETH", "WETH"] },
+  usdc: {
+    uaTokenType: "usdc",
+    matchSymbols: ["USDC"],
+    tradeFunding: true,
+  },
+  usdt: {
+    uaTokenType: "usdt",
+    matchSymbols: ["USDT"],
+    tradeFunding: true,
+  },
+  eth: {
+    uaTokenType: "eth",
+    matchSymbols: ["ETH", "WETH"],
+    tradeFunding: true,
+  },
   btc: { uaTokenType: "btc", matchSymbols: ["BTC", "WBTC"] },
-  sol: { uaTokenType: "sol", matchSymbols: ["SOL"] },
+  sol: { uaTokenType: "sol", matchSymbols: ["SOL"], tradeFunding: true },
   arb: { uaTokenType: "arb", matchSymbols: ["ARB"], buyOnly: true },
   // Sentinel for a concrete TokenRef on the intent; never buyable through this
   // table (buildBuyPayload uses the ref's address directly).
@@ -44,6 +58,11 @@ export function toUaTokenType(asset: ProductAsset): string {
 /** True when an asset can only be bought, never sold or converted into. */
 export function isBuyOnlyAsset(asset: ProductAsset): boolean {
   return ASSETS[asset]?.buyOnly === true;
+}
+
+/** Assets accepted by Particle v2's usePrimaryTokens source selector. */
+export function isTradeFundingAsset(asset: ProductAsset): boolean {
+  return ASSETS[asset]?.tradeFunding === true;
 }
 
 /** True when a balance symbol satisfies the requested product asset. */

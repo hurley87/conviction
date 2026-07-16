@@ -53,6 +53,21 @@ describe("isSellIntent", () => {
       isSellIntent({ toAsset: "eth", fromAsset: "cash", destChain: "Arbitrum" }),
     ).toBe(false);
   });
+
+  it("is false for a concrete-token buy with a selected primary source", () => {
+    expect(
+      isSellIntent({
+        toAsset: "token",
+        fromAsset: "eth",
+        token: {
+          chainId: BASE_CHAIN_ID,
+          address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+          symbol: "SURPLUS",
+        },
+        destChain: "Base",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("buildConvertPayload", () => {

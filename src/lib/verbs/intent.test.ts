@@ -241,6 +241,63 @@ describe("validateIntent", () => {
     if (!result.ok) expect(result.error).toContain("with cash instead");
   });
 
+  it("rejects a concrete token buy funded by an unsupported source", () => {
+    const result = validateIntent(
+      {
+        fromAsset: "btc",
+        toAsset: "token",
+        token: {
+          chainId: 8453,
+          address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+          symbol: "SURPLUS",
+        },
+        sizeUsd: 5,
+        destChain: "Base",
+      },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("can't fund");
+  });
+
+  it("rejects a concrete token buy when the selected primary source is empty", () => {
+    const result = validateIntent(
+      {
+        fromAsset: "sol",
+        toAsset: "token",
+        token: {
+          chainId: 8453,
+          address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+          symbol: "SURPLUS",
+        },
+        sizeUsd: 5,
+        destChain: "Base",
+      },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("don't hold");
+  });
+
+  it("rejects a concrete token amount above the selected source balance", () => {
+    const result = validateIntent(
+      {
+        fromAsset: "eth",
+        toAsset: "token",
+        token: {
+          chainId: 8453,
+          address: "0xC52aeDec3374422d7510E294cfAa90799595CBa3",
+          symbol: "SURPLUS",
+        },
+        sizeUsd: 100,
+        destChain: "Base",
+      },
+      balance,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("$62.50");
+  });
+
   it("rejects buying SOL — no address on the EVM settlement chain", () => {
     const result = validateIntent(
       { toAsset: "sol", sizeUsd: 25, destChain: "Arbitrum" },
@@ -274,7 +331,7 @@ describe("validateIntent", () => {
     if (!result.ok) expect(result.error).toContain("can't settle on yet");
   });
 
-  it("rejects converting another asset into a concrete token", () => {
+  it("allows buying a concrete token with a selected primary asset", () => {
     const result = validateIntent(
       {
         fromAsset: "eth",
@@ -285,8 +342,7 @@ describe("validateIntent", () => {
       },
       balance,
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("with cash instead");
+    expect(result.ok).toBe(true);
   });
 
   it("rejects the token sentinel without a TokenRef attached", () => {

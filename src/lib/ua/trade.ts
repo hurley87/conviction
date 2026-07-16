@@ -38,7 +38,11 @@ export function buildBuyPayload(intent: TradeIntent, sizeUsd: number) {
  * The SDK rejects offloading a primary token via createBuyTransaction — these
  * must go through createConvertTransaction ("the Convert function"). */
 export function isSellIntent(intent: TradeIntent): boolean {
-  return intent.fromAsset != null && intent.fromAsset !== "cash";
+  return (
+    !intent.token &&
+    intent.fromAsset != null &&
+    intent.fromAsset !== "cash"
+  );
 }
 
 /** Convert payload for createConvertTransaction — used to sell a primary token
