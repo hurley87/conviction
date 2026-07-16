@@ -52,18 +52,3 @@ export function backSwipeDestination(
 ): "sizing" | "addMoney" {
   return balance != null && balance.totalUsd > 0 ? "sizing" : "addMoney";
 }
-
-/**
- * Pending-intent resume: while on add-money, return sizing for the same card
- * once funds arrive; otherwise stay put (null).
- */
-export function resumeSizingAfterFunds(
-  flowStatus: "addMoney" | string,
-  entry: ConvictionEntry,
-  balance: UniversalBalance | null | undefined,
-  fraction: number,
-): { status: "sizing"; entry: ConvictionEntry; fraction: number } | null {
-  if (flowStatus !== "addMoney") return null;
-  if (backSwipeDestination(balance) !== "sizing") return null;
-  return { status: "sizing", entry, fraction };
-}

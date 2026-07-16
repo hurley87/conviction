@@ -13,6 +13,7 @@ import { ReceiptView } from "@/components/receipt-view";
 import { PRIMARY_LIGHT } from "@/components/button-styles";
 import { useDeckBackFlow } from "@/hooks/use-deck-back-flow";
 import { IS_LIVE } from "@/lib/env";
+import { backSwipeDestination } from "@/lib/verbs/deck";
 import type { ConvictionEntry, TradeSigners } from "@/lib/verbs/types";
 
 type DeckHomeProps = {
@@ -101,7 +102,9 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
             )}
 
             {(flow.status === "sizing" || flow.status === "quoting") &&
-              sizingFraction != null && (
+              sizingFraction != null &&
+              account.balance != null &&
+              backSwipeDestination(account.balance) === "sizing" && (
                 <SizingSheet
                   balance={account.balance}
                   selectedFraction={sizingFraction}

@@ -13,17 +13,14 @@ import {
   quoteCopyConviction,
   type QuotedCopy,
 } from "@/lib/verbs/copy";
-import {
-  backSwipeDestination,
-  resumeSizingAfterFunds,
-  sizeUsdForFraction,
-} from "@/lib/verbs/deck";
+import { backSwipeDestination, sizeUsdForFraction } from "@/lib/verbs/deck";
 import { remainingDeckCards } from "@/lib/verbs/swipe-state";
 import { persistCopyResult } from "@/lib/persist-copy-result";
 import type {
   ConvictionEntry,
   Receipt,
   TradeSigners,
+  UniversalBalance,
 } from "@/lib/verbs/types";
 
 export type DeckFlow =
@@ -38,6 +35,20 @@ export type DeckFlow =
     }
   | { status: "receipt"; receipt: Receipt }
   | { status: "error"; message: string };
+
+type BackSwipeFlow =
+  | { status: "addMoney"; entry: ConvictionEntry }
+  | { status: "sizing"; entry: ConvictionEntry; fraction: number };
+
+/** Next overlay after a back gesture (or when balance catches up to intent). */
+function flowAfterBackSwipe(
+  entry: ConvictionEntry,
+  balance: UniversalBalance | null | undefined,
+): BackSwipeFlow {
+  return backSwipeDestination(balance) === "addMoney"
+    ? { status: "addMoney", entry }
+    : { status: "sizing", entry, fraction: DEFAULT_COPY_FRACTION };
+}
 
 export function useDeckBackFlow(
   signers: TradeSigners,
@@ -75,30 +86,25 @@ export function useDeckBackFlow(
         account.login();
         return;
       }
-      if (backSwipeDestination(account.balance) === "addMoney") {
-        setFlow({ status: "addMoney", entry });
-        return;
-      }
-      setFlow({
-        status: "sizing",
-        entry,
-        fraction: DEFAULT_COPY_FRACTION,
-      });
+      setFlow(flowAfterBackSwipe(entry, account.balance));
     },
     [account, flow.status],
   );
 
-  // After funds arrive (onramp refresh or deposit), resume sizing for the
-  // remembered card — never leave the user stuck on add-money with a balance.
+  // Keep add-money ↔ sizing in sync with unified balance so the overlay never
+  // blanks (onramp refresh, deposit, or mid-flow balance dip).
   useEffect(() => {
-    if (flow.status !== "addMoney") return;
-    const next = resumeSizingAfterFunds(
-      flow.status,
-      flow.entry,
-      account.balance,
-      DEFAULT_COPY_FRACTION,
-    );
-    if (next) setFlow(next);
+    if (flow.status === "addMoney") {
+      if (backSwipeDestination(account.balance) === "sizing") {
+        setFlow(flowAfterBackSwipe(flow.entry, account.balance));
+      }
+      return;
+    }
+    if (flow.status === "sizing" || flow.status === "quoting") {
+      if (backSwipeDestination(account.balance) === "addMoney") {
+        setFlow(flowAfterBackSwipe(flow.entry, account.balance));
+      }
+    }
   }, [account.balance, flow]);
 
   const setFraction = useCallback((fraction: number) => {

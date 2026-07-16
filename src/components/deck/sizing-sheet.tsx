@@ -1,8 +1,8 @@
 "use client";
 
 // Sizing sheet for a right-swipe back — preset fractions of unified balance,
-// dollars only, no chain vocabulary (ADR 0003 / 0016). Zero balance never
-// reaches this sheet (issue #26 routes to AddMoneySheet instead).
+// dollars only, no chain vocabulary (ADR 0003 / 0016). Caller must only mount
+// with a funded balance (issue #26 routes zero to AddMoneySheet).
 
 import { PRIMARY_LIGHT, GHOST_LIGHT } from "@/components/button-styles";
 import { formatUsd } from "@/lib/format";
@@ -22,17 +22,14 @@ export function SizingSheet({
   onCancel,
   quoting,
 }: {
-  balance: UniversalBalance | null;
+  balance: UniversalBalance;
   selectedFraction: number;
   onSelectFraction: (fraction: number) => void;
   onContinue: () => void;
   onCancel: () => void;
   quoting?: boolean;
 }) {
-  const totalUsd = balance?.totalUsd ?? 0;
-  // Hard guard: never render $0 preset rows if balance is missing/empty.
-  if (!balance || totalUsd <= 0) return null;
-
+  const totalUsd = balance.totalUsd;
   const dollars = sizeUsdForFraction(balance, selectedFraction);
 
   return (
