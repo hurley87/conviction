@@ -2,9 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
+import { ConvictionApiError } from "./api-client.js";
 import type { LocalWallet } from "./keystore.js";
 import type { LeaseHandle } from "./lease.js";
-import { fetchAgentStatus } from "./live-api-client.js";
+import {
+  fetchAgentStatus,
+  requestTradeQuote,
+  type QuoteApiErrorDetails,
+} from "./live-api-client.js";
 import type { AgentProfile } from "./profile.js";
 import { toolResult } from "./tool-result.js";
 
@@ -101,7 +106,8 @@ export type CreateLiveServerOptions = {
 
 /**
  * Live MCP server bound to one provisioned profile and renewable lease.
- * Registers the complete v1 tool contract; only account status is wired here.
+ * Registers the complete v1 tool contract; account status and trade quoting
+ * are wired here (#51 / #54).
  */
 export function createLiveServer(options: CreateLiveServerOptions): McpServer {
   const server = new McpServer(
@@ -213,21 +219,103 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async () => requireLease() ?? notImplementedResult("conviction_get_receipt"),
   );
 
+  const mcpTradeAsset = z.enum([
+    "cash",
+    "eth",
+    "usdc",
+    "usdt",
+    "btc",
+    "sol",
+    "arb",
+  ]);
+
   server.registerTool(
     "conviction_quote_trade",
     {
       title: "Quote a structured trade",
       description:
-        "Validate structured trade fields and return a short-lived quote. Does not accept free-form instructions.",
+        "Validate structured trade fields and return a short-lived quote with costs, floor, exact expiresAt, and quoteId. Named product assets only — no free-form text, contract addresses, or TokenRef. Available even when trading is disabled or the account is unfunded; moves no funds.",
       inputSchema: {
-        asset: z.string().min(1),
-        side: z.enum(["buy", "sell"]),
-        dollarsIn: z.number().positive(),
-        publish: z.boolean().optional(),
+        toAsset: mcpTradeAsset,
+        fromAsset: mcpTradeAsset.optional(),
+        sizeUsd: z.number().positive().optional(),
+        fraction: z.number().gt(0).max(1).optional(),
+        destChain: z.enum(["Arbitrum", "Base"]).optional(),
+        publicationIntent: z.boolean().optional(),
       },
       annotations: readOnlyAnnotations,
     },
-    async () => requireLease() ?? notImplementedResult("conviction_quote_trade"),
+    async (args) => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+
+      const hasSize = args.sizeUsd !== undefined;
+      const hasFraction = args.fraction !== undefined;
+      if (hasSize === hasFraction) {
+        return toolResult(
+          {
+            ok: false,
+            code: "invalid_input",
+            message:
+              "Provide exactly one of sizeUsd (positive dollars) or fraction (0–1 of balance).",
+            fields: [
+              {
+                field: "sizeUsd|fraction",
+                code: "size_required",
+                message:
+                  "Provide exactly one of sizeUsd or fraction — not both, not neither.",
+              },
+            ],
+          },
+          true,
+        );
+      }
+
+      try {
+        const quote = await requestTradeQuote({
+          apiBaseUrl: options.apiBaseUrl,
+          wallet: options.wallet,
+          input: {
+            toAsset: args.toAsset,
+            ...(args.fromAsset ? { fromAsset: args.fromAsset } : {}),
+            ...(args.sizeUsd !== undefined ? { sizeUsd: args.sizeUsd } : {}),
+            ...(args.fraction !== undefined ? { fraction: args.fraction } : {}),
+            ...(args.destChain ? { destChain: args.destChain } : {}),
+            ...(args.publicationIntent !== undefined
+              ? { publicationIntent: args.publicationIntent }
+              : {}),
+          },
+          ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        });
+        return toolResult(quote);
+      } catch (error) {
+        if (error instanceof ConvictionApiError) {
+          const details = error as ConvictionApiError & QuoteApiErrorDetails;
+          return toolResult(
+            {
+              ok: false,
+              code: error.code,
+              message: error.message,
+              ...(details.fields ? { fields: details.fields } : {}),
+              ...(details.gateReport ? { gateReport: details.gateReport } : {}),
+              ...(details.preview ? { preview: details.preview } : {}),
+            },
+            true,
+          );
+        }
+        return toolResult(
+          {
+            ok: false,
+            code: "unavailable",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Could not quote structured trade.",
+          },
+          true,
+        );
+      }
+    },
   );
 
   server.registerTool(

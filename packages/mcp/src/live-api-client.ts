@@ -39,6 +39,25 @@ export type LeaseConflictDetails = {
   leaseAgeMs?: number;
 };
 
+export type QuoteApiErrorDetails = {
+  fields?: Array<{ field: string; code: string; message: string }>;
+  gateReport?: Array<{
+    id?: string;
+    name: string;
+    passed: boolean;
+    detail?: string;
+    evidenceUrl?: string;
+  }>;
+  preview?: {
+    dollarsIn: number;
+    dollarsOut: number;
+    feeUsd: number;
+    floorUsd: number;
+    sourceChain: string;
+    destChain: string;
+  };
+};
+
 async function signedFetch<T>(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
@@ -73,7 +92,8 @@ async function signedFetch<T>(options: {
   const payload = (await response.json().catch(() => ({}))) as T &
     ApiErrorBody &
     LeaseConflictDetails & {
-      error?: LeaseConflictDetails & { code?: string; message?: string };
+      error?: LeaseConflictDetails &
+        QuoteApiErrorDetails & { code?: string; message?: string };
     };
 
   if (!response.ok) {
@@ -86,6 +106,9 @@ async function signedFetch<T>(options: {
       activeLeaseId: payload.error?.activeLeaseId,
       activeLeaseExpiresAt: payload.error?.activeLeaseExpiresAt,
       leaseAgeMs: payload.error?.leaseAgeMs,
+      fields: payload.error?.fields,
+      gateReport: payload.error?.gateReport,
+      preview: payload.error?.preview,
     });
     throw error;
   }
@@ -171,4 +194,55 @@ export async function releaseAgentLease(options: {
     body: { leaseId: options.leaseId },
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
+}
+
+export type StructuredTradeQuoteRequest = {
+  toAsset: string;
+  fromAsset?: string;
+  sizeUsd?: number;
+  fraction?: number;
+  destChain?: "Arbitrum" | "Base";
+  publicationIntent?: boolean;
+};
+
+export type LiveTradeQuote = {
+  ok: true;
+  quoteId: string;
+  action: "trade";
+  intentFingerprint: string;
+  issuedAt: string;
+  serverTime: string;
+  expiresAt: string;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  floorUsd: number;
+  sourceChain: string;
+  destChain: string;
+  toAsset: string;
+  receivedSymbol?: string;
+  sizeUsd: number;
+  publicationIntent: boolean;
+  eligibleForExecution: boolean;
+  gateReport?: QuoteApiErrorDetails["gateReport"];
+  gateVersion?: string;
+  targetFingerprint?: string;
+};
+
+/** Request a short-lived structured trade quote (research-only; no funds moved). */
+export async function requestTradeQuote(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  input: StructuredTradeQuoteRequest;
+  fetchImpl?: typeof fetch;
+}): Promise<LiveTradeQuote> {
+  const payload = await signedFetch<{ quote: LiveTradeQuote }>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/quote/trade",
+    body: options.input,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+  return payload.quote;
 }
