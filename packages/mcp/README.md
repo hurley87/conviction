@@ -85,6 +85,12 @@ only when intentionally displacing the other process. Live mode authenticates
 backend requests with the local signer and never exposes signing methods as MCP
 tools. Headless unlock uses `CONVICTION_KEYSTORE_PASSWORD`.
 
+Live `conviction_execute_trade` obtains a backend execution permit, signs with
+the local ethers Particle-compatible signer (rootHash + EIP-7702), then submits
+the signatures. Backend unavailability fails closed before signing. A manually
+gated minimal-value smoke lives at `scripts/smoke-mcp-execute.ts` and must pass
+before release enablement (ADR 0045).
+
 ## Connect a host
 
 Every supported host launches the same shared MCP contract through the
