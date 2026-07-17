@@ -1,7 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount } from "@/components/account/account-context";
+import { generateHostConfigs } from "@conviction/mcp/host-config";
+import {
+  SETUP_CONTRACT,
+  resolveSetupProgress,
+  type SetupStepId,
+} from "@conviction/mcp/setup-contract";
 
 type AgentStatus =
   | "provisioning"
@@ -18,6 +24,7 @@ type OwnedAgentSummary = {
   address: string | null;
   status: AgentStatus;
   fundingReady: boolean;
+  setupVerifiedAt: string | null;
   maxTradeUsd: number;
   spendBudgetUsd: number;
 };
@@ -79,6 +86,74 @@ function statusEyebrow(status: AgentStatus): string {
   }
 }
 
+function CopyBlock({
+  value,
+  label,
+}: {
+  value: string;
+  label: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mt-3">
+      <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-ink-3">
+        {label}
+      </p>
+      <div className="mt-2 flex flex-col gap-3 sm:flex-row">
+        <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all rounded-[14px] bg-ink px-4 py-3 font-mono text-xs leading-5 text-white">
+          {value}
+        </pre>
+        <button
+          type="button"
+          onClick={async () => {
+            await navigator.clipboard.writeText(value);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1800);
+          }}
+          className="rounded-[14px] bg-brand px-5 py-3 text-sm font-extrabold text-brand-on transition hover:bg-brand-hover"
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SetupProgressRail({
+  currentStep,
+  completedStepIds,
+}: {
+  currentStep: SetupStepId;
+  completedStepIds: SetupStepId[];
+}) {
+  return (
+    <ol className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {SETUP_CONTRACT.steps.map((step, index) => {
+        const isComplete = completedStepIds.includes(step.id);
+        const isCurrent = step.id === currentStep;
+        return (
+          <li
+            key={step.id}
+            className={`rounded-[18px] border px-4 py-3 ${
+              isCurrent
+                ? "border-brand/30 bg-brand-soft/50"
+                : isComplete
+                  ? "border-line bg-surface-2"
+                  : "border-line/70 bg-white/40"
+            }`}
+          >
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-ink-3">
+              Step {index + 1}
+            </p>
+            <p className="mt-1 text-sm font-extrabold text-ink">{step.title}</p>
+            <p className="mt-1 text-xs leading-5 text-ink-2">{step.summary}</p>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function AgentAccessView() {
   const account = useAccount();
   const [form, setForm] = useState(DEFAULT_FORM);
@@ -129,6 +204,25 @@ export function AgentAccessView() {
       cancelled = true;
     };
   }, [authenticatedFetch]);
+
+  const progress = useMemo(
+    () =>
+      resolveSetupProgress(
+        agent
+          ? {
+              status: agent.status,
+              fundingReady: agent.fundingReady,
+              setupVerifiedAt: agent.setupVerifiedAt,
+            }
+          : null,
+      ),
+    [agent],
+  );
+
+  const hostConfigs = useMemo(() => {
+    if (!agent || !agent.fundingReady) return [];
+    return generateHostConfigs({ profileName: agent.handle });
+  }, [agent]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -196,6 +290,24 @@ export function AgentAccessView() {
         </div>
       </section>
 
+      <section className="app-card p-7 sm:p-9">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="pt-eyebrow">Setup contract v{SETUP_CONTRACT.version}</p>
+            <h2 className="mt-2 font-display text-2xl font-semibold text-ink">
+              Operator setup journey
+            </h2>
+          </div>
+          <p className="max-w-md text-sm leading-6 text-ink-2">{progress.nextAction}</p>
+        </div>
+        <div className="mt-6">
+          <SetupProgressRail
+            currentStep={progress.currentStep}
+            completedStepIds={progress.completedStepIds}
+          />
+        </div>
+      </section>
+
       {error && (
         <div role="alert" className="rounded-[18px] border border-danger/25 bg-red-50 px-5 py-4 text-sm font-semibold text-danger">
           {error}
@@ -220,9 +332,9 @@ export function AgentAccessView() {
           {agent.status === "provisioning" ? (
             handoff ? (
               <div className="mt-7 rounded-[22px] border border-brand/15 bg-brand-soft/45 p-6">
-                <p className="text-sm font-extrabold text-ink">Use this handoff once</p>
+                <p className="text-sm font-extrabold text-ink">Next: provision locally</p>
                 <p className="mt-2 text-sm leading-6 text-ink-2">
-                  Run it before {new Date(handoff.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. It will not be shown again after you leave this page. Export and decrypt-verify the encrypted backup in the CLI before funding.
+                  Run it before {new Date(handoff.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. It will not be shown again after you leave this page. Export and decrypt-verify the encrypted backup in the CLI before connecting a host.
                 </p>
                 <div className="mt-4 flex flex-col gap-3 sm:flex-row">
                   <code className="min-w-0 flex-1 overflow-x-auto rounded-[14px] bg-ink px-4 py-3 text-sm text-white">{handoff.command}</code>
@@ -238,13 +350,72 @@ export function AgentAccessView() {
             )
           ) : agent.status === "active" && !agent.fundingReady ? (
             <div className="mt-7 rounded-[18px] border border-warning/25 bg-[#fff8e8] px-5 py-4 text-sm leading-6 text-ink-2">
-              Local signer is bound, but funding stays locked until the CLI exports and decrypt-verifies an encrypted backup. Resume{" "}
-              <code className="rounded bg-ink/5 px-1.5 py-0.5 text-xs">conviction-mcp init</code> with the same code and profile—no deposit address is shown here yet.
+              Local signer is bound, but setup stays locked until the CLI exports and decrypt-verifies an encrypted backup. Resume{" "}
+              <code className="rounded bg-ink/5 px-1.5 py-0.5 text-xs">conviction-mcp init</code> with the same code and profile—no host configs or deposit address are shown here yet.
             </div>
-          ) : agent.status === "active" && agent.fundingReady ? (
-            <div className="mt-7 space-y-3 rounded-[18px] border border-brand/15 bg-brand-soft/45 px-5 py-4 text-sm leading-6 text-ink-2">
+          ) : agent.status === "active" && agent.fundingReady && !agent.setupVerifiedAt ? (
+            <div className="mt-7 space-y-6">
+              <div className="rounded-[18px] border border-brand/15 bg-brand-soft/45 px-5 py-4 text-sm leading-6 text-ink-2">
+                <p className="font-extrabold text-ink">Next: connect a host, then verify</p>
+                <p className="mt-2">
+                  Backup verified. Configure one MCP host with the shared v1 contract, then run a non-value-moving doctor check before funding.
+                </p>
+                <CopyBlock
+                  label="Doctor command"
+                  value={`conviction-mcp doctor --profile ${agent.handle}`}
+                />
+              </div>
+
+              <div className="rounded-[22px] border border-line p-6">
+                <p className="text-sm font-extrabold text-ink">Host configuration</p>
+                <p className="mt-2 text-sm leading-6 text-ink-2">
+                  {SETUP_CONTRACT.sharedMcpContractNote} Package pin:{" "}
+                  <code className="rounded bg-ink/5 px-1.5 py-0.5 text-xs">
+                    {SETUP_CONTRACT.packageMajorPin}
+                  </code>
+                  .
+                </p>
+                <div className="mt-5 space-y-6">
+                  {hostConfigs.map((snippet) => (
+                    <div key={snippet.hostId}>
+                      <p className="text-sm font-extrabold text-ink">{snippet.label}</p>
+                      <p className="mt-1 text-xs leading-5 text-ink-3">{snippet.description}</p>
+                      <CopyBlock label="Configuration" value={snippet.primary} />
+                      {snippet.secondary ? (
+                        <CopyBlock
+                          label={snippet.secondary.label}
+                          value={snippet.secondary.content}
+                        />
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-6 text-xs leading-5 text-ink-3">
+                  Supported platforms: macOS, Linux, and Windows through WSL. Native Windows is deferred.
+                </p>
+              </div>
+
+              {agent.address ? (
+                <div className="rounded-[18px] border border-line bg-surface-2 px-5 py-4 text-sm leading-6 text-ink-2">
+                  <p className="font-extrabold text-ink">Funding stays secondary until doctor succeeds</p>
+                  <p className="mt-2">
+                    Deposit address is reserved after backup verification, but Agent Access only suggests funding after connection verification.
+                  </p>
+                  <p className="mt-3">
+                    <span className="font-extrabold text-ink">Deposit address:</span>{" "}
+                    <code className="break-all rounded bg-ink/5 px-1.5 py-0.5 font-mono text-xs text-ink">
+                      {agent.address}
+                    </code>
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : agent.status === "active" && agent.fundingReady && agent.setupVerifiedAt ? (
+            <div className="mt-7 space-y-4 rounded-[18px] border border-brand/15 bg-brand-soft/45 px-5 py-4 text-sm leading-6 text-ink-2">
+              <p className="font-extrabold text-ink">Connection verified</p>
               <p>
-                Backup verified. This agent is ready for funding. Connect an MCP host next, then send funds to the Universal Account.
+                Doctor recorded a successful non-value-moving check at{" "}
+                {new Date(agent.setupVerifiedAt).toLocaleString()}. You can fund the Universal Account now.
               </p>
               {agent.address ? (
                 <p>
@@ -254,6 +425,10 @@ export function AgentAccessView() {
                   </code>
                 </p>
               ) : null}
+              <CopyBlock
+                label="Re-run diagnostics"
+                value={`conviction-mcp doctor --profile ${agent.handle}`}
+              />
             </div>
           ) : (
             <div className="mt-7 rounded-[18px] border border-line bg-surface-2 px-5 py-4 text-sm leading-6 text-ink-2">

@@ -175,6 +175,7 @@ export function buildAgentAccountStatus(agent: OwnedAgent): {
   lifetimeSpendUsd: number;
   remainingBudgetUsd: number;
   fundingReady: boolean;
+  setupVerifiedAt: string | null;
 } {
   const remainingBudgetUsd = Math.max(
     0,
@@ -197,6 +198,7 @@ export function buildAgentAccountStatus(agent: OwnedAgent): {
     lifetimeSpendUsd: agent.lifetimeSpendUsd,
     remainingBudgetUsd,
     fundingReady: agent.fundingReady,
+    setupVerifiedAt: agent.setupVerifiedAt,
   };
 }
 

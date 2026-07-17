@@ -1,6 +1,13 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { ConvictionApiError } from "./api-client.js";
+import {
+  formatDoctorOutput,
+  formatStatusOutput,
+  runDoctor,
+  runStatus,
+} from "./doctor.js";
+import { formatHostConfigGuide } from "./host-config.js";
 import { runInit, describeInitUnlockHint } from "./init.js";
 import { loadWalletFromKeystore } from "./keystore.js";
 import { acquireLeaseHandle } from "./lease.js";
@@ -8,6 +15,10 @@ import { createLiveServer } from "./live-server.js";
 import { createMockServer } from "./mock-server.js";
 import { profilePath, resolveConvictionPaths } from "./paths.js";
 import { readAgentProfile } from "./profile.js";
+import {
+  PACKAGE_MAJOR_PIN,
+  SETUP_CONTRACT_VERSION,
+} from "./setup-contract.js";
 import {
   createDefaultUnlockSecretStore,
   KEYSTORE_PASSWORD_ENV,
@@ -21,12 +32,16 @@ Usage:
   conviction-mcp serve --mock
   conviction-mcp serve --profile <name> [options]
   conviction-mcp init --code <one-time-code> --backup-path <file> [options]
+  conviction-mcp doctor --profile <name> [options]
+  conviction-mcp status --profile <name> [options]
   conviction-mcp help
 
 Commands:
   serve --mock               Start the deterministic mock server over stdio
   serve --profile <name>     Start the live server for a provisioned profile
   init                       Redeem a provisioning handoff into a local encrypted profile
+  doctor                     Non-value-moving connection and profile diagnostics
+  status                     Show backend-authoritative account status
   help                       Show this help
 
 Serve --profile options:
@@ -43,13 +58,21 @@ Init options:
   --profile <name>               Local profile name (defaults to agent handle)
   --home <dir>                   Override ~/.conviction (also CONVICTION_HOME)
 
+Doctor / status options:
+  --profile <name>           Local profile name (required)
+  --api-base <url>           Conviction API base URL
+  --home <dir>               Override ~/.conviction (also CONVICTION_HOME)
+  --report <path>            (doctor) Write a redacted local support bundle
+
 Environment:
   CONVICTION_BACKUP_PASSPHRASE   Recovery passphrase for the exported backup
   ${KEYSTORE_PASSWORD_ENV}       Headless keystore unlock secret
-  CONVICTION_API_BASE            Default API base URL for init and serve
+  CONVICTION_API_BASE            Default API base URL for init, serve, doctor, and status
 
+Setup contract v${SETUP_CONTRACT_VERSION} pins package-runner configs to ${PACKAGE_MAJOR_PIN}.
 Mock mode uses no account, credentials, signer, or signing material.
-Live mode authenticates with the local signer and never exposes signing tools.`;
+Live mode authenticates with the local signer and never exposes signing tools.
+macOS, Linux, and Windows through WSL are supported; native Windows is deferred.`;
 
 function readFlag(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -69,6 +92,14 @@ function hasFlag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
+function resolveApiBase(args: string[]): string {
+  return (
+    readFlag(args, "--api-base")?.trim() ||
+    process.env.CONVICTION_API_BASE?.trim() ||
+    "http://127.0.0.1:3000"
+  );
+}
+
 async function runInitCommand(args: string[]): Promise<void> {
   const code = requireFlag(args, "--code", "--code");
   const backupPath = requireFlag(args, "--backup-path", "--backup-path");
@@ -81,10 +112,7 @@ async function runInitCommand(args: string[]): Promise<void> {
     );
   }
 
-  const apiBaseUrl =
-    readFlag(args, "--api-base")?.trim() ||
-    process.env.CONVICTION_API_BASE?.trim() ||
-    "http://127.0.0.1:3000";
+  const apiBaseUrl = resolveApiBase(args);
   const profileName = readFlag(args, "--profile")?.trim();
   const home = readFlag(args, "--home")?.trim();
 
@@ -107,19 +135,66 @@ async function runInitCommand(args: string[]): Promise<void> {
 
   console.error(`Profile written: ${result.profilePath}`);
   console.error(`Backup verified: ${result.backupPath}`);
-  console.error(`Agent @${result.profile.handle} is ready for funding.`);
-  console.error(`Deposit address: ${result.depositAddress}`);
+  console.error(`Agent @${result.profile.handle} is ready for host setup.`);
+  console.error("");
+  console.error(formatHostConfigGuide({ profileName: result.profile.profileName }));
+  console.error("");
   console.error(
-    "Next: connect an MCP host with this profile, then fund the Universal Account.",
+    `Next: run \`conviction-mcp doctor --profile ${result.profile.profileName}\` before funding.`,
   );
+  console.error(
+    `(Deposit address will be suggested after doctor succeeds: ${result.depositAddress})`,
+  );
+}
+
+async function runDoctorCommand(args: string[]): Promise<void> {
+  const profileName = requireFlag(args, "--profile", "--profile");
+  const apiBaseUrl = resolveApiBase(args);
+  const home = readFlag(args, "--home")?.trim();
+  const reportPath = readFlag(args, "--report")?.trim();
+
+  const unlockStore = process.env[KEYSTORE_PASSWORD_ENV]?.trim()
+    ? new MemoryUnlockSecretStore()
+    : await createDefaultUnlockSecretStore();
+
+  const result = await runDoctor({
+    profileName,
+    apiBaseUrl,
+    unlockStore,
+    ...(home ? { home } : {}),
+    ...(reportPath ? { reportPath } : {}),
+  });
+
+  console.log(formatDoctorOutput(result));
+  if (reportPath) {
+    console.error(`Redacted doctor report written to ${reportPath}`);
+  }
+  if (!result.ok) {
+    process.exitCode = 1;
+  }
+}
+
+async function runStatusCommand(args: string[]): Promise<void> {
+  const profileName = requireFlag(args, "--profile", "--profile");
+  const apiBaseUrl = resolveApiBase(args);
+  const home = readFlag(args, "--home")?.trim();
+
+  const unlockStore = process.env[KEYSTORE_PASSWORD_ENV]?.trim()
+    ? new MemoryUnlockSecretStore()
+    : await createDefaultUnlockSecretStore();
+
+  const status = await runStatus({
+    profileName,
+    apiBaseUrl,
+    unlockStore,
+    ...(home ? { home } : {}),
+  });
+  console.log(formatStatusOutput(status));
 }
 
 async function runLiveServe(args: string[]): Promise<void> {
   const profileName = requireFlag(args, "--profile", "--profile");
-  const apiBaseUrl =
-    readFlag(args, "--api-base")?.trim() ||
-    process.env.CONVICTION_API_BASE?.trim() ||
-    "http://127.0.0.1:3000";
+  const apiBaseUrl = resolveApiBase(args);
   const home = readFlag(args, "--home")?.trim();
   const replaceLease = hasFlag(args, "--replace-lease");
 
@@ -232,6 +307,16 @@ export async function runCli(args: string[]): Promise<void> {
     return;
   }
 
+  if (args[0] === "doctor") {
+    await runDoctorCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === "status") {
+    await runStatusCommand(args.slice(1));
+    return;
+  }
+
   if (args[0] === "serve") {
     const serveArgs = args.slice(1);
     if (serveArgs[0] === "--mock" && serveArgs.length === 1) {
@@ -253,6 +338,6 @@ export async function runCli(args: string[]): Promise<void> {
   }
 
   throw new Error(
-    "unsupported command; use `conviction-mcp serve --mock`, `conviction-mcp serve --profile <name>`, `conviction-mcp init --code …`, or `conviction-mcp help`",
+    "unsupported command; use `conviction-mcp help` for supported commands",
   );
 }
