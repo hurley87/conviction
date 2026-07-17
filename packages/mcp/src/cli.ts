@@ -13,7 +13,7 @@ Commands:
 
 Mock mode uses no account, credentials, signer, or signing material.`;
 
-export async function runCli(args) {
+export async function runCli(args: string[]): Promise<void> {
   if (args.length === 0 || args[0] === "help" || args.includes("--help")) {
     console.log(HELP);
     return;

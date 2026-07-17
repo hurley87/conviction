@@ -10,9 +10,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run",
+    "test": "npm run build --workspace @conviction/mcp && vitest run",
     "test:watch": "vitest",
-    "mcp:mock": "npm exec --workspace @conviction/mcp -- conviction-mcp serve --mock"
+    "mcp:mock": "npm run build --workspace @conviction/mcp && npm exec --workspace @conviction/mcp -- conviction-mcp serve --mock"
   },
   "dependencies": {
     "@lifi/sdk": "^4.1.0",

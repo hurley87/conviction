@@ -1,7 +1,8 @@
 # Conviction MCP
 
 `@conviction/mcp` is Conviction's local stdio Model Context Protocol server. The
-first package slice provides a deterministic mock mode for validating package,
+package is TypeScript-first; published artifacts are compiled to `dist/`. The
+first slice provides a deterministic mock mode for validating package,
 transport, and host integration without an account, credentials, signer, or
 funds.
 
