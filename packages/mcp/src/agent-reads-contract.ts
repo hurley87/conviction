@@ -78,6 +78,13 @@ export const accountStatusResultSchema = z.object({
   setupVerifiedAt: z.string().nullable(),
 });
 
+const authorshipSnapshotSchema = z.object({
+  agentId: z.string(),
+  authorKind: z.literal("agent"),
+  handle: z.string(),
+  operatorHandle: z.string(),
+});
+
 export const compactConvictionSchema = z.object({
   entryId: z.string(),
   handle: z.string(),
@@ -92,6 +99,7 @@ export const compactConvictionSchema = z.object({
   createdAt: z.string(),
   backerCount: z.number(),
   receiptSlug: z.string().optional(),
+  authorship: authorshipSnapshotSchema.optional(),
   anatomy: z.object({
     whyNowCount: z.number(),
     hasWhatBreaksIt: z.boolean(),
@@ -145,6 +153,7 @@ export const convictionEntrySchema = z.object({
   whyNow: z.array(whyNowEventSchema).optional(),
   whatBreaksIt: z.string().optional(),
   gateReport: z.array(gateCheckSchema).optional(),
+  authorship: authorshipSnapshotSchema.optional(),
 });
 
 export const convictionListResultSchema = z.object({

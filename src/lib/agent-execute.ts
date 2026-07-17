@@ -9,6 +9,10 @@ import {
   type AgentQuoteStore,
   type AgentTradeQuoteRecord,
 } from "@/lib/agent-quote";
+import {
+  buildAgentTradeReceiptRecord,
+  type AgentTradeReceiptStore,
+} from "@/lib/agent-trade-receipt";
 import { mockTradeSigners } from "@/lib/ua/mock";
 import type { UAClient } from "@/lib/ua/types";
 import type {
@@ -382,6 +386,8 @@ export async function executeAgentTrade(options: {
   quoteStore: AgentQuoteStore;
   idempotencyStore: AgentIdempotencyStore;
   receipts: AgentReceiptPersist;
+  /** When set, successful trades become uniquely publishable (ADR 0027). */
+  tradeReceipts?: AgentTradeReceiptStore;
   ua: UAClient;
   balance: UniversalBalance;
   spendLedger?: MemorySpendLedger;
@@ -422,6 +428,7 @@ async function runExecuteAgentTrade(options: {
   quoteStore: AgentQuoteStore;
   idempotencyStore: AgentIdempotencyStore;
   receipts: AgentReceiptPersist;
+  tradeReceipts?: AgentTradeReceiptStore;
   ua: UAClient;
   balance: UniversalBalance;
   spendLedger: MemorySpendLedger;
@@ -546,8 +553,39 @@ async function runExecuteAgentTrade(options: {
           });
         }
 
+        const entryAt = (options.now?.() ?? new Date()).toISOString();
         try {
           await options.receipts.save(tradeResult.receipt);
+          if (options.tradeReceipts) {
+            // Successful execution creates a gate-bound publishable receipt but
+            // never auto-publishes (ADR 0033).
+            await options.tradeReceipts.save(
+              buildAgentTradeReceiptRecord({
+                agentId: options.agent.agentId,
+                receipt: tradeResult.receipt,
+                entryAt,
+                quoteId: quote.quoteId,
+                quoteFingerprint: quote.quoteFingerprint,
+                intent: quote.intent,
+                sizeUsd: quote.sizeUsd,
+                dollarsIn: quote.dollarsIn,
+                dollarsOut: tradeResult.receipt.dollarsOut,
+                feeUsd: tradeResult.receipt.feeUsd,
+                sourceChain: quote.sourceChain,
+                destChain: quote.destChain,
+                toAsset: quote.toAsset,
+                ...(quote.receivedSymbol
+                  ? { receivedSymbol: quote.receivedSymbol }
+                  : {}),
+                publicationIntent: quote.publicationIntent,
+                ...(quote.gateReport ? { gateReport: quote.gateReport } : {}),
+                ...(quote.gateVersion ? { gateVersion: quote.gateVersion } : {}),
+                ...(quote.targetFingerprint
+                  ? { targetFingerprint: quote.targetFingerprint }
+                  : {}),
+              }),
+            );
+          }
           await options.onSpend?.(quote.dollarsIn);
           options.spendLedger.commit(options.agent.agentId, quote.dollarsIn);
         } catch (error) {

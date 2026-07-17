@@ -143,11 +143,87 @@ export type MockReceiptGetResult =
     }
   | MockExecuteError;
 
+export type MockPublishableReceipt = {
+  receiptId: string;
+  agentId: string;
+  quoteId: string;
+  toAsset: McpTradeAsset;
+  fromAsset?: McpTradeAsset;
+  destChain: DestChain;
+  sizeUsd: number;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  sourceChain: string;
+  publicationIntent: boolean;
+  entryAt: string;
+  publishable: boolean;
+  publishedEntryId?: string;
+};
+
+export type MockConvictionEntry = {
+  entryId: string;
+  handle: string;
+  thesis: string;
+  trade: {
+    fromAsset: string;
+    fromChain: string;
+    toAsset: string;
+    toChain: DestChain;
+    sizeUsd: number;
+  };
+  createdAt: string;
+  backedBy: string[];
+  receiptSlug: string;
+  whyNow: Array<{ at: string; event: string }>;
+  whatBreaksIt: string;
+  gateReport: Array<{
+    id: "liquidity" | "contract" | "routability";
+    name: string;
+    passed: boolean;
+    detail?: string;
+  }>;
+  authorship: {
+    agentId: string;
+    authorKind: "agent";
+    handle: string;
+    operatorHandle: string;
+  };
+};
+
+export type MockPublishSuccess = {
+  ok: true;
+  mode: "mock";
+  entryId: string;
+  receiptId: string;
+  entry: MockConvictionEntry;
+};
+
+export type MockPublishErrorCode =
+  | MockExecuteErrorCode
+  | "receipt_not_found"
+  | "receipt_not_publishable"
+  | "gate_failed";
+
+export type MockPublishError = {
+  ok: false;
+  mode: "mock";
+  code: MockPublishErrorCode;
+  message: string;
+  action?: "publish";
+  receiptId?: string;
+  fields?: Array<{ field: string; code: string; message: string }>;
+};
+
+export type MockPublishResult = MockPublishSuccess | MockPublishError;
+
 type DurableState = {
   policy: MockAgentPolicy;
   quotes: Record<string, MockTradeQuoteRecord>;
   idempotency: Record<string, MockExecuteResult>;
   receipts: Record<string, { receipt: MockReceipt; entryAt: string }>;
+  tradeReceipts: Record<string, MockPublishableReceipt>;
+  convictions: Record<string, MockConvictionEntry>;
   /** Active spend reservations (not yet committed to lifetimeSpendUsd). */
   reservedSpendUsd: number;
 };
@@ -264,6 +340,8 @@ export class MockTradeEngine {
       quotes: {},
       idempotency: {},
       receipts: {},
+      tradeReceipts: {},
+      convictions: {},
       reservedSpendUsd: 0,
     };
   }
@@ -457,6 +535,171 @@ export class MockTradeEngine {
     }
   }
 
+  async publishConviction(input: {
+    receiptId: string;
+    thesis: string;
+    whyNow: string;
+    whatBreaksIt: string;
+  }): Promise<MockPublishResult> {
+    const receiptId =
+      typeof input.receiptId === "string" ? input.receiptId.trim() : "";
+    const thesis = typeof input.thesis === "string" ? input.thesis.trim() : "";
+    const whyNow = typeof input.whyNow === "string" ? input.whyNow.trim() : "";
+    const whatBreaksIt =
+      typeof input.whatBreaksIt === "string" ? input.whatBreaksIt.trim() : "";
+
+    const fields: NonNullable<MockPublishError["fields"]> = [];
+    if (!receiptId) {
+      fields.push({
+        field: "receiptId",
+        code: "required",
+        message: "Provide the receiptId from a successful mock trade.",
+      });
+    }
+    if (!thesis) {
+      fields.push({
+        field: "thesis",
+        code: "required",
+        message: "Provide a thesis for the conviction.",
+      });
+    }
+    if (!whyNow) {
+      fields.push({
+        field: "whyNow",
+        code: "required",
+        message: "Provide whyNow as a non-empty string.",
+      });
+    }
+    if (!whatBreaksIt) {
+      fields.push({
+        field: "whatBreaksIt",
+        code: "required",
+        message: "Provide whatBreaksIt as a non-empty falsifier string.",
+      });
+    }
+    if (fields.length > 0) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "invalid_input",
+        message: "Publish input is incomplete or invalid.",
+        fields,
+      };
+    }
+
+    const trade = this.state.tradeReceipts[receiptId];
+    if (trade?.publishedEntryId) {
+      const existing = this.state.convictions[trade.publishedEntryId];
+      if (existing) {
+        return {
+          ok: true,
+          mode: "mock",
+          entryId: existing.entryId,
+          receiptId,
+          entry: structuredClone(existing),
+        };
+      }
+    }
+
+    if (this.state.policy.status !== "active") {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "lifecycle_blocked",
+        message: `Agent @${this.state.policy.handle} is ${this.state.policy.status} and cannot publish convictions.`,
+      };
+    }
+    if (!this.state.policy.actionPolicy.publish) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "action_disabled",
+        message:
+          "Publish is disabled for this agent. Only the operator can enable it through Agent Settings or the operator CLI.",
+        action: "publish",
+      };
+    }
+
+    if (!trade) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "receipt_not_found",
+        message: "No successful agent trade receipt matches that receiptId.",
+        receiptId,
+      };
+    }
+    if (trade.agentId !== this.state.policy.agentId || !trade.publishable) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "receipt_not_publishable",
+        message: "That receipt is not uniquely publishable for this agent.",
+        receiptId,
+      };
+    }
+
+    const publishedAt = this.now().toISOString();
+    const entryId = this.randomId();
+    const entry: MockConvictionEntry = {
+      entryId,
+      handle: this.state.policy.handle,
+      thesis,
+      trade: {
+        fromAsset: trade.fromAsset ?? "cash",
+        fromChain: trade.sourceChain,
+        toAsset: trade.toAsset,
+        toChain: trade.destChain,
+        sizeUsd: trade.sizeUsd,
+      },
+      createdAt: publishedAt,
+      backedBy: [],
+      receiptSlug: receiptId,
+      whyNow: [{ at: publishedAt, event: whyNow }],
+      whatBreaksIt,
+      gateReport: [
+        {
+          id: "liquidity",
+          name: "Liquidity depth",
+          passed: true,
+          detail: "Mock product primary gate.",
+        },
+        {
+          id: "contract",
+          name: "Contract verification",
+          passed: true,
+          detail: "Mock product primary gate.",
+        },
+        {
+          id: "routability",
+          name: "UA routability",
+          passed: true,
+          detail: "Mock product primary gate.",
+        },
+      ],
+      authorship: {
+        agentId: this.state.policy.agentId,
+        authorKind: "agent",
+        handle: this.state.policy.handle,
+        operatorHandle: "mock-operator",
+      },
+    };
+
+    trade.publishable = false;
+    trade.publishedEntryId = entryId;
+    this.state.tradeReceipts[receiptId] = trade;
+    this.state.convictions[entryId] = entry;
+    await this.persist();
+
+    return {
+      ok: true,
+      mode: "mock",
+      entryId,
+      receiptId,
+      entry: structuredClone(entry),
+    };
+  }
+
   async getReceipt(receiptId: string): Promise<MockReceiptGetResult> {
     const id = typeof receiptId === "string" ? receiptId.trim() : "";
     if (!id) {
@@ -638,9 +881,26 @@ export class MockTradeEngine {
           },
         ],
       };
+      const entryAt = this.now().toISOString();
       this.state.receipts[receiptId] = {
         receipt,
-        entryAt: this.now().toISOString(),
+        entryAt,
+      };
+      this.state.tradeReceipts[receiptId] = {
+        receiptId,
+        agentId: this.state.policy.agentId,
+        quoteId: quote.quoteId,
+        toAsset: quote.toAsset,
+        ...(quote.fromAsset ? { fromAsset: quote.fromAsset } : {}),
+        destChain: quote.destChain,
+        sizeUsd: quote.sizeUsd,
+        dollarsIn: quote.dollarsIn,
+        dollarsOut: fresh.dollarsOut,
+        feeUsd: fresh.feeUsd,
+        sourceChain: quote.sourceChain,
+        publicationIntent: quote.publicationIntent,
+        entryAt,
+        publishable: true,
       };
       this.state.policy.lifetimeSpendUsd += quote.dollarsIn;
       this.state.reservedSpendUsd = Math.max(
@@ -876,6 +1136,8 @@ export class MockTradeEngine {
           quotes: parsed.quotes ?? {},
           idempotency: parsed.idempotency ?? {},
           receipts: parsed.receipts ?? {},
+          tradeReceipts: parsed.tradeReceipts ?? {},
+          convictions: parsed.convictions ?? {},
           // Reservations are process-local; never revive them across restart.
           reservedSpendUsd: 0,
         };

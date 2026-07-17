@@ -51,6 +51,7 @@ export function toCompactConviction(entry: ConvictionEntry): CompactConviction {
     createdAt: entry.createdAt,
     backerCount: entry.backedBy.length,
     ...(entry.receiptSlug ? { receiptSlug: entry.receiptSlug } : {}),
+    ...(entry.authorship ? { authorship: entry.authorship } : {}),
     anatomy: {
       whyNowCount: entry.whyNow?.length ?? 0,
       hasWhatBreaksIt: Boolean(entry.whatBreaksIt),

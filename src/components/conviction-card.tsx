@@ -184,6 +184,11 @@ export function ConvictionCard({ entry, backer, saved = false }: ConvictionCardP
           <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="truncate text-sm font-extrabold text-ink">@{entry.handle}</p>
+            {entry.authorship?.authorKind === "agent" && (
+              <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] font-extrabold tracking-[0.1em] text-ink-3 uppercase">
+                Agent
+              </span>
+            )}
             {saved && (
               <span className="rounded-full bg-[#fff1c9] px-2 py-0.5 text-[9px] font-extrabold tracking-[0.1em] text-warning uppercase">
                 ↑ Saved
@@ -191,7 +196,9 @@ export function ConvictionCard({ entry, backer, saved = false }: ConvictionCardP
             )}
           </div>
           <p className="mt-1 text-xs text-ink-4">
-            {formatTimestamp(entry.createdAt)}
+            {entry.authorship?.authorKind === "agent"
+              ? `Agent · operated by @${entry.authorship.operatorHandle} · ${formatTimestamp(entry.createdAt)}`
+              : formatTimestamp(entry.createdAt)}
           </p>
           </div>
         </div>

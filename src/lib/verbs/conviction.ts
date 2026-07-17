@@ -3,6 +3,7 @@
 
 import { isDestChain } from "@/lib/verbs/chains";
 import type {
+  AuthorshipSnapshot,
   ConvictionEntry,
   ConvictionTrade,
   GateCheck,
@@ -23,6 +24,8 @@ export type BuildConvictionInput = {
   whyNow?: WhyNowEvent[];
   whatBreaksIt?: string;
   gateReport?: GateCheck[];
+  /** Immutable agent authorship snapshot (ADR 0026). */
+  authorship?: AuthorshipSnapshot;
   /** Override publication time (desk cards / tests). Defaults to now. */
   createdAt?: string;
 };
@@ -71,6 +74,7 @@ export function buildConviction({
   whyNow,
   whatBreaksIt,
   gateReport,
+  authorship,
   createdAt,
 }: BuildConvictionInput): ConvictionEntry {
   return {
@@ -84,6 +88,7 @@ export function buildConviction({
     ...(whyNow && whyNow.length > 0 ? { whyNow } : {}),
     ...(whatBreaksIt ? { whatBreaksIt } : {}),
     ...(gateReport && gateReport.length > 0 ? { gateReport } : {}),
+    ...(authorship ? { authorship: { ...authorship } } : {}),
   };
 }
 

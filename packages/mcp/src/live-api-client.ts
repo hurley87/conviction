@@ -431,3 +431,57 @@ export async function submitSignedExecution(options: {
     503,
   );
 }
+
+export type LivePublishRequest = {
+  receiptId: string;
+  thesis: string;
+  whyNow: string;
+  whatBreaksIt: string;
+};
+
+export type LivePublishSuccess = {
+  ok: true;
+  entryId: string;
+  receiptId: string;
+  entry: ConvictionGetResult["entry"];
+};
+
+export type LivePublishError = {
+  ok: false;
+  code: string;
+  message: string;
+  action?: "publish";
+  receiptId?: string;
+  fields?: Array<{ field: string; code: string; message: string }>;
+  gateReport?: QuoteApiErrorDetails["gateReport"];
+};
+
+export type LivePublishResult = LivePublishSuccess | LivePublishError;
+
+/** Publish a conviction from a successful unique owned trade receipt. */
+export async function publishConviction(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  input: LivePublishRequest;
+  fetchImpl?: typeof fetch;
+}): Promise<LivePublishResult> {
+  const payload = await signedFetch<{
+    result?: LivePublishSuccess;
+    error?: LivePublishError;
+  }>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/publish",
+    body: options.input,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+
+  if (payload.result) return payload.result;
+  if (payload.error) return payload.error;
+  throw new ConvictionApiError(
+    "unavailable",
+    "Publish response was empty.",
+    503,
+  );
+}

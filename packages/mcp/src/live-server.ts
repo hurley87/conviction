@@ -12,6 +12,7 @@ import {
   fetchConvictionsPage,
   fetchFeedSummary,
   fetchReceipt,
+  publishConviction,
   requestTradeQuote,
 } from "./live-api-client.js";
 import { executeLiveTrade } from "./live-execute.js";
@@ -30,13 +31,6 @@ const readOnlyAnnotations = {
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: false,
-} satisfies ToolAnnotations;
-
-const writeAnnotations = {
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: true,
 } satisfies ToolAnnotations;
 
 const idempotentWriteAnnotations = {
@@ -470,17 +464,35 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     {
       title: "Publish a conviction",
       description:
-        "Publish a completed trade plus thesis, why-now, and what-breaks-it.",
+        "Publish a completed trade plus thesis, why-now, and what-breaks-it. Requires a successful unique owned receipt. Author, trade metadata, and gate report are server-derived.",
       inputSchema: {
         receiptId: z.string().min(1),
         thesis: z.string().min(1),
         whyNow: z.string().min(1),
         whatBreaksIt: z.string().min(1),
       },
-      annotations: writeAnnotations,
+      annotations: idempotentWriteAnnotations,
     },
-    async () =>
-      requireLease() ?? notImplementedResult("conviction_publish_conviction"),
+    async ({ receiptId, thesis, whyNow, whatBreaksIt }) => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+      try {
+        const result = await publishConviction({
+          apiBaseUrl: options.apiBaseUrl,
+          wallet: options.wallet,
+          input: { receiptId, thesis, whyNow, whatBreaksIt },
+          ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        });
+        return toolResult(result, !result.ok);
+      } catch (error) {
+        return unavailableResult(
+          error,
+          error instanceof Error
+            ? error.message
+            : "Could not publish conviction.",
+        );
+      }
+    },
   );
 
   server.registerTool(

@@ -20,6 +20,10 @@ import {
   type AgentQuoteStore,
   type AgentTradeQuoteRecord,
 } from "@/lib/agent-quote";
+import {
+  buildAgentTradeReceiptRecord,
+  type AgentTradeReceiptStore,
+} from "@/lib/agent-trade-receipt";
 import type { UniversalBalance } from "@/lib/verbs/types";
 import type { Receipt, TradeIntent, TradeQuote } from "@/lib/verbs/types";
 import type { RawTransaction } from "@/lib/ua/trade";
@@ -604,6 +608,8 @@ export async function submitSignedTradeExecution(options: {
   permitStore: AgentPermitStore;
   idempotencyStore: AgentIdempotencyStore;
   receipts: AgentReceiptPersist;
+  quoteStore: AgentQuoteStore;
+  tradeReceipts?: AgentTradeReceiptStore;
   send: SignedTradeSender;
   activeLeaseId: string | null;
   spendLedger?: AgentSpendLedger;
@@ -892,6 +898,36 @@ export async function submitSignedTradeExecution(options: {
     try {
       await options.onSpend?.(permit.dollarsIn);
       await options.receipts.save(sendResult.receipt);
+      if (options.tradeReceipts) {
+        const quote = await options.quoteStore.get(permit.quoteId);
+        const entryAt = now.toISOString();
+        await options.tradeReceipts.save(
+          buildAgentTradeReceiptRecord({
+            agentId: options.agent.agentId,
+            receipt: sendResult.receipt,
+            entryAt,
+            quoteId: permit.quoteId,
+            quoteFingerprint: permit.quoteFingerprint,
+            intent: permit.intent,
+            sizeUsd: permit.sizeUsd,
+            dollarsIn: permit.dollarsIn,
+            dollarsOut: sendResult.receipt.dollarsOut,
+            feeUsd: sendResult.receipt.feeUsd,
+            sourceChain: permit.agreedQuote.sourceChain,
+            destChain: permit.agreedQuote.destChain,
+            toAsset: permit.agreedQuote.toAsset,
+            ...(permit.agreedQuote.receivedSymbol
+              ? { receivedSymbol: permit.agreedQuote.receivedSymbol }
+              : {}),
+            publicationIntent: quote?.publicationIntent ?? false,
+            ...(quote?.gateReport ? { gateReport: quote.gateReport } : {}),
+            ...(quote?.gateVersion ? { gateVersion: quote.gateVersion } : {}),
+            ...(quote?.targetFingerprint
+              ? { targetFingerprint: quote.targetFingerprint }
+              : {}),
+          }),
+        );
+      }
       await options.spendLedger?.commit(
         options.agent.agentId,
         permit.dollarsIn,
