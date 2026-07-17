@@ -64,6 +64,21 @@ function sqlClient() {
   return sql;
 }
 
+export async function getUserIdentity(
+  privyId: string,
+): Promise<{ privyId: string; handle: string } | null> {
+  const sql = sqlClient();
+  await ensureUserSchema(sql);
+  const rows = await sql`
+    SELECT privy_id, handle FROM users
+    WHERE privy_id = ${privyId} AND handle IS NOT NULL
+    LIMIT 1
+  `;
+  return rows[0]
+    ? { privyId: String(rows[0].privy_id), handle: String(rows[0].handle) }
+    : null;
+}
+
 function isUniqueViolation(error: unknown) {
   return (
     typeof error === "object" &&

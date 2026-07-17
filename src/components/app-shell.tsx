@@ -17,6 +17,7 @@ const ROUTE_META: Record<string, { eyebrow: string; title: string }> = {
   "/home": { eyebrow: "Your money", title: "Portfolio" },
   "/discover": { eyebrow: "Curated across crypto", title: "Discover" },
   "/activity": { eyebrow: "Your trail", title: "Activity" },
+  "/agent-access": { eyebrow: "Local agent", title: "Agent Access" },
   "/settings": { eyebrow: "Your space", title: "Settings" },
 };
 

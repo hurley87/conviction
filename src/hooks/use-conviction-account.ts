@@ -183,6 +183,7 @@ export function useConvictionAccount() {
     profileId: profile?.privyId ?? null,
     login,
     logout,
+    getAccessToken,
     retryProfile,
     handle: profile?.handle ?? null,
     email: profile?.email ?? null,
