@@ -1,4 +1,15 @@
 import {
+  AGENT_SUMMARIZE_FEED_PATH,
+  agentConvictionPath,
+  agentConvictionsListPath,
+  agentReceiptPath,
+  type AccountStatusResult,
+  type ConvictionGetResult,
+  type ConvictionListResult,
+  type FeedSummaryResult,
+  type ReceiptGetResult,
+} from "./agent-reads-contract.js";
+import {
   ConvictionApiError,
   type ApiErrorBody,
   type ConvictionApiErrorDetails,
@@ -6,29 +17,16 @@ import {
 import type { LocalWallet } from "./keystore.js";
 import { signAgentRequest } from "./signed-request.js";
 
-export type LiveAgentStatus = {
-  ok: true;
-  mode: "live";
-  agentId: string;
-  handle: string;
-  operatorHandle: string;
-  address: string;
-  depositAddress: string;
-  status: string;
-  publicStatus: string;
-  actionPolicy: {
-    trade: boolean;
-    back: boolean;
-    publish: boolean;
-  };
-  maxTradeUsd: number;
-  spendBudgetUsd: number;
-  lifetimeSpendUsd: number;
-  remainingBudgetUsd: number;
-  fundingReady: boolean;
-  /** ISO timestamp set by a successful non-value-moving doctor check. */
-  setupVerifiedAt: string | null;
-};
+export type {
+  AccountStatusResult as LiveAgentStatus,
+  ConvictionGetResult,
+  ConvictionListResult,
+  FeedSummaryResult,
+  ReceiptGetResult,
+  CompactConviction,
+  UniversalBalance,
+  DepositAddresses,
+} from "./agent-reads-contract.js";
 
 export type LiveLease = {
   leaseId: string;
@@ -109,8 +107,8 @@ export async function fetchAgentStatus(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   fetchImpl?: typeof fetch;
-}): Promise<LiveAgentStatus> {
-  const payload = await signedFetch<{ status: LiveAgentStatus }>({
+}): Promise<AccountStatusResult> {
+  const payload = await signedFetch<{ status: AccountStatusResult }>({
     ...options,
     method: "GET",
     path: "/api/agents/status",
@@ -123,8 +121,8 @@ export async function markSetupVerified(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   fetchImpl?: typeof fetch;
-}): Promise<LiveAgentStatus> {
-  const payload = await signedFetch<{ status: LiveAgentStatus }>({
+}): Promise<AccountStatusResult> {
+  const payload = await signedFetch<{ status: AccountStatusResult }>({
     apiBaseUrl: options.apiBaseUrl,
     wallet: options.wallet,
     method: "POST",
@@ -133,6 +131,67 @@ export async function markSetupVerified(options: {
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
   return payload.status;
+}
+
+export async function fetchConvictionsPage(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  cursor?: string;
+  limit?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<ConvictionListResult> {
+  return signedFetch<ConvictionListResult>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "GET",
+    path: agentConvictionsListPath({
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+      ...(options.cursor ? { cursor: options.cursor } : {}),
+    }),
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+}
+
+export async function fetchConviction(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  entryId: string;
+  fetchImpl?: typeof fetch;
+}): Promise<ConvictionGetResult> {
+  return signedFetch<ConvictionGetResult>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "GET",
+    path: agentConvictionPath(options.entryId),
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+}
+
+export async function fetchFeedSummary(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  fetchImpl?: typeof fetch;
+}): Promise<FeedSummaryResult> {
+  return signedFetch<FeedSummaryResult>({
+    ...options,
+    method: "GET",
+    path: AGENT_SUMMARIZE_FEED_PATH,
+  });
+}
+
+export async function fetchReceipt(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  receiptId: string;
+  fetchImpl?: typeof fetch;
+}): Promise<ReceiptGetResult> {
+  return signedFetch<ReceiptGetResult>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "GET",
+    path: agentReceiptPath(options.receiptId),
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
 }
 
 export async function acquireAgentLease(options: {

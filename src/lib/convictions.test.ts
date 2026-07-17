@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { SEED_CONVICTION } from "@/lib/conviction-seed";
 import { DECK_SEED_CARDS } from "@/lib/deck-seed";
 import {
+  getConviction,
   listConvictions,
+  listConvictionsPage,
   listDeckCards,
   saveConviction,
   resetConvictionsMemoryForTests,
@@ -105,6 +107,30 @@ describe("convictions memory store", () => {
     const seed = listed.find((e) => e.entryId === SEED_CONVICTION.entryId);
     expect(seed).toBeDefined();
     expect(hasAnatomy(seed!)).toBe(false);
+  });
+
+  it("fetches one conviction by entryId", async () => {
+    const found = await getConviction(SEED_CONVICTION.entryId);
+    expect(found?.entryId).toBe(SEED_CONVICTION.entryId);
+    expect(await getConviction("missing-entry")).toBeNull();
+  });
+
+  it("paginates convictions with a stable keyset cursor", async () => {
+    const first = await listConvictionsPage({ limit: 1 });
+    expect(first.entries).toHaveLength(1);
+    expect(first.hasMore).toBe(true);
+    expect(first.nextCursor).toBeTruthy();
+
+    const second = await listConvictionsPage({
+      limit: 1,
+      cursor: first.nextCursor!,
+    });
+    expect(second.entries).toHaveLength(1);
+    expect(second.entries[0]?.entryId).not.toBe(first.entries[0]?.entryId);
+
+    await expect(
+      listConvictionsPage({ cursor: "%%%bad%%%" }),
+    ).rejects.toMatchObject({ code: "invalid_cursor" });
   });
 
   it("round-trips desk TokenRef + anatomy via parse → build → save → list", async () => {
