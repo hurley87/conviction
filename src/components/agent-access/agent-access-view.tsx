@@ -3,11 +3,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAccount } from "@/components/account/account-context";
 
-type PendingAgent = {
+type AgentStatus =
+  | "provisioning"
+  | "active"
+  | "disabled"
+  | "capped"
+  | "retiring"
+  | "retired";
+
+type OwnedAgentSummary = {
   agentId: string;
   handle: string;
   operatorHandle: string;
-  status: "provisioning";
+  status: AgentStatus;
   maxTradeUsd: number;
   spendBudgetUsd: number;
 };
@@ -30,10 +38,49 @@ const DEFAULT_FORM = {
   publish: true,
 };
 
+function statusLabel(status: AgentStatus): string {
+  switch (status) {
+    case "provisioning":
+      return "Awaiting local signer";
+    case "active":
+      return "Active";
+    case "disabled":
+      return "Disabled";
+    case "capped":
+      return "Spend capped";
+    case "retiring":
+      return "Retiring";
+    case "retired":
+      return "Retired";
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+function statusEyebrow(status: AgentStatus): string {
+  switch (status) {
+    case "provisioning":
+      return "Pending agent";
+    case "active":
+      return "Your agent";
+    case "disabled":
+    case "capped":
+    case "retiring":
+    case "retired":
+      return "Agent status";
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
 export function AgentAccessView() {
   const account = useAccount();
   const [form, setForm] = useState(DEFAULT_FORM);
-  const [agent, setAgent] = useState<PendingAgent | null>(null);
+  const [agent, setAgent] = useState<OwnedAgentSummary | null>(null);
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -61,7 +108,7 @@ export function AgentAccessView() {
     void authenticatedFetch("/api/agents")
       .then(async (response) => {
         const payload = (await response.json()) as {
-          agent?: PendingAgent | null;
+          agent?: OwnedAgentSummary | null;
         } & ApiError;
         if (!response.ok) {
           throw new Error(payload.error?.message ?? "Could not load Agent Access.");
@@ -101,7 +148,7 @@ export function AgentAccessView() {
         }),
       });
       const payload = (await response.json()) as {
-        agent?: PendingAgent;
+        agent?: OwnedAgentSummary;
         handoff?: Handoff;
       } & ApiError;
       if (!response.ok || !payload.agent || !payload.handoff) {
@@ -159,29 +206,41 @@ export function AgentAccessView() {
         <section className="app-card p-7 sm:p-9">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="pt-eyebrow">Pending agent</p>
+              <p className="pt-eyebrow">{statusEyebrow(agent.status)}</p>
               <h2 className="mt-2 font-display text-3xl font-semibold text-ink">@{agent.handle}</h2>
               <p className="mt-2 text-sm text-ink-3">Agent · operated by @{agent.operatorHandle}</p>
             </div>
-            <span className="rounded-full bg-[#fff3d6] px-3 py-1.5 text-xs font-extrabold text-warning">Awaiting local signer</span>
+            <span className="rounded-full bg-[#fff3d6] px-3 py-1.5 text-xs font-extrabold text-warning">
+              {statusLabel(agent.status)}
+            </span>
           </div>
 
-          {handoff ? (
-            <div className="mt-7 rounded-[22px] border border-brand/15 bg-brand-soft/45 p-6">
-              <p className="text-sm font-extrabold text-ink">Use this handoff once</p>
-              <p className="mt-2 text-sm leading-6 text-ink-2">
-                Run it before {new Date(handoff.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. It will not be shown again after you leave this page.
-              </p>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                <code className="min-w-0 flex-1 overflow-x-auto rounded-[14px] bg-ink px-4 py-3 text-sm text-white">{handoff.command}</code>
-                <button type="button" onClick={copyCommand} className="rounded-[14px] bg-brand px-5 py-3 text-sm font-extrabold text-brand-on transition hover:bg-brand-hover">
-                  {copied ? "Copied" : "Copy command"}
-                </button>
+          {agent.status === "provisioning" ? (
+            handoff ? (
+              <div className="mt-7 rounded-[22px] border border-brand/15 bg-brand-soft/45 p-6">
+                <p className="text-sm font-extrabold text-ink">Use this handoff once</p>
+                <p className="mt-2 text-sm leading-6 text-ink-2">
+                  Run it before {new Date(handoff.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. It will not be shown again after you leave this page.
+                </p>
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                  <code className="min-w-0 flex-1 overflow-x-auto rounded-[14px] bg-ink px-4 py-3 text-sm text-white">{handoff.command}</code>
+                  <button type="button" onClick={copyCommand} className="rounded-[14px] bg-brand px-5 py-3 text-sm font-extrabold text-brand-on transition hover:bg-brand-hover">
+                    {copied ? "Copied" : "Copy command"}
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="mt-7 rounded-[18px] border border-line bg-surface-2 px-5 py-4 text-sm leading-6 text-ink-2">
+                This account already used its one-time handoff. Return to the local terminal where you began setup, or wait for a future recovery flow.
+              </div>
+            )
           ) : (
             <div className="mt-7 rounded-[18px] border border-line bg-surface-2 px-5 py-4 text-sm leading-6 text-ink-2">
-              This account already used its one-time handoff. Return to the local terminal where you began setup, or wait for a future recovery flow.
+              This account already holds its v1 agent slot
+              {agent.status === "active"
+                ? " with a bound local signer."
+                : ` (${statusLabel(agent.status).toLowerCase()}).`}{" "}
+              Retire it before creating another.
             </div>
           )}
         </section>

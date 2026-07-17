@@ -47,22 +47,105 @@ export const createAgentSchema = z
 
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
 
-export type PendingAgent = {
+export const AGENT_STATUSES = [
+  "provisioning",
+  "active",
+  "disabled",
+  "capped",
+  "retiring",
+  "retired",
+] as const;
+
+export type AgentStatus = (typeof AGENT_STATUSES)[number];
+
+export const AGENT_PUBLIC_STATUSES = ["active", "paused", "retired"] as const;
+
+export type AgentPublicStatus = (typeof AGENT_PUBLIC_STATUSES)[number];
+
+export type OwnedAgent = {
   agentId: string;
   ownerUserId: string;
   handle: string;
   authorKind: "agent";
   operatorHandle: string;
-  address: null;
+  address: string | null;
   returnAddress: string;
-  status: "provisioning";
-  publicStatus: "paused";
+  status: AgentStatus;
+  publicStatus: AgentPublicStatus;
   actionPolicy: CreateAgentInput["actionPolicy"];
   maxTradeUsd: number;
   spendBudgetUsd: number;
-  lifetimeSpendUsd: 0;
+  lifetimeSpendUsd: number;
   createdAt: string;
 };
+
+/** Fresh create path: reserved identity with no bound signer yet. */
+export type PendingAgent = OwnedAgent & {
+  address: null;
+  status: "provisioning";
+  publicStatus: "paused";
+  lifetimeSpendUsd: 0;
+};
+
+function isAgentStatus(value: string): value is AgentStatus {
+  return (AGENT_STATUSES as readonly string[]).includes(value);
+}
+
+function isAgentPublicStatus(value: string): value is AgentPublicStatus {
+  return (AGENT_PUBLIC_STATUSES as readonly string[]).includes(value);
+}
+
+function isActionPolicy(
+  value: unknown,
+): value is CreateAgentInput["actionPolicy"] {
+  if (typeof value !== "object" || value === null) return false;
+  const policy = value as Record<string, unknown>;
+  return (
+    typeof policy.trade === "boolean" &&
+    typeof policy.back === "boolean" &&
+    typeof policy.publish === "boolean"
+  );
+}
+
+/** Map a persisted agents row into the API shape without inventing lifecycle fields. */
+export function ownedAgentFromRow(row: Record<string, unknown>): OwnedAgent {
+  const status = String(row.status ?? "");
+  if (!isAgentStatus(status)) {
+    throw new Error(`Unexpected agent status: ${status}`);
+  }
+
+  const publicStatus = String(row.public_status ?? "");
+  if (!isAgentPublicStatus(publicStatus)) {
+    throw new Error(`Unexpected agent public status: ${publicStatus}`);
+  }
+
+  if (!isActionPolicy(row.action_policy)) {
+    throw new Error("Unexpected agent action policy.");
+  }
+
+  const addressValue = row.address;
+  const address =
+    addressValue === null || addressValue === undefined
+      ? null
+      : String(addressValue);
+
+  return {
+    agentId: String(row.agent_id),
+    ownerUserId: String(row.owner_user_id),
+    handle: String(row.handle),
+    authorKind: "agent",
+    operatorHandle: String(row.operator_handle),
+    address,
+    returnAddress: String(row.return_address),
+    status,
+    publicStatus,
+    actionPolicy: row.action_policy,
+    maxTradeUsd: Number(row.max_trade_usd),
+    spendBudgetUsd: Number(row.spend_budget_usd),
+    lifetimeSpendUsd: Number(row.lifetime_spend_usd),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+  };
+}
 
 export type ProvisioningHandoff = {
   code: string;
@@ -83,13 +166,13 @@ export type StoredHandoff = {
 };
 
 export type AgentProvisioningRecord = {
-  agent: PendingAgent;
+  agent: OwnedAgent;
   handoff: StoredHandoff;
 };
 
 export type AgentProvisioningStore = {
   create(record: AgentProvisioningRecord): Promise<void>;
-  findNonRetiredByOwner(ownerUserId: string): Promise<PendingAgent | null>;
+  findNonRetiredByOwner(ownerUserId: string): Promise<OwnedAgent | null>;
 };
 
 export type ProvisioningErrorCode =
@@ -192,7 +275,9 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
   async create(record: AgentProvisioningRecord): Promise<void> {
     if (
       this.records.some(
-        ({ agent }) => agent.ownerUserId === record.agent.ownerUserId,
+        ({ agent }) =>
+          agent.ownerUserId === record.agent.ownerUserId &&
+          agent.status !== "retired",
       )
     ) {
       throw new AgentProvisioningError(
@@ -227,10 +312,12 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
 
   async findNonRetiredByOwner(
     ownerUserId: string,
-  ): Promise<PendingAgent | null> {
+  ): Promise<OwnedAgent | null> {
     return (
-      this.records.find(({ agent }) => agent.ownerUserId === ownerUserId)
-        ?.agent ?? null
+      this.records.find(
+        ({ agent }) =>
+          agent.ownerUserId === ownerUserId && agent.status !== "retired",
+      )?.agent ?? null
     );
   }
 }

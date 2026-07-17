@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createPendingAgent,
   MemoryAgentProvisioningStore,
+  ownedAgentFromRow,
   PROVISIONING_HANDOFF_TTL_MS,
 } from "@/lib/agent-provisioning";
 
@@ -118,5 +119,32 @@ describe("createPendingAgent", () => {
       code: "invalid_request",
     });
     expect(store.records).toHaveLength(0);
+  });
+});
+
+describe("ownedAgentFromRow", () => {
+  it("preserves persisted lifecycle fields instead of inventing provisioning state", () => {
+    expect(
+      ownedAgentFromRow({
+        agent_id: "00000000-0000-4000-8000-000000000099",
+        owner_user_id: "did:privy:owner-1",
+        handle: "signal-scout",
+        operator_handle: "operator",
+        address: "0x00000000000000000000000000000000000000aa",
+        return_address: "0x0000000000000000000000000000000000000001",
+        status: "active",
+        public_status: "active",
+        action_policy: { trade: true, back: false, publish: true },
+        max_trade_usd: "25",
+        spend_budget_usd: "100",
+        lifetime_spend_usd: "12.5",
+        created_at: "2026-07-16T20:00:00.000Z",
+      }),
+    ).toMatchObject({
+      address: "0x00000000000000000000000000000000000000aa",
+      status: "active",
+      publicStatus: "active",
+      lifetimeSpendUsd: 12.5,
+    });
   });
 });

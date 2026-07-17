@@ -88,6 +88,40 @@ function isUniqueViolation(error: unknown) {
   );
 }
 
+function isUndefinedTable(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "42P01"
+  );
+}
+
+/** Shared human/agent handle namespace: reject human claims already taken by agents. */
+async function assertHandleNotClaimedByAgent(
+  sql: NonNullable<ReturnType<typeof getSql>>,
+  handle: string,
+) {
+  try {
+    const rows = await sql`
+      SELECT 1 FROM agents
+      WHERE lower(handle) = lower(${handle})
+      LIMIT 1
+    `;
+    if (rows.length) {
+      throw new UserProfileError(
+        "That public username is already in use.",
+        "conflict",
+      );
+    }
+  } catch (error) {
+    if (error instanceof UserProfileError) throw error;
+    // Agents table may not exist until the first provisioning request.
+    if (isUndefinedTable(error)) return;
+    throw error;
+  }
+}
+
 function toProfile(row: UserRow): UserProfile {
   return {
     privyId: row.privy_id,
@@ -139,6 +173,10 @@ export async function initializeUser(
       : null,
     input,
   );
+
+  if (next.handle && next.handle !== existing?.handle) {
+    await assertHandleNotClaimedByAgent(sql, next.handle);
+  }
 
   try {
     if (!existing) {
@@ -212,6 +250,7 @@ export async function saveUserHandle(privyId: string, value: string) {
   }
   const sql = sqlClient();
   await ensureUserSchema(sql);
+  await assertHandleNotClaimedByAgent(sql, validation.username);
   try {
     const rows = await sql`
       UPDATE users

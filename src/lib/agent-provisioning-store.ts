@@ -4,33 +4,15 @@ import { getUserIdentity } from "@/lib/users";
 import {
   AgentProvisioningError,
   MemoryAgentProvisioningStore,
+  ownedAgentFromRow,
   type AgentProvisioningRecord,
   type AgentProvisioningStore,
-  type PendingAgent,
+  type OwnedAgent,
   type ProvisioningOwner,
 } from "@/lib/agent-provisioning";
 
 let schemaReady = false;
 const mockStore = new MemoryAgentProvisioningStore();
-
-function asPendingAgent(row: Record<string, unknown>): PendingAgent {
-  return {
-    agentId: String(row.agent_id),
-    ownerUserId: String(row.owner_user_id),
-    handle: String(row.handle),
-    authorKind: "agent",
-    operatorHandle: String(row.operator_handle),
-    address: null,
-    returnAddress: String(row.return_address),
-    status: "provisioning",
-    publicStatus: "paused",
-    actionPolicy: row.action_policy as PendingAgent["actionPolicy"],
-    maxTradeUsd: Number(row.max_trade_usd),
-    spendBudgetUsd: Number(row.spend_budget_usd),
-    lifetimeSpendUsd: 0,
-    createdAt: new Date(String(row.created_at)).toISOString(),
-  };
-}
 
 async function ensureSchema(sql: NonNullable<ReturnType<typeof getSql>>) {
   if (schemaReady) return;
@@ -161,7 +143,7 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     }
   }
 
-  async findNonRetiredByOwner(ownerUserId: string): Promise<PendingAgent | null> {
+  async findNonRetiredByOwner(ownerUserId: string): Promise<OwnedAgent | null> {
     await ensureSchema(this.sql);
     const rows = await this.sql`
       SELECT * FROM agents
@@ -169,7 +151,7 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
       ORDER BY created_at DESC
       LIMIT 1
     `;
-    return rows[0] ? asPendingAgent(rows[0] as Record<string, unknown>) : null;
+    return rows[0] ? ownedAgentFromRow(rows[0] as Record<string, unknown>) : null;
   }
 }
 
