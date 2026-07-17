@@ -1,13 +1,34 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useAccount } from "@/components/account/account-context";
+import { AgentSkillHandoff } from "@/components/agent-access/agent-skill-handoff";
 import { SetupActionPanel, type SetupAgent } from "@/components/agent-access/setup-action-panel";
 import { SetupProgressRail } from "@/components/agent-access/setup-progress-rail";
 import {
   SETUP_CONTRACT,
+  defaultProfileName,
   resolveSetupPhase,
 } from "@conviction/mcp/setup-contract";
+
+function subscribeNoop() {
+  return () => {};
+}
+
+function useSetupSkillUrl(): string {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => `${window.location.origin}/agent-access/skill`,
+    () => "/agent-access/skill",
+  );
+}
 
 type Handoff = {
   code: string;
@@ -16,6 +37,8 @@ type Handoff = {
 };
 
 type ApiError = { error?: { code?: string; message?: string } };
+
+const POLL_MS = 4000;
 
 const DEFAULT_FORM = {
   handle: "",
@@ -72,8 +95,10 @@ export function AgentAccessView() {
   const [agent, setAgent] = useState<SetupAgent | null>(null);
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const skillUrl = useSetupSkillUrl();
 
   const authenticatedFetch = useCallback(
     async (input: string, init?: RequestInit) => {
@@ -91,6 +116,34 @@ export function AgentAccessView() {
     [account],
   );
 
+  const refreshAgent = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent === true;
+      if (!silent) setRefreshing(true);
+      try {
+        const response = await authenticatedFetch("/api/agents");
+        const payload = (await response.json()) as {
+          agent?: SetupAgent | null;
+        } & ApiError;
+        if (!response.ok) {
+          throw new Error(payload.error?.message ?? "Could not load Agent Access.");
+        }
+        setAgent(payload.agent ?? null);
+        setError(null);
+      } catch (reason) {
+        if (!silent) {
+          setError(
+            reason instanceof Error ? reason.message : "Could not load Agent Access.",
+          );
+        }
+      } finally {
+        setLoading(false);
+        if (!silent) setRefreshing(false);
+      }
+    },
+    [authenticatedFetch],
+  );
+
   useEffect(() => {
     let cancelled = false;
     void authenticatedFetch("/api/agents")
@@ -101,11 +154,16 @@ export function AgentAccessView() {
         if (!response.ok) {
           throw new Error(payload.error?.message ?? "Could not load Agent Access.");
         }
-        if (!cancelled) setAgent(payload.agent ?? null);
+        if (!cancelled) {
+          setAgent(payload.agent ?? null);
+          setError(null);
+        }
       })
       .catch((reason) => {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "Could not load Agent Access.");
+          setError(
+            reason instanceof Error ? reason.message : "Could not load Agent Access.",
+          );
         }
       })
       .finally(() => {
@@ -129,6 +187,28 @@ export function AgentAccessView() {
       ),
     [agent],
   );
+
+  const shouldPoll =
+    phase.kind === "provision" ||
+    phase.kind === "backup" ||
+    phase.kind === "verify";
+
+  useEffect(() => {
+    if (!shouldPoll) return;
+    const id = window.setInterval(() => {
+      void refreshAgent({ silent: true });
+    }, POLL_MS);
+    return () => window.clearInterval(id);
+  }, [shouldPoll, refreshAgent]);
+
+  useEffect(() => {
+    if (!shouldPoll) return;
+    const onFocus = () => {
+      void refreshAgent({ silent: true });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [shouldPoll, refreshAgent]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -165,6 +245,8 @@ export function AgentAccessView() {
     }
   }
 
+  const profileName = agent ? defaultProfileName(agent.handle) : undefined;
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <section className="app-card overflow-hidden">
@@ -196,13 +278,39 @@ export function AgentAccessView() {
             <h2 className="mt-2 font-display text-2xl font-semibold text-ink">
               Operator setup journey
             </h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-ink-2">
+              {phase.nextAction}
+              {shouldPoll
+                ? " This page refreshes automatically while setup is in progress."
+                : null}
+            </p>
           </div>
-          <p className="max-w-md text-sm leading-6 text-ink-2">{phase.nextAction}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/agent-access/skill"
+              className="rounded-[14px] border border-line bg-surface-2 px-4 py-2.5 text-sm font-extrabold text-ink transition hover:border-brand hover:text-brand"
+            >
+              Setup skill
+            </Link>
+            <button
+              type="button"
+              onClick={() => void refreshAgent()}
+              disabled={refreshing || loading}
+              className="rounded-[14px] bg-brand px-4 py-2.5 text-sm font-extrabold text-brand-on transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
         </div>
         <div className="mt-6">
           <SetupProgressRail phase={phase} />
         </div>
       </section>
+
+      <AgentSkillHandoff
+        skillUrl={skillUrl}
+        {...(profileName ? { profileName } : {})}
+      />
 
       {error && (
         <div role="alert" className="rounded-[18px] border border-danger/25 bg-red-50 px-5 py-4 text-sm font-semibold text-danger">
