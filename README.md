@@ -1,5 +1,8 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+The installable deterministic mock MCP server and Codex host setup are documented
+in [`packages/mcp/README.md`](packages/mcp/README.md).
+
 ## Getting Started
 
 First, run the development server:

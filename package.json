@@ -2,13 +2,17 @@
   "name": "conviction",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "npm run build --workspace @conviction/mcp && vitest run",
+    "test:watch": "vitest",
+    "mcp:mock": "npm run build --workspace @conviction/mcp && npm exec --workspace @conviction/mcp -- conviction-mcp serve --mock"
   },
   "dependencies": {
     "@lifi/sdk": "^4.1.0",
