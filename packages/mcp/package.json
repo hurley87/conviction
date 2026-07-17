@@ -14,6 +14,10 @@
     "./host-config": {
       "types": "./dist/host-config.d.ts",
       "import": "./dist/host-config.js"
+    },
+    "./agent-reads-contract": {
+      "types": "./dist/agent-reads-contract.d.ts",
+      "import": "./dist/agent-reads-contract.js"
     }
   },
   "files": [

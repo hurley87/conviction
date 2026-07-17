@@ -2,9 +2,24 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
+import {
+  accountStatusOutputSchema,
+  getConvictionOutputSchema,
+  getReceiptOutputSchema,
+  listConvictionsOutputSchema,
+  MAX_CONVICTION_PAGE_LIMIT,
+  summarizeFeedOutputSchema,
+} from "./agent-reads-contract.js";
+import { ConvictionApiError } from "./api-client.js";
 import type { LocalWallet } from "./keystore.js";
 import type { LeaseHandle } from "./lease.js";
-import { fetchAgentStatus } from "./live-api-client.js";
+import {
+  fetchAgentStatus,
+  fetchConviction,
+  fetchConvictionsPage,
+  fetchFeedSummary,
+  fetchReceipt,
+} from "./live-api-client.js";
 import type { AgentProfile } from "./profile.js";
 import { toolResult } from "./tool-result.js";
 
@@ -68,28 +83,26 @@ function notImplementedResult(tool: string) {
   );
 }
 
-const accountStatusOutputSchema = {
-  ok: z.boolean(),
-  mode: z.literal("live"),
-  agentId: z.string(),
-  handle: z.string(),
-  operatorHandle: z.string(),
-  address: z.string(),
-  depositAddress: z.string(),
-  status: z.string(),
-  publicStatus: z.string(),
-  actionPolicy: z.object({
-    trade: z.boolean(),
-    back: z.boolean(),
-    publish: z.boolean(),
-  }),
-  maxTradeUsd: z.number(),
-  spendBudgetUsd: z.number(),
-  lifetimeSpendUsd: z.number(),
-  remainingBudgetUsd: z.number(),
-  fundingReady: z.boolean(),
-  setupVerifiedAt: z.string().nullable(),
-};
+function unavailableResult(error: unknown, fallback: string) {
+  if (error instanceof ConvictionApiError) {
+    return toolResult(
+      {
+        ok: false,
+        code: error.code,
+        message: error.message,
+      },
+      true,
+    );
+  }
+  return toolResult(
+    {
+      ok: false,
+      code: "unavailable",
+      message: error instanceof Error ? error.message : fallback,
+    },
+    true,
+  );
+}
 
 export type CreateLiveServerOptions = {
   profile: AgentProfile;
@@ -101,7 +114,7 @@ export type CreateLiveServerOptions = {
 
 /**
  * Live MCP server bound to one provisioned profile and renewable lease.
- * Registers the complete v1 tool contract; only account status is wired here.
+ * Registers the complete v1 tool contract; read tools are wired for network inspection.
  */
 export function createLiveServer(options: CreateLiveServerOptions): McpServer {
   const server = new McpServer(
@@ -114,7 +127,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
         "Conviction MCP live mode for one agent Universal Account.",
         "Quote before execute for all value-moving actions.",
         "The model never chooses identity, destination addresses, or signing material.",
-        "Use conviction_account_status to inspect lifecycle and backend-authoritative policy.",
+        "Use conviction_account_status, conviction_list_convictions, conviction_get_conviction, conviction_summarize_feed, and conviction_get_receipt to inspect the network.",
       ].join(" "),
     },
   );
@@ -124,12 +137,18 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     return null;
   };
 
+  const apiOptions = () => ({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+
   server.registerTool(
     "conviction_account_status",
     {
       title: "Get Conviction account status",
       description:
-        "Return the authenticated agent identity, lifecycle, action policy, limits, and remaining budget. Never returns key material.",
+        "Return the authenticated agent identity, unified balance, deposit information, lifecycle, action policy, limits, and remaining budget. Never returns key material.",
       inputSchema: {},
       outputSchema: accountStatusOutputSchema,
       annotations: readOnlyAnnotations,
@@ -138,24 +157,10 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
       const blocked = requireLease();
       if (blocked) return blocked;
       try {
-        const status = await fetchAgentStatus({
-          apiBaseUrl: options.apiBaseUrl,
-          wallet: options.wallet,
-          ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-        });
+        const status = await fetchAgentStatus(apiOptions());
         return toolResult(status);
       } catch (error) {
-        return toolResult(
-          {
-            ok: false,
-            code: "unavailable",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Could not load agent status.",
-          },
-          true,
-        );
+        return unavailableResult(error, "Could not load agent status.");
       }
     },
   );
@@ -168,11 +173,25 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
         "List current deck or feed convictions with bounded pagination.",
       inputSchema: {
         cursor: z.string().optional(),
-        limit: z.number().int().positive().max(50).optional(),
+        limit: z.number().int().positive().max(MAX_CONVICTION_PAGE_LIMIT).optional(),
       },
+      outputSchema: listConvictionsOutputSchema,
       annotations: readOnlyAnnotations,
     },
-    async () => requireLease() ?? notImplementedResult("conviction_list_convictions"),
+    async ({ cursor, limit }) => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+      try {
+        const page = await fetchConvictionsPage({
+          ...apiOptions(),
+          ...(cursor ? { cursor } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+        });
+        return toolResult(page);
+      } catch (error) {
+        return unavailableResult(error, "Could not list convictions.");
+      }
+    },
   );
 
   server.registerTool(
@@ -183,9 +202,22 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
       inputSchema: {
         entryId: z.string().min(1),
       },
+      outputSchema: getConvictionOutputSchema,
       annotations: readOnlyAnnotations,
     },
-    async () => requireLease() ?? notImplementedResult("conviction_get_conviction"),
+    async ({ entryId }) => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+      try {
+        const result = await fetchConviction({
+          ...apiOptions(),
+          entryId,
+        });
+        return toolResult(result);
+      } catch (error) {
+        return unavailableResult(error, "Could not load conviction.");
+      }
+    },
   );
 
   server.registerTool(
@@ -195,9 +227,19 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
       description:
         "Return deterministic feed flags plus an optional concise digest.",
       inputSchema: {},
+      outputSchema: summarizeFeedOutputSchema,
       annotations: readOnlyAnnotations,
     },
-    async () => requireLease() ?? notImplementedResult("conviction_summarize_feed"),
+    async () => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+      try {
+        const summary = await fetchFeedSummary(apiOptions());
+        return toolResult(summary);
+      } catch (error) {
+        return unavailableResult(error, "Could not summarize the feed.");
+      }
+    },
   );
 
   server.registerTool(
@@ -208,9 +250,22 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
       inputSchema: {
         receiptId: z.string().min(1),
       },
+      outputSchema: getReceiptOutputSchema,
       annotations: readOnlyAnnotations,
     },
-    async () => requireLease() ?? notImplementedResult("conviction_get_receipt"),
+    async ({ receiptId }) => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+      try {
+        const result = await fetchReceipt({
+          ...apiOptions(),
+          receiptId,
+        });
+        return toolResult(result);
+      } catch (error) {
+        return unavailableResult(error, "Could not load receipt.");
+      }
+    },
   );
 
   server.registerTool(
