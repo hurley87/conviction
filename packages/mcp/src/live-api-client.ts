@@ -293,3 +293,141 @@ export async function requestTradeQuote(options: {
   });
   return payload.quote;
 }
+
+export type LiveExecutionPermit = {
+  ok: true;
+  permitId: string;
+  quoteId: string;
+  quoteFingerprint: string;
+  dollarsIn: number;
+  floorUsd: number;
+  expiresAt: string;
+  intent: Record<string, unknown>;
+  sizeUsd: number;
+  agreedQuote: {
+    dollarsIn: number;
+    dollarsOut: number;
+    feeUsd: number;
+    floorUsd: number;
+    sourceChain: string;
+    destChain: string;
+    toAsset: string;
+    receivedSymbol?: string;
+    transactionId: string;
+    rawTransaction: unknown;
+  };
+  rawTransaction: unknown;
+  transactionId: string;
+  idempotencyKey: string;
+};
+
+export type LiveExecuteSuccess = {
+  ok: true;
+  receiptId: string;
+  quoteId: string;
+  quoteFingerprint: string;
+  transactionId: string;
+  summary: string;
+  receipt: {
+    slug: string;
+    summary: string;
+    dollarsIn: number;
+    dollarsOut: number;
+    feeUsd: number;
+    legs: Array<{ chain: string; txHash: string; explorerUrl: string }>;
+  };
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  idempotencyKey: string;
+};
+
+export type LiveExecuteError = {
+  ok: false;
+  code: string;
+  message: string;
+  action?: "trade";
+  quoteId?: string;
+  fields?: Array<{ field: string; code: string; message: string }>;
+};
+
+export type LiveExecuteResult = LiveExecuteSuccess | LiveExecuteError;
+
+/**
+ * Exchange quote identity for a single-use execution permit (ADR 0020).
+ * May return a prior durable execute result when the idempotency key completed.
+ */
+export async function requestExecutionPermit(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  quoteId: string;
+  idempotencyKey: string;
+  leaseId: string;
+  fetchImpl?: typeof fetch;
+}): Promise<LiveExecutionPermit | LiveExecuteResult> {
+  const payload = await signedFetch<{
+    permit?: LiveExecutionPermit;
+    result?: LiveExecuteResult;
+    error?: LiveExecuteError;
+  }>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/execute/permit",
+    body: {
+      quoteId: options.quoteId,
+      idempotencyKey: options.idempotencyKey,
+      leaseId: options.leaseId,
+    },
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+
+  if (payload.permit) return payload.permit;
+  if (payload.result) return payload.result;
+  if (payload.error) return payload.error;
+  throw new ConvictionApiError(
+    "unavailable",
+    "Execution permit response was empty.",
+    503,
+  );
+}
+
+/** Submit locally signed Particle payloads under an issued permit. */
+export async function submitSignedExecution(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  permitId: string;
+  idempotencyKey: string;
+  leaseId: string;
+  rootHashSignature: string;
+  authorizations?: Array<{ userOpHash: string; signature: string }>;
+  fetchImpl?: typeof fetch;
+}): Promise<LiveExecuteResult> {
+  const payload = await signedFetch<{
+    result?: LiveExecuteResult;
+    error?: LiveExecuteError;
+  }>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/execute/submit",
+    body: {
+      permitId: options.permitId,
+      idempotencyKey: options.idempotencyKey,
+      leaseId: options.leaseId,
+      rootHashSignature: options.rootHashSignature,
+      ...(options.authorizations
+        ? { authorizations: options.authorizations }
+        : {}),
+    },
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+
+  if (payload.result) return payload.result;
+  if (payload.error) return payload.error;
+  throw new ConvictionApiError(
+    "unavailable",
+    "Signed execution response was empty.",
+    503,
+  );
+}

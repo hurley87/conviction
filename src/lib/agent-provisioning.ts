@@ -271,6 +271,11 @@ export type AgentProvisioningStore = {
     agentId: string;
     now: Date;
   }): Promise<OwnedAgent>;
+  /** Atomically increase immutable lifetime spend after a counted debit. */
+  addLifetimeSpend(input: {
+    agentId: string;
+    dollarsIn: number;
+  }): Promise<OwnedAgent>;
   getActiveLease(agentId: string, now: Date): Promise<StoredAgentLease | null>;
   acquireLease(input: {
     agentId: string;
@@ -707,6 +712,29 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
 
     agent.setupVerifiedAt = input.now.toISOString();
     return agent;
+  }
+
+  async addLifetimeSpend(input: {
+    agentId: string;
+    dollarsIn: number;
+  }): Promise<OwnedAgent> {
+    const record = this.records.find(
+      ({ agent }) => agent.agentId === input.agentId,
+    );
+    if (!record) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity.",
+      );
+    }
+    if (!(input.dollarsIn > 0)) {
+      throw new AgentProvisioningError(
+        "invalid_request",
+        "Counted debit must be a positive amount.",
+      );
+    }
+    record.agent.lifetimeSpendUsd += input.dollarsIn;
+    return record.agent;
   }
 
   async getActiveLease(

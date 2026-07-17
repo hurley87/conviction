@@ -444,6 +444,33 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     );
   }
 
+  async addLifetimeSpend(input: {
+    agentId: string;
+    dollarsIn: number;
+  }): Promise<OwnedAgent> {
+    await ensureSchema(this.sql);
+    if (!(input.dollarsIn > 0)) {
+      throw new AgentProvisioningError(
+        "invalid_request",
+        "Counted debit must be a positive amount.",
+      );
+    }
+
+    const updated = await this.sql`
+      UPDATE agents
+      SET lifetime_spend_usd = lifetime_spend_usd + ${input.dollarsIn}
+      WHERE agent_id = ${input.agentId}
+      RETURNING *
+    `;
+    if (updated[0]) {
+      return ownedAgentFromRow(updated[0] as Record<string, unknown>);
+    }
+    throw new AgentProvisioningError(
+      "agent_not_found",
+      "No agent matches that identity.",
+    );
+  }
+
   async getActiveLease(
     agentId: string,
     now: Date,

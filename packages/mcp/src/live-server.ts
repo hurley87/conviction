@@ -14,6 +14,7 @@ import {
   fetchReceipt,
   requestTradeQuote,
 } from "./live-api-client.js";
+import { executeLiveTrade } from "./live-execute.js";
 import {
   accountStatusOutputSchema,
   getConvictionOutputSchema,
@@ -115,8 +116,8 @@ export type CreateLiveServerOptions = {
 
 /**
  * Live MCP server bound to one provisioned profile and renewable lease.
- * Registers the complete v1 tool contract; network read tools and trade
- * quoting are wired here (#51 / #53 / #54).
+ * Registers the complete v1 tool contract; network reads, quoting, and
+ * permit-gated trade execute are wired here (#51 / #53 / #54 / #56).
  */
 export function createLiveServer(options: CreateLiveServerOptions): McpServer {
   const server = new McpServer(
@@ -443,14 +444,25 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     {
       title: "Execute a trade quote",
       description:
-        "Execute a recent trade quote by quoteId. Never silently requotes.",
+        "Execute a recent trade quote by quoteId using the local Particle signer. Obtains a live backend execution permit before signing. Never silently requotes or exposes signer material.",
       inputSchema: {
         quoteId: z.string().min(1),
         idempotencyKey: z.string().min(1),
       },
       annotations: idempotentWriteAnnotations,
     },
-    async () => requireLease() ?? notImplementedResult("conviction_execute_trade"),
+    async ({ quoteId, idempotencyKey }) => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+      return executeLiveTrade({
+        apiBaseUrl: options.apiBaseUrl,
+        wallet: options.wallet,
+        leaseId: options.lease.leaseId,
+        quoteId,
+        idempotencyKey,
+        ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      });
+    },
   );
 
   server.registerTool(
