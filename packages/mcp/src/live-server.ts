@@ -270,7 +270,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     },
   );
 
-  const mcpTradeAsset = z.enum([
+  const mcpTradeAssetValues = [
     "cash",
     "eth",
     "usdc",
@@ -278,6 +278,51 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     "btc",
     "sol",
     "arb",
+  ] as const;
+  const mcpTradeAsset = z.enum(mcpTradeAssetValues);
+  const mcpTradeQuoteInput = z
+    .object({
+      toAsset: mcpTradeAsset,
+      fromAsset: mcpTradeAsset.optional(),
+      sizeUsd: z.number().positive().optional(),
+      fraction: z.number().gt(0).max(1).optional(),
+      destChain: z.enum(["Arbitrum", "Base"]).optional(),
+      publicationIntent: z.boolean().optional(),
+    })
+    .passthrough();
+  // The MCP SDK only advertises object-shaped Zod schemas. Supply the
+  // relationship that Zod refinements cannot express in generated JSON Schema
+  // while keeping runtime passthrough so forbidden fields receive stable codes.
+  mcpTradeQuoteInput._zod.toJSONSchema = () => ({
+    type: "object",
+    properties: {
+      toAsset: { type: "string", enum: [...mcpTradeAssetValues] },
+      fromAsset: { type: "string", enum: [...mcpTradeAssetValues] },
+      sizeUsd: { type: "number", exclusiveMinimum: 0 },
+      fraction: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+      destChain: { type: "string", enum: ["Arbitrum", "Base"] },
+      publicationIntent: { type: "boolean" },
+    },
+    required: ["toAsset"],
+    oneOf: [
+      {
+        required: ["sizeUsd"],
+        not: { required: ["fraction"] },
+      },
+      {
+        required: ["fraction"],
+        not: { required: ["sizeUsd"] },
+      },
+    ],
+    additionalProperties: false,
+  });
+  const mcpTradeQuoteKeys = new Set([
+    "toAsset",
+    "fromAsset",
+    "sizeUsd",
+    "fraction",
+    "destChain",
+    "publicationIntent",
   ]);
 
   server.registerTool(
@@ -286,19 +331,40 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
       title: "Quote a structured trade",
       description:
         "Validate structured trade fields and return a short-lived quote with costs, floor, exact expiresAt, and quoteId. Named product assets only — no free-form text, contract addresses, or TokenRef. Available even when trading is disabled or the account is unfunded; moves no funds.",
-      inputSchema: {
-        toAsset: mcpTradeAsset,
-        fromAsset: mcpTradeAsset.optional(),
-        sizeUsd: z.number().positive().optional(),
-        fraction: z.number().gt(0).max(1).optional(),
-        destChain: z.enum(["Arbitrum", "Base"]).optional(),
-        publicationIntent: z.boolean().optional(),
-      },
+      inputSchema: mcpTradeQuoteInput,
       annotations: readOnlyAnnotations,
     },
     async (args) => {
       const blocked = requireLease();
       if (blocked) return blocked;
+
+      const unknownKeys = Object.keys(args).filter(
+        (key) => !mcpTradeQuoteKeys.has(key),
+      );
+      if (unknownKeys.length > 0) {
+        const looksLikeToken = unknownKeys.some((key) =>
+          /token|address|contract|chainId/i.test(key),
+        );
+        return toolResult(
+          {
+            ok: false,
+            code: looksLikeToken
+              ? "arbitrary_token_rejected"
+              : "invalid_input",
+            message: looksLikeToken
+              ? "Direct MCP trades accept named product assets only. Contract addresses and TokenRef fields are rejected."
+              : "Structured trade fields include unsupported keys.",
+            fields: unknownKeys.map((field) => ({
+              field,
+              code: looksLikeToken ? "forbidden_field" : "unknown_field",
+              message: looksLikeToken
+                ? `Remove "${field}". Use a named product asset instead.`
+                : `Unknown field "${field}".`,
+            })),
+          },
+          true,
+        );
+      }
 
       const hasSize = args.sizeUsd !== undefined;
       const hasFraction = args.fraction !== undefined;

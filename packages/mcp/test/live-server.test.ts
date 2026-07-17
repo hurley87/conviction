@@ -447,6 +447,20 @@ describe("createLiveServer", () => {
     expect(JSON.stringify(quoteTool?.inputSchema)).not.toMatch(
       /side|dollarsIn|token|contract|prompt|text/i,
     );
+    expect(quoteTool?.inputSchema).toMatchObject({
+      required: ["toAsset"],
+      additionalProperties: false,
+      oneOf: [
+        {
+          required: ["sizeUsd"],
+          not: { required: ["fraction"] },
+        },
+        {
+          required: ["fraction"],
+          not: { required: ["sizeUsd"] },
+        },
+      ],
+    });
 
     const result = await client.callTool({
       name: "conviction_quote_trade",
@@ -468,6 +482,48 @@ describe("createLiveServer", () => {
       destChain: "Arbitrum",
       quoteFingerprint: "a".repeat(64),
     });
+  });
+
+  it("rejects arbitrary token and contract arguments before quoting", async () => {
+    const wallet = Wallet.createRandom();
+    const lease = mockLease(wallet);
+    let calledBackend = false;
+    const client = await connectLiveServer({
+      wallet,
+      lease,
+      fetchImpl: async () => {
+        calledBackend = true;
+        return new Response("{}", { status: 500 });
+      },
+    });
+
+    for (const forbidden of [
+      {
+        contractAddress: "0x1111111111111111111111111111111111111111",
+      },
+      {
+        token: {
+          chainId: 8453,
+          address: "0x1111111111111111111111111111111111111111",
+        },
+      },
+    ]) {
+      const result = await client.callTool({
+        name: "conviction_quote_trade",
+        arguments: {
+          toAsset: "eth",
+          sizeUsd: 20,
+          ...forbidden,
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        code: "arbitrary_token_rejected",
+      });
+    }
+    expect(calledBackend).toBe(false);
   });
 
   it("surfaces gate_failed with report details from the backend", async () => {
