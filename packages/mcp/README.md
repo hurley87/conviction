@@ -6,7 +6,11 @@ surfaces:
 
 - deterministic mock mode for host integration without credentials
 - `init` to redeem a one-time Agent Access handoff into a local encrypted profile
+- `doctor` / `status` for non-value-moving connection checks
 - `serve --profile` for one authenticated live MCP session with a renewable lease
+- public Agent Skills setup guide at `skills/conviction-mcp-setup/`
+
+Setup contract version `1` is shared by the CLI, Agent Access UI, and the skill.
 
 ## Provision a local profile
 
@@ -21,12 +25,28 @@ conviction-mcp init \
 
 `init` generates an ethers v6 encrypted keystore on the machine, proves
 possession of the public address to Conviction, exports a separately
-passphrase-encrypted backup, decrypt-verifies that backup, then marks the agent
-funding-ready. The private key never leaves the local process.
+passphrase-encrypted backup, decrypt-verifies that backup, then prints
+major-pinned host configuration for Claude Code, Codex, Hermes, and OpenClaw.
+The private key never leaves the local process.
 
 Headless unlock uses `CONVICTION_KEYSTORE_PASSWORD`. Recovery passphrase may be
 passed with `--backup-passphrase` or `CONVICTION_BACKUP_PASSPHRASE`. Raw private
 key environment variables are rejected.
+
+## Verify locally before funding
+
+```sh
+conviction-mcp doctor --profile <name> --api-base https://your-conviction-host
+```
+
+Doctor checks profile integrity, keystore access, backend authentication, and
+account status without moving funds. On success it records setup verification
+and only then suggests funding. Optional `--report <path>` writes a redacted
+local support bundle and never uploads it.
+
+```sh
+conviction-mcp status --profile <name>
+```
 
 ## Start mock mode
 
@@ -47,7 +67,7 @@ npm run mcp:mock
 
 ## Start a live authenticated session
 
-After `init` writes a local profile:
+After `init` writes a local profile and `doctor` succeeds:
 
 ```sh
 conviction-mcp serve --profile <name> --api-base https://your-conviction-host
@@ -59,12 +79,21 @@ only when intentionally displacing the other process. Live mode authenticates
 backend requests with the local signer and never exposes signing methods as MCP
 tools. Headless unlock uses `CONVICTION_KEYSTORE_PASSWORD`.
 
-## Connect Codex
+## Connect a host
 
-Add the mock server as a local stdio MCP server:
+Every supported host launches the same shared MCP contract through the
+major-pinned package runner. Replace `<name>` with your local profile name.
+
+### Claude Code
 
 ```sh
-codex mcp add conviction -- npx -y @conviction/mcp@1 serve --mock
+claude mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
+```
+
+### Codex
+
+```sh
+codex mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
 ```
 
 The equivalent `~/.codex/config.toml` entry is:
@@ -72,23 +101,44 @@ The equivalent `~/.codex/config.toml` entry is:
 ```toml
 [mcp_servers.conviction]
 command = "npx"
-args = ["-y", "@conviction/mcp@1", "serve", "--mock"]
+args = ["-y", "@conviction/mcp@1", "serve", "--profile", "<name>"]
 ```
 
-After restarting Codex, list tools and call
-`conviction_mock_interaction` with `{ "scenario": "success" }`. It returns:
+### Hermes
 
-```json
-{
-  "ok": true,
-  "mode": "mock",
-  "code": "mock_success",
-  "message": "Conviction MCP mock interaction completed.",
-  "interactionId": "mock-interaction-001"
-}
+Add under `mcp_servers` in `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  conviction:
+    command: "npx"
+    args:
+      - "-y"
+      - "@conviction/mcp@1"
+      - "serve"
+      - "--profile"
+      - "<name>"
 ```
 
-Use `{ "scenario": "error" }` to validate the stable structured error path.
+### OpenClaw
+
+```sh
+openclaw mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
+```
+
+## Platforms
+
+- macOS: supported
+- Linux: supported
+- Windows through WSL: supported
+- Native Windows: deferred
+
+## Agent-readable setup skill
+
+Install or read `skills/conviction-mcp-setup/SKILL.md` before connecting the MCP
+server. The skill explains installation, host configuration, diagnostics, and
+when operator action is required. It cannot provision, fund, change policy, or
+access secrets.
 
 ## Mock-mode safety
 

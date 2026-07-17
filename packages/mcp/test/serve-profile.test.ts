@@ -98,6 +98,7 @@ async function startMockApi(walletAddress: string) {
             lifetimeSpendUsd: 0,
             remainingBudgetUsd: 100,
             fundingReady: true,
+            setupVerifiedAt: null,
           },
         }),
       );

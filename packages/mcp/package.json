@@ -6,10 +6,21 @@
   "bin": {
     "conviction-mcp": "bin/conviction-mcp.js"
   },
+  "exports": {
+    "./setup-contract": {
+      "types": "./dist/setup-contract.d.ts",
+      "import": "./dist/setup-contract.js"
+    },
+    "./host-config": {
+      "types": "./dist/host-config.d.ts",
+      "import": "./dist/host-config.js"
+    }
+  },
   "files": [
     "bin",
     "dist",
     "src",
+    "skills",
     "README.md"
   ],
   "scripts": {

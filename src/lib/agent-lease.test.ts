@@ -173,6 +173,7 @@ describe("MCP lease lifecycle", () => {
       spendBudgetUsd: 100,
       lifetimeSpendUsd: 40,
       fundingReady: true,
+      setupVerifiedAt: null,
       createdAt: FIXED_NOW.toISOString(),
     });
 
@@ -183,6 +184,7 @@ describe("MCP lease lifecycle", () => {
       remainingBudgetUsd: 60,
       actionPolicy: { trade: true, back: false, publish: true },
       fundingReady: true,
+      setupVerifiedAt: null,
     });
     expect(status).not.toHaveProperty("funded");
     expect(JSON.stringify(status)).not.toMatch(

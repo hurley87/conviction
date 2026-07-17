@@ -1,26 +1,34 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useAccount } from "@/components/account/account-context";
+import { AgentSkillHandoff } from "@/components/agent-access/agent-skill-handoff";
+import { SetupActionPanel, type SetupAgent } from "@/components/agent-access/setup-action-panel";
+import { SetupProgressRail } from "@/components/agent-access/setup-progress-rail";
+import {
+  SETUP_CONTRACT,
+  defaultProfileName,
+  resolveSetupPhase,
+} from "@conviction/mcp/setup-contract";
 
-type AgentStatus =
-  | "provisioning"
-  | "active"
-  | "disabled"
-  | "capped"
-  | "retiring"
-  | "retired";
+function subscribeNoop() {
+  return () => {};
+}
 
-type OwnedAgentSummary = {
-  agentId: string;
-  handle: string;
-  operatorHandle: string;
-  address: string | null;
-  status: AgentStatus;
-  fundingReady: boolean;
-  maxTradeUsd: number;
-  spendBudgetUsd: number;
-};
+function useSetupSkillUrl(): string {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => `${window.location.origin}/agent-access/skill`,
+    () => "/agent-access/skill",
+  );
+}
 
 type Handoff = {
   code: string;
@@ -29,6 +37,8 @@ type Handoff = {
 };
 
 type ApiError = { error?: { code?: string; message?: string } };
+
+const POLL_MS = 4000;
 
 const DEFAULT_FORM = {
   handle: "",
@@ -40,7 +50,25 @@ const DEFAULT_FORM = {
   publish: true,
 };
 
-function statusLabel(status: AgentStatus): string {
+function statusEyebrow(status: SetupAgent["status"]): string {
+  switch (status) {
+    case "provisioning":
+      return "Pending agent";
+    case "active":
+      return "Your agent";
+    case "disabled":
+    case "capped":
+    case "retiring":
+    case "retired":
+      return "Agent status";
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+function statusLabel(status: SetupAgent["status"]): string {
   switch (status) {
     case "provisioning":
       return "Awaiting local signer";
@@ -61,33 +89,16 @@ function statusLabel(status: AgentStatus): string {
   }
 }
 
-function statusEyebrow(status: AgentStatus): string {
-  switch (status) {
-    case "provisioning":
-      return "Pending agent";
-    case "active":
-      return "Your agent";
-    case "disabled":
-    case "capped":
-    case "retiring":
-    case "retired":
-      return "Agent status";
-    default: {
-      const _exhaustive: never = status;
-      return _exhaustive;
-    }
-  }
-}
-
 export function AgentAccessView() {
   const account = useAccount();
   const [form, setForm] = useState(DEFAULT_FORM);
-  const [agent, setAgent] = useState<OwnedAgentSummary | null>(null);
+  const [agent, setAgent] = useState<SetupAgent | null>(null);
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const skillUrl = useSetupSkillUrl();
 
   const authenticatedFetch = useCallback(
     async (input: string, init?: RequestInit) => {
@@ -105,21 +116,54 @@ export function AgentAccessView() {
     [account],
   );
 
+  const refreshAgent = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent === true;
+      if (!silent) setRefreshing(true);
+      try {
+        const response = await authenticatedFetch("/api/agents");
+        const payload = (await response.json()) as {
+          agent?: SetupAgent | null;
+        } & ApiError;
+        if (!response.ok) {
+          throw new Error(payload.error?.message ?? "Could not load Agent Access.");
+        }
+        setAgent(payload.agent ?? null);
+        setError(null);
+      } catch (reason) {
+        if (!silent) {
+          setError(
+            reason instanceof Error ? reason.message : "Could not load Agent Access.",
+          );
+        }
+      } finally {
+        setLoading(false);
+        if (!silent) setRefreshing(false);
+      }
+    },
+    [authenticatedFetch],
+  );
+
   useEffect(() => {
     let cancelled = false;
     void authenticatedFetch("/api/agents")
       .then(async (response) => {
         const payload = (await response.json()) as {
-          agent?: OwnedAgentSummary | null;
+          agent?: SetupAgent | null;
         } & ApiError;
         if (!response.ok) {
           throw new Error(payload.error?.message ?? "Could not load Agent Access.");
         }
-        if (!cancelled) setAgent(payload.agent ?? null);
+        if (!cancelled) {
+          setAgent(payload.agent ?? null);
+          setError(null);
+        }
       })
       .catch((reason) => {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "Could not load Agent Access.");
+          setError(
+            reason instanceof Error ? reason.message : "Could not load Agent Access.",
+          );
         }
       })
       .finally(() => {
@@ -129,6 +173,42 @@ export function AgentAccessView() {
       cancelled = true;
     };
   }, [authenticatedFetch]);
+
+  const phase = useMemo(
+    () =>
+      resolveSetupPhase(
+        agent
+          ? {
+              status: agent.status,
+              fundingReady: agent.fundingReady,
+              setupVerifiedAt: agent.setupVerifiedAt,
+            }
+          : null,
+      ),
+    [agent],
+  );
+
+  const shouldPoll =
+    phase.kind === "provision" ||
+    phase.kind === "backup" ||
+    phase.kind === "verify";
+
+  useEffect(() => {
+    if (!shouldPoll) return;
+    const id = window.setInterval(() => {
+      void refreshAgent({ silent: true });
+    }, POLL_MS);
+    return () => window.clearInterval(id);
+  }, [shouldPoll, refreshAgent]);
+
+  useEffect(() => {
+    if (!shouldPoll) return;
+    const onFocus = () => {
+      void refreshAgent({ silent: true });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [shouldPoll, refreshAgent]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -150,7 +230,7 @@ export function AgentAccessView() {
         }),
       });
       const payload = (await response.json()) as {
-        agent?: OwnedAgentSummary;
+        agent?: SetupAgent;
         handoff?: Handoff;
       } & ApiError;
       if (!response.ok || !payload.agent || !payload.handoff) {
@@ -165,12 +245,7 @@ export function AgentAccessView() {
     }
   }
 
-  async function copyCommand() {
-    if (!handoff) return;
-    await navigator.clipboard.writeText(handoff.command);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
-  }
+  const profileName = agent ? defaultProfileName(agent.handle) : undefined;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -196,6 +271,47 @@ export function AgentAccessView() {
         </div>
       </section>
 
+      <section className="app-card p-7 sm:p-9">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="pt-eyebrow">Setup contract v{SETUP_CONTRACT.version}</p>
+            <h2 className="mt-2 font-display text-2xl font-semibold text-ink">
+              Operator setup journey
+            </h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-ink-2">
+              {phase.nextAction}
+              {shouldPoll
+                ? " This page refreshes automatically while setup is in progress."
+                : null}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/agent-access/skill"
+              className="rounded-[14px] border border-line bg-surface-2 px-4 py-2.5 text-sm font-extrabold text-ink transition hover:border-brand hover:text-brand"
+            >
+              Setup skill
+            </Link>
+            <button
+              type="button"
+              onClick={() => void refreshAgent()}
+              disabled={refreshing || loading}
+              className="rounded-[14px] bg-brand px-4 py-2.5 text-sm font-extrabold text-brand-on transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+        </div>
+        <div className="mt-6">
+          <SetupProgressRail phase={phase} />
+        </div>
+      </section>
+
+      <AgentSkillHandoff
+        skillUrl={skillUrl}
+        {...(profileName ? { profileName } : {})}
+      />
+
       {error && (
         <div role="alert" className="rounded-[18px] border border-danger/25 bg-red-50 px-5 py-4 text-sm font-semibold text-danger">
           {error}
@@ -216,51 +332,7 @@ export function AgentAccessView() {
               {statusLabel(agent.status)}
             </span>
           </div>
-
-          {agent.status === "provisioning" ? (
-            handoff ? (
-              <div className="mt-7 rounded-[22px] border border-brand/15 bg-brand-soft/45 p-6">
-                <p className="text-sm font-extrabold text-ink">Use this handoff once</p>
-                <p className="mt-2 text-sm leading-6 text-ink-2">
-                  Run it before {new Date(handoff.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. It will not be shown again after you leave this page. Export and decrypt-verify the encrypted backup in the CLI before funding.
-                </p>
-                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                  <code className="min-w-0 flex-1 overflow-x-auto rounded-[14px] bg-ink px-4 py-3 text-sm text-white">{handoff.command}</code>
-                  <button type="button" onClick={copyCommand} className="rounded-[14px] bg-brand px-5 py-3 text-sm font-extrabold text-brand-on transition hover:bg-brand-hover">
-                    {copied ? "Copied" : "Copy command"}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-7 rounded-[18px] border border-line bg-surface-2 px-5 py-4 text-sm leading-6 text-ink-2">
-                This account already used its one-time handoff. Return to the local terminal where you began setup, or wait for a future recovery flow.
-              </div>
-            )
-          ) : agent.status === "active" && !agent.fundingReady ? (
-            <div className="mt-7 rounded-[18px] border border-warning/25 bg-[#fff8e8] px-5 py-4 text-sm leading-6 text-ink-2">
-              Local signer is bound, but funding stays locked until the CLI exports and decrypt-verifies an encrypted backup. Resume{" "}
-              <code className="rounded bg-ink/5 px-1.5 py-0.5 text-xs">conviction-mcp init</code> with the same code and profile—no deposit address is shown here yet.
-            </div>
-          ) : agent.status === "active" && agent.fundingReady ? (
-            <div className="mt-7 space-y-3 rounded-[18px] border border-brand/15 bg-brand-soft/45 px-5 py-4 text-sm leading-6 text-ink-2">
-              <p>
-                Backup verified. This agent is ready for funding. Connect an MCP host next, then send funds to the Universal Account.
-              </p>
-              {agent.address ? (
-                <p>
-                  <span className="font-extrabold text-ink">Deposit address:</span>{" "}
-                  <code className="break-all rounded bg-ink/5 px-1.5 py-0.5 font-mono text-xs text-ink">
-                    {agent.address}
-                  </code>
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <div className="mt-7 rounded-[18px] border border-line bg-surface-2 px-5 py-4 text-sm leading-6 text-ink-2">
-              This account already holds its v1 agent slot ({statusLabel(agent.status).toLowerCase()}).
-              Retire it before creating another.
-            </div>
-          )}
+          <SetupActionPanel phase={phase} agent={agent} handoff={handoff} />
         </section>
       ) : (
         <form onSubmit={submit} className="app-card p-7 sm:p-9">

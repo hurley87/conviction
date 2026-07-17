@@ -22,6 +22,8 @@ export type LiveAgentStatus = {
   lifetimeSpendUsd: number;
   remainingBudgetUsd: number;
   fundingReady: boolean;
+  /** ISO timestamp set by a successful non-value-moving doctor check. */
+  setupVerifiedAt: string | null;
 };
 
 export type LiveLease = {
@@ -100,6 +102,23 @@ export async function fetchAgentStatus(options: {
     ...options,
     method: "GET",
     path: "/api/agents/status",
+  });
+  return payload.status;
+}
+
+/** Record that a non-value-moving doctor/status check succeeded. */
+export async function markSetupVerified(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  fetchImpl?: typeof fetch;
+}): Promise<LiveAgentStatus> {
+  const payload = await signedFetch<{ status: LiveAgentStatus }>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/setup-verify",
+    body: {},
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
   return payload.status;
 }

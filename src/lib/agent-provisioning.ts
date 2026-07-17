@@ -82,6 +82,8 @@ export type OwnedAgent = {
   lifetimeSpendUsd: number;
   /** True only after local backup export + decrypt-verification succeed. */
   fundingReady: boolean;
+  /** Set after a successful non-value-moving doctor/setup verification. */
+  setupVerifiedAt: string | null;
   createdAt: string;
 };
 
@@ -92,6 +94,7 @@ export type PendingAgent = OwnedAgent & {
   publicStatus: "paused";
   lifetimeSpendUsd: 0;
   fundingReady: false;
+  setupVerifiedAt: null;
 };
 
 function isAgentStatus(value: string): value is AgentStatus {
@@ -143,6 +146,12 @@ export function ownedAgentFromRow(row: Record<string, unknown>): OwnedAgent {
     fundingReadyRaw === "t" ||
     fundingReadyRaw === 1;
 
+  const setupVerifiedRaw = row.setup_verified_at;
+  const setupVerifiedAt =
+    setupVerifiedRaw === null || setupVerifiedRaw === undefined
+      ? null
+      : new Date(String(setupVerifiedRaw)).toISOString();
+
   return {
     agentId: String(row.agent_id),
     ownerUserId: String(row.owner_user_id),
@@ -158,6 +167,7 @@ export function ownedAgentFromRow(row: Record<string, unknown>): OwnedAgent {
     spendBudgetUsd: Number(row.spend_budget_usd),
     lifetimeSpendUsd: Number(row.lifetime_spend_usd),
     fundingReady,
+    setupVerifiedAt,
     createdAt: new Date(String(row.created_at)).toISOString(),
   };
 }
@@ -257,6 +267,10 @@ export type AgentProvisioningStore = {
     agentId: string;
     signerAddress: string;
   }): Promise<OwnedAgent>;
+  markSetupVerified(input: {
+    agentId: string;
+    now: Date;
+  }): Promise<OwnedAgent>;
   getActiveLease(agentId: string, now: Date): Promise<StoredAgentLease | null>;
   acquireLease(input: {
     agentId: string;
@@ -287,7 +301,9 @@ export type ProvisioningErrorCode =
   | "invalid_proof"
   | "agent_not_pending"
   | "address_mismatch"
-  | "agent_not_found";
+  | "agent_not_found"
+  | "setup_not_ready"
+  | "lifecycle_blocked";
 
 export class AgentProvisioningError extends Error {
   constructor(
@@ -375,6 +391,7 @@ export async function createPendingAgent(
     spendBudgetUsd: parsed.data.spendBudgetUsd,
     lifetimeSpendUsd: 0,
     fundingReady: false,
+    setupVerifiedAt: null,
     createdAt: now.toISOString(),
   };
 
@@ -615,6 +632,7 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
     agent.status = "active";
     agent.publicStatus = "active";
     agent.fundingReady = false;
+    agent.setupVerifiedAt = null;
     handoff.redeemedAt = input.now.toISOString();
     return agent;
   }
@@ -656,6 +674,38 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
     }
 
     agent.fundingReady = true;
+    return agent;
+  }
+
+  async markSetupVerified(input: {
+    agentId: string;
+    now: Date;
+  }): Promise<OwnedAgent> {
+    const record = this.records.find(
+      ({ agent }) => agent.agentId === input.agentId,
+    );
+    if (!record) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity.",
+      );
+    }
+
+    const { agent } = record;
+    if (!agent.fundingReady) {
+      throw new AgentProvisioningError(
+        "setup_not_ready",
+        "Verify the encrypted backup before recording local setup verification.",
+      );
+    }
+    if (agent.status === "retired" || agent.status === "retiring") {
+      throw new AgentProvisioningError(
+        "lifecycle_blocked",
+        "A retired or retiring agent cannot complete setup verification.",
+      );
+    }
+
+    agent.setupVerifiedAt = input.now.toISOString();
     return agent;
   }
 

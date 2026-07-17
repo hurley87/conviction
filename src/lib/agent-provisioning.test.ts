@@ -145,6 +145,7 @@ describe("ownedAgentFromRow", () => {
         spend_budget_usd: "100",
         lifetime_spend_usd: "12.5",
         funding_ready: true,
+        setup_verified_at: "2026-07-16T21:00:00.000Z",
         created_at: "2026-07-16T20:00:00.000Z",
       }),
     ).toMatchObject({
@@ -153,6 +154,7 @@ describe("ownedAgentFromRow", () => {
       publicStatus: "active",
       lifetimeSpendUsd: 12.5,
       fundingReady: true,
+      setupVerifiedAt: "2026-07-16T21:00:00.000Z",
     });
   });
 });
@@ -338,5 +340,16 @@ describe("completeAgentBackupVerification", () => {
 
     expect(agent.fundingReady).toBe(true);
     expect(agent.address).toBe(wallet.address);
+    expect(agent.setupVerifiedAt).toBeNull();
+
+    await expect(
+      store.markSetupVerified({
+        agentId: created.agent.agentId,
+        now: FIXED_NOW,
+      }),
+    ).resolves.toMatchObject({
+      setupVerifiedAt: FIXED_NOW.toISOString(),
+      fundingReady: true,
+    });
   });
 });

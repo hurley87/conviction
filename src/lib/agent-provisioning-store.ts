@@ -41,6 +41,7 @@ async function ensureSchema(sql: NonNullable<ReturnType<typeof getSql>>) {
       spend_budget_usd numeric NOT NULL,
       lifetime_spend_usd numeric NOT NULL DEFAULT 0,
       funding_ready boolean NOT NULL DEFAULT false,
+      setup_verified_at timestamptz,
       created_at timestamptz NOT NULL,
       disabled_at timestamptz,
       retirement_started_at timestamptz,
@@ -52,6 +53,10 @@ async function ensureSchema(sql: NonNullable<ReturnType<typeof getSql>>) {
   await sql`
     ALTER TABLE agents
       ADD COLUMN IF NOT EXISTS funding_ready boolean NOT NULL DEFAULT false
+  `;
+  await sql`
+    ALTER TABLE agents
+      ADD COLUMN IF NOT EXISTS setup_verified_at timestamptz
   `;
   await sql`
     ALTER TABLE agents
@@ -286,7 +291,8 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
           address = ${normalized},
           status = 'active',
           public_status = 'active',
-          funding_ready = false
+          funding_ready = false,
+          setup_verified_at = NULL
         WHERE agent_id = ${agent.agentId}
           AND status = 'provisioning'
           AND (address IS NULL OR lower(address) = lower(${normalized}))
@@ -384,6 +390,57 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     throw new AgentProvisioningError(
       "identity_unavailable",
       "Could not mark the agent funding-ready. Try again.",
+    );
+  }
+
+  async markSetupVerified(input: {
+    agentId: string;
+    now: Date;
+  }): Promise<OwnedAgent> {
+    await ensureSchema(this.sql);
+    const verifiedAt = input.now.toISOString();
+
+    const updated = await this.sql`
+      UPDATE agents
+      SET setup_verified_at = ${verifiedAt}::timestamptz
+      WHERE agent_id = ${input.agentId}
+        AND funding_ready = true
+        AND status NOT IN ('retired', 'retiring')
+      RETURNING *
+    `;
+
+    if (updated[0]) {
+      return ownedAgentFromRow(updated[0] as Record<string, unknown>);
+    }
+
+    const rows = await this.sql`
+      SELECT * FROM agents WHERE agent_id = ${input.agentId} LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity.",
+      );
+    }
+
+    const agent = ownedAgentFromRow(row);
+    if (!agent.fundingReady) {
+      throw new AgentProvisioningError(
+        "setup_not_ready",
+        "Verify the encrypted backup before recording local setup verification.",
+      );
+    }
+    if (agent.status === "retired" || agent.status === "retiring") {
+      throw new AgentProvisioningError(
+        "lifecycle_blocked",
+        "A retired or retiring agent cannot complete setup verification.",
+      );
+    }
+
+    throw new AgentProvisioningError(
+      "identity_unavailable",
+      "Could not record setup verification. Try again.",
     );
   }
 

@@ -126,6 +126,7 @@ describe("createLiveServer", () => {
             lifetimeSpendUsd: 10,
             remainingBudgetUsd: 90,
             fundingReady: true,
+            setupVerifiedAt: null,
           },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
