@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Wallet, getBytes } from "ethers";
 
 import {
   MemoryAgentIdempotencyStore,
@@ -10,12 +11,14 @@ import {
   issueTradeExecutionPermit,
   submitSignedTradeExecution,
 } from "@/lib/agent-permit";
+import { createSignedTradeSender } from "@/lib/agent-permit-send";
 import {
   MemoryAgentQuoteStore,
   issueTradeQuote,
 } from "@/lib/agent-quote";
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import { MockUAClient } from "@/lib/ua/mock";
+import type { RawTransaction } from "@/lib/ua/trade";
 import type { UniversalBalance } from "@/lib/verbs/types";
 
 const FIXED_NOW = new Date("2026-07-17T12:00:00.000Z");
@@ -28,14 +31,17 @@ const FUNDED_BALANCE: UniversalBalance = {
   ],
 };
 
-function testAgent(overrides: Partial<OwnedAgent> = {}): OwnedAgent {
+function testAgent(
+  wallet: Wallet,
+  overrides: Partial<OwnedAgent> = {},
+): OwnedAgent {
   return {
     agentId: "00000000-0000-4000-8000-000000000056",
     ownerUserId: "did:privy:owner-permit",
     handle: "permit-scout",
     authorKind: "agent",
     operatorHandle: "operator",
-    address: "0x1111111111111111111111111111111111111111",
+    address: wallet.address,
     returnAddress: "0x0000000000000000000000000000000000000001",
     status: "active",
     publicStatus: "active",
@@ -50,11 +56,15 @@ function testAgent(overrides: Partial<OwnedAgent> = {}): OwnedAgent {
   };
 }
 
+const VALID_ROOT_HASH =
+  "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
 async function quoteFixture(options: {
+  wallet: Wallet;
   agent?: OwnedAgent;
   sizeUsd?: number;
-} = {}) {
-  const agent = options.agent ?? testAgent();
+}) {
+  const agent = options.agent ?? testAgent(options.wallet);
   const ua = new MockUAClient({ sources: FUNDED_BALANCE.sources });
   const quoteStore = new MemoryAgentQuoteStore();
   const quote = await issueTradeQuote({
@@ -70,12 +80,30 @@ async function quoteFixture(options: {
     now: () => FIXED_NOW,
     randomId: () => "22222222-2222-4222-8222-222222222222",
   });
+  // Mock UA rootHashes are not 32-byte digests; normalize for signer tests.
+  const stored = await quoteStore.get(quote.quoteId);
+  if (!stored) throw new Error("missing quote");
+  const raw = (stored.rawTransaction ?? {}) as Record<string, unknown>;
+  await quoteStore.save({
+    ...stored,
+    rawTransaction: { ...raw, rootHash: VALID_ROOT_HASH },
+  });
   return { agent, quoteStore, quote };
+}
+
+async function signPermitRoot(
+  wallet: Wallet,
+  rawTransaction: unknown,
+): Promise<string> {
+  const raw = rawTransaction as RawTransaction;
+  if (!raw.rootHash) throw new Error("missing rootHash");
+  return wallet.signMessage(getBytes(raw.rootHash));
 }
 
 describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
   it("issues a permit bound to the quote, then completes after local signatures", async () => {
-    const { agent, quoteStore, quote } = await quoteFixture();
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
     const permitStore = new MemoryAgentPermitStore();
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const receipts = new MemoryAgentReceiptPersist();
@@ -109,23 +137,29 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     expect((await quoteStore.get(quote.quoteId))?.used).toBe(true);
     expect(spendLedger.reservedUsd(agent.agentId)).toBe(quote.dollarsIn);
 
+    const rootHashSignature = await signPermitRoot(
+      wallet,
+      permit.rawTransaction,
+    );
     const result = await submitSignedTradeExecution({
       agent,
       input: {
         permitId: permit.permitId,
         idempotencyKey: "idem-permit-1",
-        rootHashSignature: "0xlocalsig",
+        leaseId: "lease-1",
+        rootHashSignature,
       },
       permitStore,
       idempotencyStore,
       receipts,
       spendLedger,
+      activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       onSpend: (dollarsIn) => {
         spent += dollarsIn;
       },
       randomId: () => "live-receipt-001",
-      send: async ({ receiptSlug, agreedQuote, intent }) => ({
+      send: async ({ receiptSlug, agreedQuote }) => ({
         transactionId: "tx-live-1",
         summary: "Done",
         receipt: {
@@ -147,8 +181,6 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
             },
           ],
         },
-        // intent retained for sender contract; unused in this stub
-        ...(intent ? {} : {}),
       }),
     });
 
@@ -165,8 +197,9 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     });
   });
 
-  it("returns stored idempotent success without issuing another permit", async () => {
-    const { agent, quoteStore, quote } = await quoteFixture();
+  it("checks lease before returning a prior idempotent success", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
     const permitStore = new MemoryAgentPermitStore();
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const receipts = new MemoryAgentReceiptPersist();
@@ -175,7 +208,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const permit = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
-      idempotencyKey: "idem-retry",
+      idempotencyKey: "idem-lease-first",
       leaseId: "lease-1",
       activeLeaseId: "lease-1",
       quoteStore,
@@ -191,13 +224,15 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       agent,
       input: {
         permitId: permit.permitId,
-        idempotencyKey: "idem-retry",
-        rootHashSignature: "0xlocalsig",
+        idempotencyKey: "idem-lease-first",
+        leaseId: "lease-1",
+        rootHashSignature: await signPermitRoot(wallet, permit.rawTransaction),
       },
       permitStore,
       idempotencyStore,
       receipts,
       spendLedger,
+      activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       send: async ({ receiptSlug, agreedQuote }) => ({
         transactionId: "tx-1",
@@ -212,39 +247,12 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
         },
       }),
     });
-
-    const disabled = testAgent({
-      ...agent,
-      actionPolicy: { trade: false, back: true, publish: true },
-    });
-    const second = await issueTradeExecutionPermit({
-      agent: disabled,
-      quoteId: quote.quoteId,
-      idempotencyKey: "idem-retry",
-      leaseId: "lease-1",
-      activeLeaseId: "lease-1",
-      quoteStore,
-      permitStore,
-      idempotencyStore,
-      balance: FUNDED_BALANCE,
-      spendLedger,
-      now: () => FIXED_NOW,
-    });
-
-    expect(second).toEqual(first);
     expect(first.ok).toBe(true);
-  });
 
-  it("fails closed on lease mismatch before claiming the quote", async () => {
-    const { agent, quoteStore, quote } = await quoteFixture();
-    const permitStore = new MemoryAgentPermitStore();
-    const idempotencyStore = new MemoryAgentIdempotencyStore();
-    const spendLedger = new MemorySpendLedger();
-
-    const result = await issueTradeExecutionPermit({
+    const displaced = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
-      idempotencyKey: "idem-lease",
+      idempotencyKey: "idem-lease-first",
       leaseId: "lease-stale",
       activeLeaseId: "lease-current",
       quoteStore,
@@ -254,13 +262,246 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       spendLedger,
       now: () => FIXED_NOW,
     });
+    expect(displaced).toMatchObject({ ok: false, code: "unavailable" });
+    expect(JSON.stringify(displaced)).not.toContain("rawTransaction");
+  });
 
+  it("does not return an issued permit's rawTransaction to a displaced lease", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
+    const permitStore = new MemoryAgentPermitStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const spendLedger = new MemorySpendLedger();
+
+    const permit = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-open-permit",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+    });
+    expect(permit.ok).toBe(true);
+
+    const displaced = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-open-permit",
+      leaseId: "lease-stale",
+      activeLeaseId: "lease-current",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+    });
+    expect(displaced).toMatchObject({ ok: false, code: "unavailable" });
+  });
+
+  it("releases spend when an issued permit expires before submit", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
+    const permitStore = new MemoryAgentPermitStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const receipts = new MemoryAgentReceiptPersist();
+    const spendLedger = new MemorySpendLedger();
+
+    const permit = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-expired",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+    });
+    if (!permit.ok || !("permitId" in permit)) throw new Error("expected permit");
+    expect(spendLedger.reservedUsd(agent.agentId)).toBe(quote.dollarsIn);
+
+    const expired = await submitSignedTradeExecution({
+      agent,
+      input: {
+        permitId: permit.permitId,
+        idempotencyKey: "idem-expired",
+        leaseId: "lease-1",
+        rootHashSignature: await signPermitRoot(wallet, permit.rawTransaction),
+      },
+      permitStore,
+      idempotencyStore,
+      receipts,
+      spendLedger,
+      activeLeaseId: "lease-1",
+      now: () => new Date(FIXED_NOW.getTime() + 60_000),
+      send: async () => {
+        throw new Error("should not send");
+      },
+    });
+
+    expect(expired).toMatchObject({ ok: false, code: "quote_expired" });
+    expect(spendLedger.reservedUsd(agent.agentId)).toBe(0);
+    expect((await permitStore.get(permit.permitId))?.status).toBe("released");
+  });
+
+  it("lets success overwrite a racing failure in the idempotency store", async () => {
+    const store = new MemoryAgentIdempotencyStore();
+    await store.save("agent-1", "idem-race", {
+      ok: false,
+      code: "quote_mismatch",
+      message: "loser",
+    });
+    await store.save("agent-1", "idem-race", {
+      ok: true,
+      receiptId: "rcpt",
+      quoteId: "q",
+      quoteFingerprint: "fp",
+      transactionId: "tx",
+      summary: "Done",
+      receipt: {
+        slug: "rcpt",
+        summary: "Done",
+        dollarsIn: 1,
+        dollarsOut: 1,
+        feeUsd: 0,
+        legs: [],
+      },
+      dollarsIn: 1,
+      dollarsOut: 1,
+      feeUsd: 0,
+      idempotencyKey: "idem-race",
+    });
+    const stored = await store.get("agent-1", "idem-race");
+    expect(stored).toMatchObject({ ok: true, receiptId: "rcpt" });
+
+    await store.save("agent-1", "idem-race", {
+      ok: false,
+      code: "unavailable",
+      message: "should not overwrite success",
+    });
+    expect(await store.get("agent-1", "idem-race")).toMatchObject({
+      ok: true,
+      receiptId: "rcpt",
+    });
+  });
+
+  it("persists success even when post-send accounting fails", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
+    const permitStore = new MemoryAgentPermitStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const receipts = new MemoryAgentReceiptPersist();
+    const spendLedger = new MemorySpendLedger();
+
+    const permit = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-post-send",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+    });
+    if (!permit.ok || !("permitId" in permit)) throw new Error("expected permit");
+
+    const result = await submitSignedTradeExecution({
+      agent,
+      input: {
+        permitId: permit.permitId,
+        idempotencyKey: "idem-post-send",
+        leaseId: "lease-1",
+        rootHashSignature: await signPermitRoot(wallet, permit.rawTransaction),
+      },
+      permitStore,
+      idempotencyStore,
+      receipts,
+      spendLedger,
+      activeLeaseId: "lease-1",
+      now: () => FIXED_NOW,
+      onSpend: () => {
+        throw new Error("lifetime write failed");
+      },
+      send: async ({ receiptSlug, agreedQuote }) => ({
+        transactionId: "tx-ok",
+        summary: "Done",
+        receipt: {
+          slug: receiptSlug,
+          summary: "Done",
+          dollarsIn: agreedQuote.dollarsIn,
+          dollarsOut: agreedQuote.dollarsOut,
+          feeUsd: agreedQuote.feeUsd,
+          legs: [],
+        },
+      }),
+    });
+
+    expect(result).toMatchObject({ ok: true, transactionId: "tx-ok" });
+    expect(await idempotencyStore.get(agent.agentId, "idem-post-send")).toMatchObject({
+      ok: true,
+    });
+    expect((await permitStore.get(permit.permitId))?.status).toBe("pending");
+  });
+
+  it("rejects submit without the active lease", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
+    const permitStore = new MemoryAgentPermitStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const receipts = new MemoryAgentReceiptPersist();
+    const spendLedger = new MemorySpendLedger();
+
+    const permit = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-submit-lease",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+    });
+    if (!permit.ok || !("permitId" in permit)) throw new Error("expected permit");
+
+    const result = await submitSignedTradeExecution({
+      agent,
+      input: {
+        permitId: permit.permitId,
+        idempotencyKey: "idem-submit-lease",
+        leaseId: "lease-stale",
+        rootHashSignature: await signPermitRoot(wallet, permit.rawTransaction),
+      },
+      permitStore,
+      idempotencyStore,
+      receipts,
+      spendLedger,
+      activeLeaseId: "lease-1",
+      now: () => FIXED_NOW,
+      send: async () => {
+        throw new Error("should not send");
+      },
+    });
     expect(result).toMatchObject({ ok: false, code: "unavailable" });
-    expect((await quoteStore.get(quote.quoteId))?.used).toBe(false);
+    expect((await permitStore.get(permit.permitId))?.status).toBe("issued");
   });
 
   it("records pending when submission is uncertain and blocks reuse", async () => {
-    const { agent, quoteStore, quote } = await quoteFixture();
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
     const permitStore = new MemoryAgentPermitStore();
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const receipts = new MemoryAgentReceiptPersist();
@@ -286,12 +527,14 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       input: {
         permitId: permit.permitId,
         idempotencyKey: "idem-pending",
-        rootHashSignature: "0xlocalsig",
+        leaseId: "lease-1",
+        rootHashSignature: await signPermitRoot(wallet, permit.rawTransaction),
       },
       permitStore,
       idempotencyStore,
       receipts,
       spendLedger,
+      activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       send: async () => {
         throw new Error("network timeout after broadcast");
@@ -303,16 +546,15 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       code: "unavailable",
     });
     expect(uncertain.ok === false && uncertain.message).toMatch(/uncertain/i);
-
-    const stored = await permitStore.get(permit.permitId);
-    expect(stored?.status).toBe("pending");
+    expect((await permitStore.get(permit.permitId))?.status).toBe("pending");
   });
 
   it("rejects disabled trade before reserving spend", async () => {
-    const agent = testAgent({
+    const wallet = Wallet.createRandom();
+    const agent = testAgent(wallet, {
       actionPolicy: { trade: false, back: true, publish: true },
     });
-    const { quoteStore, quote } = await quoteFixture({ agent });
+    const { quoteStore, quote } = await quoteFixture({ wallet, agent });
     const permitStore = new MemoryAgentPermitStore();
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const spendLedger = new MemorySpendLedger();
@@ -337,5 +579,86 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       action: "trade",
     });
     expect(spendLedger.reservedUsd(agent.agentId)).toBe(0);
+  });
+
+  it("fails closed when Particle is missing unless mock submit is allowed", async () => {
+    const previous = {
+      projectId: process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID,
+      clientKey: process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY,
+      appId: process.env.NEXT_PUBLIC_PARTICLE_APP_ID,
+    };
+    delete process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID;
+    delete process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY;
+    delete process.env.NEXT_PUBLIC_PARTICLE_APP_ID;
+
+    try {
+      const closed = createSignedTradeSender(
+        "0x1111111111111111111111111111111111111111",
+      );
+      await expect(
+        closed({
+          rawTransaction: {
+            rootHash:
+              "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+          rootHashSignature: "0xsig",
+          agreedQuote: {
+            dollarsIn: 1,
+            dollarsOut: 1,
+            feeUsd: 0,
+            etaSeconds: 1,
+            floorUsd: 1,
+            sourceChain: "Base",
+            destChain: "Arbitrum",
+            toAsset: "eth",
+            transactionId: "tx",
+            rawTransaction: {},
+          },
+          intent: { toAsset: "eth", destChain: "Arbitrum" },
+          sizeUsd: 1,
+          receiptSlug: "r1",
+        }),
+      ).rejects.toThrow(/Particle is not configured/i);
+
+      const mock = createSignedTradeSender(
+        "0x1111111111111111111111111111111111111111",
+        { allowMock: true },
+      );
+      const result = await mock({
+        rawTransaction: {
+          rootHash:
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          userOps: [{ chainId: 42161, userOpHash: "0xop" }],
+        },
+        rootHashSignature: "0xsig",
+        agreedQuote: {
+          dollarsIn: 20,
+          dollarsOut: 19.9,
+          feeUsd: 0.1,
+          etaSeconds: 1,
+          floorUsd: 19.7,
+          sourceChain: "Base",
+          destChain: "Arbitrum",
+          toAsset: "eth",
+          transactionId: "tx",
+          rawTransaction: {},
+        },
+        intent: { toAsset: "eth", destChain: "Arbitrum" },
+        sizeUsd: 20,
+        receiptSlug: "r-mock",
+      });
+      expect(result.receipt.dollarsIn).toBe(20);
+      expect(result.receipt.dollarsOut).toBe(19.9);
+    } finally {
+      if (previous.projectId) {
+        process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID = previous.projectId;
+      }
+      if (previous.clientKey) {
+        process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY = previous.clientKey;
+      }
+      if (previous.appId) {
+        process.env.NEXT_PUBLIC_PARTICLE_APP_ID = previous.appId;
+      }
+    }
   });
 });

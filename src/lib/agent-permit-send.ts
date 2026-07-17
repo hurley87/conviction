@@ -22,11 +22,23 @@ function particleEnvOrNull(): {
   return { projectId, projectClientKey, projectAppUuid };
 }
 
+export type CreateSignedTradeSenderOptions = {
+  /**
+   * Allow the deterministic MockUAClient path when Particle env is absent.
+   * Production routes must leave this false so misconfiguration fails closed.
+   */
+  allowMock?: boolean;
+};
+
 /**
  * Build a SignedTradeSender for the agent owner.
- * Live Particle when configured; deterministic mock otherwise (local/dev).
+ * Live Particle when configured. Without Particle, fails closed unless
+ * `allowMock` is explicitly enabled for tests.
  */
-export function createSignedTradeSender(ownerAddress: string): SignedTradeSender {
+export function createSignedTradeSender(
+  ownerAddress: string,
+  options: CreateSignedTradeSenderOptions = {},
+): SignedTradeSender {
   return async (input) => {
     const raw = input.rawTransaction;
     if (!raw?.rootHash) {
@@ -76,7 +88,13 @@ export function createSignedTradeSender(ownerAddress: string): SignedTradeSender
       };
     }
 
-    // Zero-credential / test path — validate signature shape then mock-send.
+    if (!options.allowMock) {
+      throw new Error(
+        "Particle is not configured; refusing to mock a value-moving submit.",
+      );
+    }
+
+    // Explicit test-only path — still requires signature shape, then mock-sends.
     if (!input.rootHashSignature.startsWith("0x")) {
       throw new Error("Invalid rootHash signature.");
     }
@@ -89,6 +107,8 @@ export function createSignedTradeSender(ownerAddress: string): SignedTradeSender
       throw new Error("Missing EIP-7702 authorizations for pending userOps.");
     }
 
+    // Use agreed quote economics; MockUAClient may build a fresh mock TX for
+    // transport only. Receipt amounts stay bound to the permit's agreedQuote.
     const mock = new MockUAClient();
     const result = await mock.executeTrade({
       intent: input.intent,
@@ -106,8 +126,18 @@ export function createSignedTradeSender(ownerAddress: string): SignedTradeSender
     });
     return {
       transactionId: result.transactionId,
-      receipt: result.receipt,
-      summary: result.summary,
+      receipt: {
+        ...result.receipt,
+        dollarsIn: input.agreedQuote.dollarsIn,
+        dollarsOut: input.agreedQuote.dollarsOut,
+        feeUsd: input.agreedQuote.feeUsd,
+      },
+      summary: narrateResult(
+        input.agreedQuote.dollarsIn,
+        input.agreedQuote.dollarsOut,
+        input.agreedQuote.toAsset,
+        input.agreedQuote.receivedSymbol,
+      ),
     };
   };
 }

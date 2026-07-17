@@ -2,6 +2,7 @@
 // Quote alone never authorizes signing — MCP must obtain a live permit first.
 
 import { randomUUID } from "node:crypto";
+import { getAddress, getBytes, verifyMessage } from "ethers";
 
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import {
@@ -73,9 +74,62 @@ export type IssuePermitResult = IssuePermitSuccess | AgentExecuteErrorBody;
 export type SubmitSignedTradeInput = {
   permitId: string;
   idempotencyKey: string;
+  leaseId: string;
   rootHashSignature: string;
   authorizations?: Array<{ userOpHash: string; signature: string }>;
 };
+
+/** Outcomes that are safe to durable-store under an idempotency key. */
+function isDurablePermitError(code: AgentExecuteErrorBody["code"]): boolean {
+  switch (code) {
+    case "invalid_input":
+    case "lifecycle_blocked":
+    case "action_disabled":
+    case "quote_not_found":
+    case "quote_expired":
+    case "quote_mismatch":
+    case "insufficient_balance":
+    case "price_floor_breached":
+    case "spend_limit_exceeded":
+      return true;
+    case "unavailable":
+      return false;
+    default: {
+      const _exhaustive: never = code;
+      return _exhaustive;
+    }
+  }
+}
+
+async function maybePersist(
+  store: AgentIdempotencyStore,
+  agentId: string,
+  idempotencyKey: string,
+  result: AgentExecuteResult,
+): Promise<AgentExecuteResult> {
+  if (result.ok || isDurablePermitError(result.code)) {
+    await store.save(agentId, idempotencyKey, result);
+  }
+  return result;
+}
+
+function permitResponse(record: ExecutionPermitRecord): IssuePermitSuccess {
+  return {
+    ok: true,
+    permitId: record.permitId,
+    quoteId: record.quoteId,
+    quoteFingerprint: record.quoteFingerprint,
+    dollarsIn: record.dollarsIn,
+    floorUsd: record.floorUsd,
+    expiresAt: record.expiresAt,
+    intent: record.intent,
+    sizeUsd: record.sizeUsd,
+    agreedQuote: record.agreedQuote,
+    rawTransaction: record.rawTransaction,
+    transactionId: record.agreedQuote.transactionId,
+    idempotencyKey: record.idempotencyKey,
+  };
+}
 
 export type SignedTradeSender = (input: {
   rawTransaction: RawTransaction;
@@ -325,53 +379,58 @@ export async function issueTradeExecutionPermit(options: {
 
   const idemKey = `${options.agent.agentId}\0${parsed.idempotencyKey}`;
   return withLock(permitIdemLocks, idemKey, async () => {
+    // ADR 0048: authentication / MCP lease before idempotent results.
+    if (!options.activeLeaseId || options.activeLeaseId !== parsed.leaseId) {
+      return {
+        ok: false,
+        code: "unavailable",
+        message:
+          "The MCP lease is no longer valid. Restart the server to reconnect.",
+      };
+    }
+
     const prior = await options.idempotencyStore.get(
       options.agent.agentId,
       parsed.idempotencyKey,
     );
-    if (prior?.ok) return prior;
-    if (prior && !prior.ok) return prior;
+    if (prior) return prior;
+
+    const spendLedger = options.spendLedger ?? new MemorySpendLedger();
+    const now = options.now?.() ?? new Date();
 
     const existingPermit = await options.permitStore.getByIdempotency(
       options.agent.agentId,
       parsed.idempotencyKey,
     );
-    if (existingPermit && existingPermit.status === "issued") {
-      const now = options.now?.() ?? new Date();
-      if (new Date(existingPermit.expiresAt).getTime() > now.getTime()) {
-        return {
-          ok: true as const,
-          permitId: existingPermit.permitId,
-          quoteId: existingPermit.quoteId,
-          quoteFingerprint: existingPermit.quoteFingerprint,
-          dollarsIn: existingPermit.dollarsIn,
-          floorUsd: existingPermit.floorUsd,
-          expiresAt: existingPermit.expiresAt,
-          intent: existingPermit.intent,
-          sizeUsd: existingPermit.sizeUsd,
-          agreedQuote: existingPermit.agreedQuote,
-          rawTransaction: existingPermit.rawTransaction,
-          transactionId: existingPermit.agreedQuote.transactionId,
-          idempotencyKey: existingPermit.idempotencyKey,
-        };
+    if (existingPermit) {
+      if (existingPermit.status === "issued") {
+        if (new Date(existingPermit.expiresAt).getTime() <= now.getTime()) {
+          // ADR 0020: unused expired permits must release their reservation.
+          const released = await options.permitStore.casStatus(
+            existingPermit.permitId,
+            "issued",
+            "released",
+          );
+          if (released) {
+            await spendLedger.release(
+              options.agent.agentId,
+              existingPermit.dollarsIn,
+            );
+          }
+        } else if (existingPermit.leaseId !== parsed.leaseId) {
+          return {
+            ok: false,
+            code: "unavailable",
+            message:
+              "The MCP lease is no longer valid. Restart the server to reconnect.",
+          };
+        } else {
+          return permitResponse(existingPermit);
+        }
       }
     }
 
     try {
-      // Lease mismatches are not durable idempotent outcomes — the operator may
-      // reconnect and retry the same key under a fresh active lease.
-      if (
-        !options.activeLeaseId ||
-        options.activeLeaseId !== parsed.leaseId
-      ) {
-        return {
-          ok: false,
-          code: "unavailable",
-          message:
-            "The MCP lease is no longer valid. Restart the server to reconnect.",
-        };
-      }
-
       assertExecuteLifecycle(options.agent);
       assertTradeEnabled(options.agent);
 
@@ -393,7 +452,20 @@ export async function issueTradeExecutionPermit(options: {
 
           assertBalance(quote, options.balance);
 
-          const spendLedger = options.spendLedger ?? new MemorySpendLedger();
+          if (quote.dollarsIn > options.agent.maxTradeUsd + 1e-9) {
+            return maybePersist(
+              options.idempotencyStore,
+              options.agent.agentId,
+              parsed.idempotencyKey,
+              {
+                ok: false,
+                code: "spend_limit_exceeded",
+                message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds the per-trade limit of $${options.agent.maxTradeUsd.toFixed(2)}.`,
+                quoteId: quote.quoteId,
+              },
+            );
+          }
+
           const reserved = await spendLedger.tryReserve({
             agentId: options.agent.agentId,
             dollarsIn: quote.dollarsIn,
@@ -407,53 +479,32 @@ export async function issueTradeExecutionPermit(options: {
               options.agent.spendBudgetUsd,
               options.agent.lifetimeSpendUsd,
             );
-            if (quote.dollarsIn > options.agent.maxTradeUsd + 1e-9) {
-              const body: AgentExecuteErrorBody = {
-                ok: false,
-                code: "spend_limit_exceeded",
-                message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds the per-trade limit of $${options.agent.maxTradeUsd.toFixed(2)}.`,
-                quoteId: quote.quoteId,
-              };
-              await options.idempotencyStore.save(
-                options.agent.agentId,
-                parsed.idempotencyKey,
-                body,
-              );
-              return body;
-            }
-            const body: AgentExecuteErrorBody = {
+            // Remaining-budget failures are not durable — reservations may free.
+            return {
               ok: false,
               code: "spend_limit_exceeded",
               message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds remaining spend budget of $${remaining.toFixed(2)}.`,
               quoteId: quote.quoteId,
             };
-            await options.idempotencyStore.save(
-              options.agent.agentId,
-              parsed.idempotencyKey,
-              body,
-            );
-            return body;
           }
 
           // ADR 0020: claim before any signing side effect.
           const claimed = await options.quoteStore.markUsed(quote.quoteId);
           if (!claimed) {
             await spendLedger.release(options.agent.agentId, quote.dollarsIn);
-            const body: AgentExecuteErrorBody = {
-              ok: false,
-              code: "quote_mismatch",
-              message: "That quote has already been consumed.",
-              quoteId: quote.quoteId,
-            };
-            await options.idempotencyStore.save(
+            return maybePersist(
+              options.idempotencyStore,
               options.agent.agentId,
               parsed.idempotencyKey,
-              body,
+              {
+                ok: false,
+                code: "quote_mismatch",
+                message: "That quote has already been consumed.",
+                quoteId: quote.quoteId,
+              },
             );
-            return body;
           }
 
-          const now = options.now?.() ?? new Date();
           const permitId = options.randomId?.() ?? randomUUID();
           const quoteExpiry = new Date(quote.expiresAt).getTime();
           const permitExpiry = Math.min(
@@ -480,34 +531,34 @@ export async function issueTradeExecutionPermit(options: {
             expiresAt: new Date(permitExpiry).toISOString(),
             status: "issued",
           };
-          await options.permitStore.save(record);
+          try {
+            await options.permitStore.save(record);
+          } catch (error) {
+            await spendLedger.release(options.agent.agentId, quote.dollarsIn);
+            // Quote is already claimed — surface unavailable without sticky store
+            // when persistence itself failed (may be transient).
+            return {
+              ok: false,
+              code: "unavailable",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Could not persist the execution permit.",
+              quoteId: quote.quoteId,
+            };
+          }
 
-          return {
-            ok: true as const,
-            permitId,
-            quoteId: quote.quoteId,
-            quoteFingerprint: quote.quoteFingerprint,
-            dollarsIn: quote.dollarsIn,
-            floorUsd: quote.floorUsd,
-            expiresAt: record.expiresAt,
-            intent: quote.intent,
-            sizeUsd: quote.sizeUsd,
-            agreedQuote,
-            rawTransaction: quote.rawTransaction,
-            transactionId: quote.transactionId,
-            idempotencyKey: parsed.idempotencyKey,
-          };
+          return permitResponse(record);
         },
       );
     } catch (error) {
       if (error instanceof AgentExecuteError) {
-        const body = error.toBody();
-        await options.idempotencyStore.save(
+        return maybePersist(
+          options.idempotencyStore,
           options.agent.agentId,
           parsed.idempotencyKey,
-          body,
+          error.toBody(),
         );
-        return body;
       }
       if (error instanceof AgentQuoteError) {
         const code = error.code;
@@ -516,21 +567,21 @@ export async function issueTradeExecutionPermit(options: {
           code === "quote_expired" ||
           code === "quote_mismatch"
         ) {
-          const body: AgentExecuteErrorBody = {
-            ok: false,
-            code,
-            message: error.message,
-            quoteId: parsed.quoteId,
-          };
-          await options.idempotencyStore.save(
+          return maybePersist(
+            options.idempotencyStore,
             options.agent.agentId,
             parsed.idempotencyKey,
-            body,
+            {
+              ok: false,
+              code,
+              message: error.message,
+              quoteId: parsed.quoteId,
+            },
           );
-          return body;
         }
       }
-      const body: AgentExecuteErrorBody = {
+      // Transient unavailable — not durable.
+      return {
         ok: false,
         code: "unavailable",
         message:
@@ -539,12 +590,6 @@ export async function issueTradeExecutionPermit(options: {
             : "Could not issue an execution permit.",
         quoteId: parsed.quoteId,
       };
-      await options.idempotencyStore.save(
-        options.agent.agentId,
-        parsed.idempotencyKey,
-        body,
-      );
-      return body;
     }
   });
 }
@@ -560,6 +605,7 @@ export async function submitSignedTradeExecution(options: {
   idempotencyStore: AgentIdempotencyStore;
   receipts: AgentReceiptPersist;
   send: SignedTradeSender;
+  activeLeaseId: string | null;
   spendLedger?: AgentSpendLedger;
   onSpend?: (dollarsIn: number) => void | Promise<void>;
   now?: () => Date;
@@ -572,6 +618,10 @@ export async function submitSignedTradeExecution(options: {
   const idempotencyKey =
     typeof options.input.idempotencyKey === "string"
       ? options.input.idempotencyKey.trim()
+      : "";
+  const leaseId =
+    typeof options.input.leaseId === "string"
+      ? options.input.leaseId.trim()
       : "";
   const rootHashSignature =
     typeof options.input.rootHashSignature === "string"
@@ -592,6 +642,13 @@ export async function submitSignedTradeExecution(options: {
       "Provide the same idempotencyKey used to obtain the permit.",
     ).toBody();
   }
+  if (!leaseId) {
+    return invalidInput(
+      "leaseId",
+      "required",
+      "Provide the active MCP leaseId for this process.",
+    ).toBody();
+  }
   if (!rootHashSignature.startsWith("0x")) {
     return invalidInput(
       "rootHashSignature",
@@ -602,6 +659,16 @@ export async function submitSignedTradeExecution(options: {
 
   const idemKey = `${options.agent.agentId}\0${idempotencyKey}`;
   return withLock(permitIdemLocks, idemKey, async () => {
+    // ADR 0048: lease before idempotent results.
+    if (!options.activeLeaseId || options.activeLeaseId !== leaseId) {
+      return {
+        ok: false,
+        code: "unavailable",
+        message:
+          "The MCP lease is no longer valid. Restart the server to reconnect.",
+      };
+    }
+
     const prior = await options.idempotencyStore.get(
       options.agent.agentId,
       idempotencyKey,
@@ -611,29 +678,52 @@ export async function submitSignedTradeExecution(options: {
     const persist = async (
       result: AgentExecuteResult,
     ): Promise<AgentExecuteResult> => {
-      await options.idempotencyStore.save(
-        options.agent.agentId,
-        idempotencyKey,
-        result,
-      );
+      if (result.ok || isDurablePermitError(result.code)) {
+        await options.idempotencyStore.save(
+          options.agent.agentId,
+          idempotencyKey,
+          result,
+        );
+      } else if (result.code === "unavailable") {
+        // Pending / uncertain submissions must be durable so retries do not resign.
+        await options.idempotencyStore.save(
+          options.agent.agentId,
+          idempotencyKey,
+          result,
+        );
+      }
       return result;
     };
 
     const permit = await options.permitStore.get(permitId);
     if (!permit || permit.agentId !== options.agent.agentId) {
-      return persist({
+      return {
         ok: false,
         code: "unavailable",
         message: "Execution permit not found.",
-      });
+      };
     }
     if (permit.idempotencyKey !== idempotencyKey) {
-      return persist({
+      return maybePersist(
+        options.idempotencyStore,
+        options.agent.agentId,
+        idempotencyKey,
+        {
+          ok: false,
+          code: "quote_mismatch",
+          message: "idempotencyKey does not match the issued permit.",
+          quoteId: permit.quoteId,
+        },
+      );
+    }
+    if (permit.leaseId !== leaseId) {
+      return {
         ok: false,
-        code: "quote_mismatch",
-        message: "idempotencyKey does not match the issued permit.",
+        code: "unavailable",
+        message:
+          "The MCP lease is no longer valid for this permit. Restart the server to reconnect.",
         quoteId: permit.quoteId,
-      });
+      };
     }
 
     const now = options.now?.() ?? new Date();
@@ -647,41 +737,92 @@ export async function submitSignedTradeExecution(options: {
       });
     }
     if (permit.status !== "issued") {
-      return persist({
+      // Re-read idempotency — a concurrent winner may have stored success.
+      const again = await options.idempotencyStore.get(
+        options.agent.agentId,
+        idempotencyKey,
+      );
+      if (again) return again;
+      return {
         ok: false,
-        code: "quote_mismatch",
+        code: "unavailable",
         message: "That execution permit has already been consumed.",
         quoteId: permit.quoteId,
-      });
+      };
     }
     if (new Date(permit.expiresAt).getTime() <= now.getTime()) {
-      await options.permitStore.casStatus(permitId, "issued", "released");
-      await options.spendLedger?.release(
-        options.agent.agentId,
-        permit.dollarsIn,
+      const released = await options.permitStore.casStatus(
+        permitId,
+        "issued",
+        "released",
       );
-      return persist({
+      if (released) {
+        await options.spendLedger?.release(
+          options.agent.agentId,
+          permit.dollarsIn,
+        );
+      }
+      return maybePersist(
+        options.idempotencyStore,
+        options.agent.agentId,
+        idempotencyKey,
+        {
+          ok: false,
+          code: "quote_expired",
+          message:
+            "The execution permit expired before submission. Call conviction_quote_trade for a new quoteId.",
+          quoteId: permit.quoteId,
+        },
+      );
+    }
+
+    const raw = permit.rawTransaction as RawTransaction;
+    if (!raw?.rootHash || !options.agent.address) {
+      return {
         ok: false,
-        code: "quote_expired",
-        message:
-          "The execution permit expired before submission. Call conviction_quote_trade for a new quoteId.",
+        code: "unavailable",
+        message: "Execution permit is missing a signable rootHash.",
         quoteId: permit.quoteId,
-      });
+      };
+    }
+    try {
+      const recovered = verifyMessage(getBytes(raw.rootHash), rootHashSignature);
+      if (getAddress(recovered) !== getAddress(options.agent.address)) {
+        return invalidInput(
+          "rootHashSignature",
+          "invalid_signature",
+          "rootHashSignature does not recover to this agent's signer address.",
+        ).toBody();
+      }
+    } catch {
+      return invalidInput(
+        "rootHashSignature",
+        "invalid_signature",
+        "rootHashSignature is not a valid signature over the permit rootHash.",
+      ).toBody();
     }
 
     // Claim permit before provider side effects so concurrent submits cannot both send.
+    // Include expiry in the race window by re-checking status+time via CAS only.
     const claimed = await options.permitStore.casStatus(
       permitId,
       "issued",
       "consumed",
     );
     if (!claimed) {
-      return persist({
+      const again = await options.idempotencyStore.get(
+        options.agent.agentId,
+        idempotencyKey,
+      );
+      if (again) return again;
+      // Do not durable-persist a CAS-loser failure — the winner may still succeed.
+      return {
         ok: false,
-        code: "quote_mismatch",
-        message: "That execution permit has already been consumed.",
+        code: "unavailable",
+        message:
+          "Another submission is in progress for this permit. Retry shortly.",
         quoteId: permit.quoteId,
-      });
+      };
     }
 
     const receiptSlug =
@@ -691,7 +832,7 @@ export async function submitSignedTradeExecution(options: {
     let sendResult: Awaited<ReturnType<SignedTradeSender>>;
     try {
       sendResult = await options.send({
-        rawTransaction: permit.rawTransaction as RawTransaction,
+        rawTransaction: raw,
         rootHashSignature,
         ...(options.input.authorizations
           ? { authorizations: options.input.authorizations }
@@ -726,30 +867,7 @@ export async function submitSignedTradeExecution(options: {
       });
     }
 
-    try {
-      await options.receipts.save(sendResult.receipt);
-      await options.onSpend?.(permit.dollarsIn);
-      await options.spendLedger?.commit(
-        options.agent.agentId,
-        permit.dollarsIn,
-      );
-    } catch (error) {
-      await options.spendLedger?.commit(
-        options.agent.agentId,
-        permit.dollarsIn,
-      );
-      return persist({
-        ok: false,
-        code: "unavailable",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Trade executed but receipt persistence failed.",
-        quoteId: permit.quoteId,
-      });
-    }
-
-    return persist({
+    const success: AgentExecuteSuccess = {
       ok: true,
       receiptId: sendResult.receipt.slug,
       quoteId: permit.quoteId,
@@ -761,7 +879,30 @@ export async function submitSignedTradeExecution(options: {
       dollarsOut: sendResult.receipt.dollarsOut,
       feeUsd: sendResult.receipt.feeUsd,
       idempotencyKey,
-    });
+    };
+
+    // Persist success before secondary accounting so a concurrent loser cannot
+    // sticky-fail the idempotency key after funds moved.
+    await options.idempotencyStore.save(
+      options.agent.agentId,
+      idempotencyKey,
+      success,
+    );
+
+    try {
+      await options.onSpend?.(permit.dollarsIn);
+      await options.receipts.save(sendResult.receipt);
+      await options.spendLedger?.commit(
+        options.agent.agentId,
+        permit.dollarsIn,
+      );
+    } catch {
+      // On-chain send already succeeded. Keep durable success; mark pending for
+      // reconciliation of receipt / lifetime spend / reservation release.
+      await options.permitStore.casStatus(permitId, "consumed", "pending");
+    }
+
+    return success;
   });
 }
 

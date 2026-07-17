@@ -211,6 +211,8 @@ class NeonAgentIdempotencyStore implements AgentIdempotencyStore {
     result: AgentExecuteResult,
   ): Promise<void> {
     await ensurePermitSchema(this.sql);
+    // Success always wins over a prior failure so a CAS-loser sticky error
+    // cannot mask a concurrent winner's successful on-chain send.
     await this.sql`
       INSERT INTO agent_execute_idempotency (agent_id, idempotency_key, result)
       VALUES (
@@ -218,7 +220,10 @@ class NeonAgentIdempotencyStore implements AgentIdempotencyStore {
         ${idempotencyKey},
         ${JSON.stringify(result)}::jsonb
       )
-      ON CONFLICT (agent_id, idempotency_key) DO NOTHING
+      ON CONFLICT (agent_id, idempotency_key) DO UPDATE
+      SET result = EXCLUDED.result
+      WHERE (agent_execute_idempotency.result->>'ok') IS DISTINCT FROM 'true'
+        AND (EXCLUDED.result->>'ok') = 'true'
     `;
   }
 }
@@ -229,17 +234,35 @@ export class NeonSpendLedger implements AgentSpendLedger {
 
   async remainingUsd(
     agentId: string,
-    spendBudgetUsd: number,
-    lifetimeSpendUsd: number,
+    spendBudgetUsd = 0,
+    lifetimeSpendUsd = 0,
   ): Promise<number> {
+    void spendBudgetUsd;
+    void lifetimeSpendUsd;
     await ensurePermitSchema(this.sql);
+    // Prefer authoritative agent ledger over caller snapshots.
     const rows = (await this.sql`
-      SELECT reserved_usd FROM agent_spend_reservations
-      WHERE agent_id = ${agentId}::uuid
+      SELECT
+        a.spend_budget_usd,
+        a.lifetime_spend_usd,
+        COALESCE(r.reserved_usd, 0) AS reserved_usd
+      FROM agents a
+      LEFT JOIN agent_spend_reservations r ON r.agent_id = a.agent_id
+      WHERE a.agent_id = ${agentId}::uuid
       LIMIT 1
-    `) as Array<{ reserved_usd: string | number }>;
-    const reserved = rows[0] ? num(rows[0].reserved_usd) : 0;
-    return Math.max(0, spendBudgetUsd - lifetimeSpendUsd - reserved);
+    `) as Array<{
+      spend_budget_usd: string | number;
+      lifetime_spend_usd: string | number;
+      reserved_usd: string | number;
+    }>;
+    const row = rows[0];
+    if (!row) return 0;
+    return Math.max(
+      0,
+      num(row.spend_budget_usd) -
+        num(row.lifetime_spend_usd) -
+        num(row.reserved_usd),
+    );
   }
 
   async tryReserve(input: {
@@ -249,38 +272,43 @@ export class NeonSpendLedger implements AgentSpendLedger {
     spendBudgetUsd: number;
     lifetimeSpendUsd: number;
   }): Promise<boolean> {
+    // maxTradeUsd is still checked from the caller snapshot; budget math uses
+    // authoritative agents.lifetime_spend_usd / spend_budget_usd below.
     if (input.dollarsIn > input.maxTradeUsd + 1e-9) return false;
     await ensurePermitSchema(this.sql);
 
-    const remaining = await this.remainingUsd(
-      input.agentId,
-      input.spendBudgetUsd,
-      input.lifetimeSpendUsd,
-    );
-    if (input.dollarsIn > remaining + 1e-9) return false;
-
-    // Upsert with a second remaining check inside the UPDATE WHERE.
+    // Atomic reserve against live agent ledger (not a stale request snapshot).
     const rows = (await this.sql`
+      WITH agent AS (
+        SELECT spend_budget_usd, lifetime_spend_usd
+        FROM agents
+        WHERE agent_id = ${input.agentId}::uuid
+        LIMIT 1
+      ),
+      current AS (
+        SELECT COALESCE(
+          (SELECT reserved_usd FROM agent_spend_reservations
+           WHERE agent_id = ${input.agentId}::uuid),
+          0
+        ) AS reserved_usd
+      )
       INSERT INTO agent_spend_reservations (agent_id, reserved_usd)
-      VALUES (${input.agentId}::uuid, ${input.dollarsIn})
+      SELECT ${input.agentId}::uuid, ${input.dollarsIn}
+      FROM agent, current
+      WHERE (
+        agent.spend_budget_usd - agent.lifetime_spend_usd - current.reserved_usd
+      ) + 1e-9 >= ${input.dollarsIn}
       ON CONFLICT (agent_id) DO UPDATE
       SET reserved_usd = agent_spend_reservations.reserved_usd + ${input.dollarsIn}
       WHERE (
-        ${input.spendBudgetUsd} - ${input.lifetimeSpendUsd}
+        (SELECT spend_budget_usd FROM agents WHERE agent_id = ${input.agentId}::uuid)
+        - (SELECT lifetime_spend_usd FROM agents WHERE agent_id = ${input.agentId}::uuid)
         - agent_spend_reservations.reserved_usd
       ) + 1e-9 >= ${input.dollarsIn}
       RETURNING agent_id
     `) as Array<{ agent_id: string }>;
 
-    if (rows.length > 0) return true;
-
-    // Concurrent reservation may have won; re-check.
-    const after = await this.remainingUsd(
-      input.agentId,
-      input.spendBudgetUsd,
-      input.lifetimeSpendUsd,
-    );
-    return input.dollarsIn <= after + 1e-9 && rows.length > 0;
+    return rows.length > 0;
   }
 
   async release(agentId: string, dollarsIn: number): Promise<void> {

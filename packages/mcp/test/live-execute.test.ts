@@ -142,6 +142,7 @@ describe("live conviction_execute_trade", () => {
         capturedRootSig = body.rootHashSignature;
         expect(body.permitId).toBe("permit-1");
         expect(body.idempotencyKey).toBe("idem-live-1");
+        expect(body.leaseId).toBe("lease-test-1");
         expect(body.rootHashSignature).toMatch(/^0x/);
         expect(verifyMessage(getBytes(ROOT_HASH), body.rootHashSignature)).toBe(
           wallet.address,

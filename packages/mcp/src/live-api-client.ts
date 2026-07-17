@@ -398,6 +398,7 @@ export async function submitSignedExecution(options: {
   wallet: LocalWallet;
   permitId: string;
   idempotencyKey: string;
+  leaseId: string;
   rootHashSignature: string;
   authorizations?: Array<{ userOpHash: string; signature: string }>;
   fetchImpl?: typeof fetch;
@@ -413,6 +414,7 @@ export async function submitSignedExecution(options: {
     body: {
       permitId: options.permitId,
       idempotencyKey: options.idempotencyKey,
+      leaseId: options.leaseId,
       rootHashSignature: options.rootHashSignature,
       ...(options.authorizations
         ? { authorizations: options.authorizations }

@@ -168,6 +168,7 @@ async function main() {
       wallet,
       permitId: permitOrResult.permitId,
       idempotencyKey,
+      leaseId: lease.leaseId,
       rootHashSignature,
       ...(authorizations.length > 0 ? { authorizations } : {}),
     });

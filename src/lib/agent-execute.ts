@@ -93,7 +93,14 @@ export class MemoryAgentIdempotencyStore implements AgentIdempotencyStore {
     idempotencyKey: string,
     result: AgentExecuteResult,
   ): Promise<void> {
-    this.results.set(this.key(agentId, idempotencyKey), structuredClone(result));
+    const key = this.key(agentId, idempotencyKey);
+    const existing = this.results.get(key);
+    // Success always wins; never overwrite a durable success with a failure
+    // (multi-instance race: CAS loser must not sticky-fail after a winner sends).
+    if (existing?.ok) return;
+    if (result.ok || !existing) {
+      this.results.set(key, structuredClone(result));
+    }
   }
 
   /** Snapshot for restart / durability tests. */

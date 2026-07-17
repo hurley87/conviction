@@ -67,12 +67,19 @@ export async function POST(request: Request) {
         )
       : undefined;
 
+    const now = new Date();
+    const activeLease = await store.getActiveLease(
+      verified.agent.agentId,
+      now,
+    );
+
     const result = await submitSignedTradeExecution({
       agent: verified.agent,
       input: {
         permitId: typeof body.permitId === "string" ? body.permitId : "",
         idempotencyKey:
           typeof body.idempotencyKey === "string" ? body.idempotencyKey : "",
+        leaseId: typeof body.leaseId === "string" ? body.leaseId : "",
         rootHashSignature:
           typeof body.rootHashSignature === "string"
             ? body.rootHashSignature
@@ -83,7 +90,9 @@ export async function POST(request: Request) {
       idempotencyStore: getAgentExecuteIdempotencyStore(),
       receipts: getAgentReceiptPersist(),
       send: createSignedTradeSender(verified.agent.address),
+      activeLeaseId: activeLease?.leaseId ?? null,
       spendLedger: getAgentSpendLedger(),
+      now: () => now,
       onSpend: async (dollarsIn) => {
         await store.addLifetimeSpend({
           agentId: verified.agent.agentId,

@@ -167,6 +167,7 @@ export async function executeLiveTrade(options: {
       wallet: options.wallet,
       permitId: permit.permitId,
       idempotencyKey,
+      leaseId: options.leaseId,
       rootHashSignature,
       ...(authorizations.length > 0 ? { authorizations } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
