@@ -19,13 +19,13 @@ function createBackend({
   getAccessToken,
 }: {
   live: boolean;
-  getAccessToken?: () => Promise<string | null>;
+  getAccessToken: () => Promise<string | null>;
 }): ChatHistoryBackend {
   if (!live) {
     return createLocalChatHistory(window.localStorage);
   }
   return createApiChatHistory(async (input, init) => {
-    const token = await getAccessToken?.();
+    const token = await getAccessToken();
     if (!token) throw new Error("No active Privy access token.");
     return fetch(input, {
       ...init,
@@ -56,44 +56,55 @@ export function useChatHistory({
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [booted, setBooted] = useState(false);
+
   const conversationIdRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
-  const getAccessTokenRef = useRef(getAccessToken);
-  getAccessTokenRef.current = getAccessToken;
+  const backendRef = useRef<ChatHistoryBackend | null>(null);
+  const queueRef = useRef<FifoSaveQueue<QueuedMessage> | null>(null);
+  const latestRef = useRef({
+    getAccessToken,
+    onReplace,
+    onMerge,
+  });
 
-  const [backend] = useState(() =>
-    createBackend({
+  useEffect(() => {
+    latestRef.current.getAccessToken = getAccessToken;
+    latestRef.current.onReplace = onReplace;
+    latestRef.current.onMerge = onMerge;
+  }, [getAccessToken, onMerge, onReplace]);
+
+  useEffect(() => {
+    if (backendRef.current && queueRef.current) return;
+
+    const backend = createBackend({
       live,
       getAccessToken: () =>
-        getAccessTokenRef.current?.() ?? Promise.resolve(null),
-    }),
-  );
-
-  const saveItem = useCallback(
-    async ({ conversationId, message }: QueuedMessage) => {
-      await backend.append(conversationId, message);
-    },
-    [backend],
-  );
-  const saveItemRef = useRef(saveItem);
-  saveItemRef.current = saveItem;
-
-  const [queue] = useState(
-    () =>
-      new FifoSaveQueue<QueuedMessage>(
-        () => saveItemRef.current,
-        setSaveStatus,
-      ),
-  );
+        latestRef.current.getAccessToken?.() ?? Promise.resolve(null),
+    });
+    const queue = new FifoSaveQueue<QueuedMessage>(
+      () => async ({ conversationId, message }) => {
+        await backend.append(conversationId, message);
+      },
+      setSaveStatus,
+    );
+    backendRef.current = backend;
+    queueRef.current = queue;
+    setBooted(true);
+  }, [live]);
 
   const revalidate = useCallback(async () => {
+    const backend = backendRef.current;
+    const queue = queueRef.current;
+    if (!backend || !queue) return;
+
     setLoading(true);
     try {
       const page = await backend.loadPage();
       conversationIdRef.current = page.conversationId;
       setNextCursor(page.nextCursor);
-      if (initializedRef.current) onMerge(page.messages);
-      else onReplace(page.messages);
+      if (initializedRef.current) latestRef.current.onMerge(page.messages);
+      else latestRef.current.onReplace(page.messages);
       initializedRef.current = true;
       setReady(true);
       if (queue.pending().length === 0) setSaveStatus("saved");
@@ -102,36 +113,36 @@ export function useChatHistory({
     } finally {
       setLoading(false);
     }
-  }, [backend, onMerge, onReplace, queue]);
+  }, []);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !booted) return;
     const timeout = window.setTimeout(() => void revalidate(), 0);
     return () => window.clearTimeout(timeout);
-  }, [active, revalidate]);
+  }, [active, booted, revalidate]);
 
-  const enqueue = useCallback(
-    (message: ChatMessage) => {
-      const conversationId = conversationIdRef.current;
-      if (!conversationId) {
-        setSaveStatus("error");
-        return;
-      }
-      queue.enqueue({ conversationId, message });
-    },
-    [queue],
-  );
+  const enqueue = useCallback((message: ChatMessage) => {
+    const queue = queueRef.current;
+    const conversationId = conversationIdRef.current;
+    if (!queue || !conversationId) {
+      setSaveStatus("error");
+      return;
+    }
+    queue.enqueue({ conversationId, message });
+  }, []);
 
   const retry = useCallback(() => {
-    if (queue.pending().length > 0) {
+    const queue = queueRef.current;
+    if (queue && queue.pending().length > 0) {
       void queue.retry();
-    } else {
-      void revalidate();
+      return;
     }
-  }, [queue, revalidate]);
+    void revalidate();
+  }, [revalidate]);
 
   const loadEarlier = useCallback(async () => {
-    if (!nextCursor || loadingEarlier) return [];
+    const backend = backendRef.current;
+    if (!backend || !nextCursor || loadingEarlier) return [];
     setLoadingEarlier(true);
     try {
       const page = await backend.loadPage(nextCursor);
@@ -143,10 +154,12 @@ export function useChatHistory({
     } finally {
       setLoadingEarlier(false);
     }
-  }, [backend, loadingEarlier, nextCursor]);
+  }, [loadingEarlier, nextCursor]);
 
   const clear = useCallback(async () => {
-    if (clearing) return false;
+    const backend = backendRef.current;
+    const queue = queueRef.current;
+    if (!backend || !queue || clearing) return false;
     setClearing(true);
     const pending = queue.pending();
     queue.reset();
@@ -164,7 +177,7 @@ export function useChatHistory({
     } finally {
       setClearing(false);
     }
-  }, [backend, clearing, queue]);
+  }, [clearing]);
 
   return {
     saveStatus,
