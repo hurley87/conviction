@@ -533,14 +533,19 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
     const { handoff, agent } = lookup;
     const normalized = getAddress(input.signerAddress);
 
-    if (handoff.redeemedAt) {
-      if (
-        agent.address &&
-        getAddress(agent.address) === normalized &&
-        agent.status !== "provisioning"
-      ) {
-        return agent;
+    // Already bound to this signer: succeed even if redeemed_at lagged.
+    if (
+      agent.address &&
+      getAddress(agent.address) === normalized &&
+      agent.status !== "provisioning"
+    ) {
+      if (!handoff.redeemedAt) {
+        handoff.redeemedAt = input.now.toISOString();
       }
+      return agent;
+    }
+
+    if (handoff.redeemedAt) {
       throw new AgentProvisioningError(
         "handoff_used",
         "That provisioning code was already redeemed. Resume from the existing local profile.",

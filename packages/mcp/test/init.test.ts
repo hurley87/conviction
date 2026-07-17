@@ -102,13 +102,14 @@ describe("runInit", () => {
       return new Response("not found", { status: 404 });
     };
 
+    const unlockStore = new MemoryUnlockSecretStore();
     const result = await runInit({
       code,
       backupPath,
       recoveryPassphrase: "recovery-passphrase",
       apiBaseUrl: "http://conviction.test",
       home,
-      unlockStore: new MemoryUnlockSecretStore(),
+      unlockStore,
       fetchImpl,
       env: {
         CONVICTION_KEYSTORE_PASSWORD: "machine-unlock-secret",
@@ -123,6 +124,7 @@ describe("runInit", () => {
 
     const profile = await readAgentProfile(result.profilePath);
     expect(profile.universalAccountAddress).toBe(result.depositAddress);
+    expect(profile.profileName).toBe("signal-scout");
 
     const serialized = JSON.stringify({
       profile,
@@ -133,7 +135,7 @@ describe("runInit", () => {
     expect(serialized).not.toMatch(/"privateKey"\s*:/);
     expect(serialized).not.toMatch(/"mnemonic"\s*:/);
 
-    // Resume / idempotent second pass should not mint another signer.
+    // Resume with only --code (no --profile) must not mint another signer.
     const again = await runInit({
       code,
       backupPath: path.join(home, "backup-2.json"),
@@ -145,10 +147,11 @@ describe("runInit", () => {
       env: {
         CONVICTION_KEYSTORE_PASSWORD: "machine-unlock-secret",
       },
-      profileName: profile.profileName,
     });
     expect(again.profile.signerAddress).toBe(result.profile.signerAddress);
+    expect(again.profile.profileName).toBe("signal-scout");
     expect(Wallet.createRandom().address).not.toBe(again.profile.signerAddress);
+    expect(redeemCount).toBe(1);
   });
 
   it("rejects raw private key env vars", async () => {

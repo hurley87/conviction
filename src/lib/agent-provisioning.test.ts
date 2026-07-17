@@ -271,6 +271,43 @@ describe("redeemPendingAgent", () => {
     });
     expect(second).toEqual(first);
   });
+
+  it("heals a missing redeemed_at when the agent is already bound to the signer", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const created = await createHandoff(store);
+    const wallet = Wallet.createRandom();
+    const codeHash = hashProvisioningCode(created.handoff.code);
+    const proofSignature = await wallet.signMessage(
+      buildProvisioningProofMessage(codeHash, wallet.address),
+    );
+
+    await redeemPendingAgent(
+      store,
+      {
+        code: created.handoff.code,
+        signerAddress: wallet.address,
+        proofSignature,
+      },
+      { now: () => FIXED_NOW },
+    );
+
+    // Simulate a partial write: agent active, handoff mark lost.
+    store.records[0]!.handoff.redeemedAt = null;
+
+    const healed = await redeemPendingAgent(
+      store,
+      {
+        code: created.handoff.code,
+        signerAddress: wallet.address,
+        proofSignature,
+      },
+      { now: () => FIXED_NOW },
+    );
+
+    expect(healed.address).toBe(wallet.address);
+    expect(healed.status).toBe("active");
+    expect(store.records[0]?.handoff.redeemedAt).toBe(FIXED_NOW.toISOString());
+  });
 });
 
 describe("completeAgentBackupVerification", () => {

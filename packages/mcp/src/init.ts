@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
 
 import {
   completeBackupVerification,
@@ -14,7 +13,7 @@ import {
   type LocalWallet,
 } from "./keystore.js";
 import {
-  incompletePath,
+  bindingPath,
   keystorePath,
   profilePath,
   resolveConvictionPaths,
@@ -22,11 +21,11 @@ import {
 } from "./paths.js";
 import {
   readAgentProfile,
-  readIncompleteInit,
+  readProvisioningBinding,
   writeAgentProfile,
-  writeIncompleteInit,
+  writeProvisioningBinding,
   type AgentProfile,
-  type IncompleteInit,
+  type ProvisioningBinding,
 } from "./profile.js";
 import {
   buildBackupVerifiedMessage,
@@ -34,7 +33,10 @@ import {
 } from "./proof.js";
 import {
   KEYSTORE_PASSWORD_ENV,
-  resolveOrCreateUnlockSecret,
+  PRIVATE_KEY_ENV,
+  requireUnlockSecret,
+  unlockAccountForSigner,
+  UnlockSecretError,
   type UnlockSecretStore,
 } from "./unlock-secret.js";
 
@@ -66,76 +68,64 @@ function defaultProfileName(handle: string): string {
   return handle.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
 }
 
-async function loadOrCreateWallet(options: {
-  paths: ConvictionPaths;
-  incomplete: IncompleteInit | null;
-  existingProfile: AgentProfile | null;
-  profileName: string;
+function createUnlockSecret(env: NodeJS.ProcessEnv): string {
+  if (env[PRIVATE_KEY_ENV]?.trim()) {
+    throw new UnlockSecretError(
+      `${PRIVATE_KEY_ENV} is not supported. Use an encrypted keystore unlock secret via the OS credential store or ${KEYSTORE_PASSWORD_ENV}.`,
+    );
+  }
+  return env[KEYSTORE_PASSWORD_ENV]?.trim() || randomBytes(32).toString("base64url");
+}
+
+async function loadWalletForBinding(options: {
+  binding: ProvisioningBinding;
   unlockStore: UnlockSecretStore;
   env: NodeJS.ProcessEnv;
-}): Promise<{ wallet: LocalWallet; keystoreFile: string; incomplete: IncompleteInit }> {
-  const { secret } = resolveOrCreateUnlockSecret({
-    profileName: options.profileName,
+}): Promise<LocalWallet> {
+  const secret = requireUnlockSecret({
+    signerAddress: options.binding.signerAddress,
     store: options.unlockStore,
     env: options.env,
   });
-
-  if (options.incomplete) {
-    const wallet = await loadWalletFromKeystore(
-      options.incomplete.keystorePath,
-      secret,
+  const wallet = await loadWalletFromKeystore(
+    options.binding.keystorePath,
+    secret,
+  );
+  if (
+    wallet.address.toLowerCase() !==
+    options.binding.signerAddress.toLowerCase()
+  ) {
+    throw new Error(
+      "Provisioning binding does not match the encrypted keystore address.",
     );
-    if (
-      wallet.address.toLowerCase() !==
-      options.incomplete.signerAddress.toLowerCase()
-    ) {
-      throw new Error(
-        "Incomplete provisioning state does not match the encrypted keystore address.",
-      );
-    }
-    return {
-      wallet,
-      keystoreFile: options.incomplete.keystorePath,
-      incomplete: options.incomplete,
-    };
+  }
+  return wallet;
+}
+
+async function loadOrCreateWallet(options: {
+  paths: ConvictionPaths;
+  binding: ProvisioningBinding | null;
+  profileName: string;
+  unlockStore: UnlockSecretStore;
+  env: NodeJS.ProcessEnv;
+}): Promise<{ wallet: LocalWallet; binding: ProvisioningBinding }> {
+  if (options.binding) {
+    const wallet = await loadWalletForBinding({
+      binding: options.binding,
+      unlockStore: options.unlockStore,
+      env: options.env,
+    });
+    return { wallet, binding: options.binding };
   }
 
-  if (options.existingProfile) {
-    const wallet = await loadWalletFromKeystore(
-      options.existingProfile.keystorePath,
-      secret,
-    );
-    if (
-      wallet.address.toLowerCase() !==
-      options.existingProfile.signerAddress.toLowerCase()
-    ) {
-      throw new Error(
-        "Existing profile does not match the encrypted keystore address.",
-      );
-    }
-    const incomplete: IncompleteInit = {
-      version: 1,
-      codeHash: "",
-      profileName: options.existingProfile.profileName,
-      keystorePath: options.existingProfile.keystorePath,
-      signerAddress: options.existingProfile.signerAddress,
-      apiBaseUrl: "",
-      redeemed: true,
-      agentId: options.existingProfile.agentId,
-      backupVerified: options.existingProfile.fundingReady,
-      createdAt: options.existingProfile.createdAt,
-    };
-    return {
-      wallet,
-      keystoreFile: options.existingProfile.keystorePath,
-      incomplete,
-    };
-  }
-
+  const secret = createUnlockSecret(options.env);
   const generated = await generateEncryptedKeystore(secret);
+  options.unlockStore.set(unlockAccountForSigner(generated.address), secret);
+
   const keystoreFile = keystorePath(options.paths, options.profileName);
   await writeKeystoreFile(keystoreFile, generated.keystoreJson);
-  const incomplete: IncompleteInit = {
+
+  const binding: ProvisioningBinding = {
     version: 1,
     codeHash: "",
     profileName: options.profileName,
@@ -144,14 +134,15 @@ async function loadOrCreateWallet(options: {
     apiBaseUrl: "",
     redeemed: false,
     backupVerified: false,
+    completed: false,
     createdAt: new Date().toISOString(),
   };
-  return { wallet: generated.wallet, keystoreFile, incomplete };
+  return { wallet: generated.wallet, binding };
 }
 
 export async function runInit(options: InitOptions): Promise<InitResult> {
   const env = options.env ?? process.env;
-  if (env.CONVICTION_PRIVATE_KEY?.trim()) {
+  if (env[PRIVATE_KEY_ENV]?.trim()) {
     throw new Error(
       "CONVICTION_PRIVATE_KEY is not supported. Local init generates an encrypted keystore instead.",
     );
@@ -168,105 +159,86 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   const home = options.home ?? env.CONVICTION_HOME;
   const paths = resolveConvictionPaths(home);
   const codeHash = hashCode(options.code);
-  const resumePath = incompletePath(paths, codeHash);
-  const existingIncomplete = await readIncompleteInit(resumePath);
+  const statePath = bindingPath(paths, codeHash);
+  const existingBinding = await readProvisioningBinding(statePath);
 
   const profileName =
     options.profileName?.trim() ||
-    existingIncomplete?.profileName ||
+    existingBinding?.profileName ||
     `agent-${codeHash.slice(0, 8)}`;
 
-  let existingProfile: AgentProfile | null = null;
-  try {
-    existingProfile = await readAgentProfile(profilePath(paths, profileName));
-  } catch {
-    existingProfile = null;
-  }
-
-  // After a successful first run the profile name becomes the agent handle.
-  if (!existingProfile && existingIncomplete?.profileName) {
-    try {
-      existingProfile = await readAgentProfile(
-        profilePath(paths, existingIncomplete.profileName),
-      );
-    } catch {
-      existingProfile = null;
-    }
-  }
-
-  const resolvedProfileName = existingProfile?.profileName ?? profileName;
-  const { wallet, incomplete } = await loadOrCreateWallet({
+  const { wallet, binding } = await loadOrCreateWallet({
     paths,
-    incomplete: existingIncomplete,
-    existingProfile,
-    profileName: resolvedProfileName,
+    binding: existingBinding,
+    profileName,
     unlockStore: options.unlockStore,
     env,
   });
 
-  incomplete.codeHash = codeHash;
-  incomplete.apiBaseUrl = options.apiBaseUrl.replace(/\/$/, "");
-  incomplete.profileName = resolvedProfileName;
-  if (!incomplete.createdAt) {
-    incomplete.createdAt = (options.now?.() ?? new Date()).toISOString();
+  binding.codeHash = codeHash;
+  binding.apiBaseUrl = (
+    binding.apiBaseUrl || options.apiBaseUrl
+  ).replace(/\/$/, "");
+  if (!options.profileName?.trim() && existingBinding?.profileName) {
+    binding.profileName = existingBinding.profileName;
   }
-  await writeIncompleteInit(resumePath, incomplete);
+  if (!binding.createdAt) {
+    binding.createdAt = (options.now?.() ?? new Date()).toISOString();
+  }
+  await writeProvisioningBinding(statePath, binding);
 
   let agent: RedeemedAgent | null = null;
-  if (!incomplete.redeemed || !incomplete.agentId) {
+  if (!binding.redeemed || !binding.agentId) {
     const proofSignature = await wallet.signMessage(
       buildProvisioningProofMessage(codeHash, wallet.address),
     );
-    const redeemArgs = {
-      apiBaseUrl: incomplete.apiBaseUrl,
+    agent = await redeemProvisioningCode({
+      apiBaseUrl: binding.apiBaseUrl,
       code: options.code,
       signerAddress: wallet.address,
       proofSignature,
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-    };
-    agent = await redeemProvisioningCode(redeemArgs);
-    incomplete.redeemed = true;
-    incomplete.agentId = agent.agentId;
-    await writeIncompleteInit(resumePath, incomplete);
+    });
+    binding.redeemed = true;
+    binding.agentId = agent.agentId;
+    await writeProvisioningBinding(statePath, binding);
   }
 
-  if (!incomplete.agentId) {
+  if (!binding.agentId) {
     throw new Error("Provisioning redeem did not return an agent identity.");
   }
 
-  if (!incomplete.backupVerified) {
+  if (!binding.backupVerified) {
     await exportAndVerifyBackup({
       wallet,
       recoveryPassphrase: options.recoveryPassphrase,
       backupPath: options.backupPath,
     });
     const proofSignature = await wallet.signMessage(
-      buildBackupVerifiedMessage(incomplete.agentId, wallet.address),
+      buildBackupVerifiedMessage(binding.agentId, wallet.address),
     );
-    const completeArgs = {
-      apiBaseUrl: incomplete.apiBaseUrl,
-      agentId: incomplete.agentId,
+    agent = await completeBackupVerification({
+      apiBaseUrl: binding.apiBaseUrl,
+      agentId: binding.agentId,
       signerAddress: wallet.address,
       proofSignature,
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-    };
-    agent = await completeBackupVerification(completeArgs);
-    incomplete.backupVerified = true;
-    await writeIncompleteInit(resumePath, incomplete);
+    });
+    binding.backupVerified = true;
+    await writeProvisioningBinding(statePath, binding);
   }
 
   if (!agent) {
     const proofSignature = await wallet.signMessage(
-      buildBackupVerifiedMessage(incomplete.agentId, wallet.address),
+      buildBackupVerifiedMessage(binding.agentId, wallet.address),
     );
-    const completeArgs = {
-      apiBaseUrl: incomplete.apiBaseUrl,
-      agentId: incomplete.agentId,
+    agent = await completeBackupVerification({
+      apiBaseUrl: binding.apiBaseUrl,
+      agentId: binding.agentId,
       signerAddress: wallet.address,
       proofSignature,
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-    };
-    agent = await completeBackupVerification(completeArgs);
+    });
   }
 
   if (!agent.fundingReady) {
@@ -279,7 +251,9 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   }
 
   const finalProfileName =
-    options.profileName?.trim() || defaultProfileName(agent.handle);
+    options.profileName?.trim() ||
+    (binding.completed ? binding.profileName : null) ||
+    defaultProfileName(agent.handle);
 
   const profile: AgentProfile = {
     version: 1,
@@ -289,17 +263,36 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     operatorHandle: agent.operatorHandle,
     signerAddress: wallet.address,
     universalAccountAddress: agent.address,
-    keystorePath: incomplete.keystorePath,
+    keystorePath: binding.keystorePath,
     fundingReady: true,
     actionPolicy: agent.actionPolicy,
     maxTradeUsd: agent.maxTradeUsd,
     spendBudgetUsd: agent.spendBudgetUsd,
-    createdAt: incomplete.createdAt,
+    createdAt: binding.createdAt,
   };
 
-  const writtenProfilePath = profilePath(paths, finalProfileName);
+  // Prefer refreshing an already-written completed profile in place.
+  if (binding.completed) {
+    try {
+      const previous = await readAgentProfile(
+        profilePath(paths, binding.profileName),
+      );
+      profile.profileName = previous.profileName;
+      profile.createdAt = previous.createdAt;
+      profile.keystorePath = previous.keystorePath;
+    } catch {
+      // Profile file missing; write using finalProfileName below.
+    }
+  }
+
+  const writtenProfilePath = profilePath(paths, profile.profileName);
   await writeAgentProfile(writtenProfilePath, profile);
-  await rm(resumePath, { force: true });
+
+  binding.profileName = profile.profileName;
+  binding.completed = true;
+  binding.backupVerified = true;
+  binding.redeemed = true;
+  await writeProvisioningBinding(statePath, binding);
 
   return {
     profile,
@@ -313,5 +306,5 @@ export function describeInitUnlockHint(env: NodeJS.ProcessEnv = process.env): st
   if (env[KEYSTORE_PASSWORD_ENV]?.trim()) {
     return `Using ${KEYSTORE_PASSWORD_ENV} for keystore unlock.`;
   }
-  return "Generated a machine unlock secret and stored it in the local credential store.";
+  return "Generated a machine unlock secret and stored it under the signer address in the local credential store.";
 }

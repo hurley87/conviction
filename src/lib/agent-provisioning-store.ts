@@ -211,14 +211,26 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     }
 
     const { handoff, agent } = lookup;
-    if (handoff.redeemedAt) {
-      if (
-        agent.address &&
-        getAddress(agent.address) === normalized &&
-        agent.status !== "provisioning"
-      ) {
-        return agent;
+    const nowIso = input.now.toISOString();
+
+    // Already bound to this signer: heal a missing redeemed_at and return.
+    if (
+      agent.address &&
+      getAddress(agent.address) === normalized &&
+      agent.status !== "provisioning"
+    ) {
+      if (!handoff.redeemedAt) {
+        await this.sql`
+          UPDATE agent_provisioning_handoffs
+          SET redeemed_at = ${nowIso}::timestamptz
+          WHERE handoff_id = ${handoff.handoffId}
+            AND redeemed_at IS NULL
+        `;
       }
+      return agent;
+    }
+
+    if (handoff.redeemedAt) {
       throw new AgentProvisioningError(
         "handoff_used",
         "That provisioning code was already redeemed. Resume from the existing local profile.",
@@ -246,42 +258,55 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
       );
     }
 
-    const nowIso = input.now.toISOString();
+    // Activate + mark handoff in one statement so a partial update cannot stick.
     const updated = await this.sql`
-      UPDATE agents
-      SET
-        address = ${normalized},
-        status = 'active',
-        public_status = 'active',
-        funding_ready = false
-      WHERE agent_id = ${agent.agentId}
-        AND status = 'provisioning'
-        AND (address IS NULL OR lower(address) = lower(${normalized}))
-      RETURNING *
+      WITH activated AS (
+        UPDATE agents
+        SET
+          address = ${normalized},
+          status = 'active',
+          public_status = 'active',
+          funding_ready = false
+        WHERE agent_id = ${agent.agentId}
+          AND status = 'provisioning'
+          AND (address IS NULL OR lower(address) = lower(${normalized}))
+        RETURNING *
+      ),
+      marked AS (
+        UPDATE agent_provisioning_handoffs
+        SET redeemed_at = ${nowIso}::timestamptz
+        WHERE handoff_id = ${handoff.handoffId}
+          AND redeemed_at IS NULL
+          AND EXISTS (SELECT 1 FROM activated)
+        RETURNING handoff_id
+      )
+      SELECT * FROM activated
     `;
-    if (!updated[0]) {
-      const again = await this.findHandoffByCodeHash(input.codeHash);
-      if (
-        again?.agent.address &&
-        getAddress(again.agent.address) === normalized &&
-        again.agent.status !== "provisioning"
-      ) {
-        return again.agent;
-      }
-      throw new AgentProvisioningError(
-        "identity_unavailable",
-        "Could not redeem the provisioning handoff. Try again.",
-      );
+    if (updated[0]) {
+      return ownedAgentFromRow(updated[0] as Record<string, unknown>);
     }
 
-    await this.sql`
-      UPDATE agent_provisioning_handoffs
-      SET redeemed_at = ${nowIso}::timestamptz
-      WHERE handoff_id = ${handoff.handoffId}
-        AND redeemed_at IS NULL
-    `;
+    const again = await this.findHandoffByCodeHash(input.codeHash);
+    if (
+      again?.agent.address &&
+      getAddress(again.agent.address) === normalized &&
+      again.agent.status !== "provisioning"
+    ) {
+      if (!again.handoff.redeemedAt) {
+        await this.sql`
+          UPDATE agent_provisioning_handoffs
+          SET redeemed_at = ${nowIso}::timestamptz
+          WHERE handoff_id = ${again.handoff.handoffId}
+            AND redeemed_at IS NULL
+        `;
+      }
+      return again.agent;
+    }
 
-    return ownedAgentFromRow(updated[0] as Record<string, unknown>);
+    throw new AgentProvisioningError(
+      "identity_unavailable",
+      "Could not redeem the provisioning handoff. Try again.",
+    );
   }
 
   async markFundingReady(input: {

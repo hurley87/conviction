@@ -67,7 +67,7 @@ describe("keystore and backup", () => {
     const store = new MemoryUnlockSecretStore();
     expect(() =>
       resolveOrCreateUnlockSecret({
-        profileName: "scout",
+        account: "signer:0x0000000000000000000000000000000000000001",
         store,
         env: {
           [PRIVATE_KEY_ENV]: "0xabc",

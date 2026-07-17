@@ -28,20 +28,28 @@ export const agentProfileSchema = z.object({
 
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
-export const incompleteInitSchema = z.object({
+/**
+ * Durable local state for one provisioning code.
+ * Kept after success so `init --code …` can resume without `--profile`.
+ */
+export const provisioningBindingSchema = z.object({
   version: z.literal(1),
   codeHash: z.string().length(64),
   profileName: z.string().min(1),
   keystorePath: z.string().min(1),
   signerAddress: z.string().min(1),
-  apiBaseUrl: z.string().url(),
+  apiBaseUrl: z.string().min(1),
   redeemed: z.boolean(),
   agentId: z.string().uuid().optional(),
   backupVerified: z.boolean(),
+  completed: z.boolean(),
   createdAt: z.string(),
 });
 
-export type IncompleteInit = z.infer<typeof incompleteInitSchema>;
+export type ProvisioningBinding = z.infer<typeof provisioningBindingSchema>;
+
+/** @deprecated Use ProvisioningBinding — kept as alias for call sites mid-refactor. */
+export type IncompleteInit = ProvisioningBinding;
 
 export async function writeAgentProfile(
   filePath: string,
@@ -61,11 +69,11 @@ export async function readAgentProfile(filePath: string): Promise<AgentProfile> 
   return agentProfileSchema.parse(raw);
 }
 
-export async function writeIncompleteInit(
+export async function writeProvisioningBinding(
   filePath: string,
-  state: IncompleteInit,
+  state: ProvisioningBinding,
 ): Promise<void> {
-  incompleteInitSchema.parse(state);
+  provisioningBindingSchema.parse(state);
   await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
   await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, {
     encoding: "utf8",
@@ -74,12 +82,12 @@ export async function writeIncompleteInit(
   await chmod(filePath, OWNER_READ_WRITE);
 }
 
-export async function readIncompleteInit(
+export async function readProvisioningBinding(
   filePath: string,
-): Promise<IncompleteInit | null> {
+): Promise<ProvisioningBinding | null> {
   try {
     const raw = JSON.parse(await readFile(filePath, "utf8")) as unknown;
-    return incompleteInitSchema.parse(raw);
+    return provisioningBindingSchema.parse(raw);
   } catch {
     return null;
   }
