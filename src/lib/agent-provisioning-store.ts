@@ -3,6 +3,10 @@ import { getAddress } from "ethers";
 import { getSql } from "@/lib/db";
 import { getUserIdentity } from "@/lib/users";
 import {
+  AgentLeaseError,
+  leaseConflictError,
+} from "@/lib/agent-lease";
+import {
   AgentProvisioningError,
   MemoryAgentProvisioningStore,
   ownedAgentFromRow,
@@ -11,6 +15,7 @@ import {
   type HandoffLookup,
   type OwnedAgent,
   type ProvisioningOwner,
+  type StoredAgentLease,
 } from "@/lib/agent-provisioning";
 
 let schemaReady = false;
@@ -47,6 +52,10 @@ async function ensureSchema(sql: NonNullable<ReturnType<typeof getSql>>) {
   await sql`
     ALTER TABLE agents
       ADD COLUMN IF NOT EXISTS funding_ready boolean NOT NULL DEFAULT false
+  `;
+  await sql`
+    ALTER TABLE agents
+      ADD COLUMN IF NOT EXISTS active_lease_acquired_at timestamptz
   `;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS agents_handle_unique
@@ -171,6 +180,17 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
       SELECT * FROM agents
       WHERE owner_user_id = ${ownerUserId} AND status <> 'retired'
       ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    return rows[0] ? ownedAgentFromRow(rows[0] as Record<string, unknown>) : null;
+  }
+
+  async findBySignerAddress(signerAddress: string): Promise<OwnedAgent | null> {
+    await ensureSchema(this.sql);
+    const normalized = getAddress(signerAddress);
+    const rows = await this.sql`
+      SELECT * FROM agents
+      WHERE address IS NOT NULL AND lower(address) = lower(${normalized})
       LIMIT 1
     `;
     return rows[0] ? ownedAgentFromRow(rows[0] as Record<string, unknown>) : null;
@@ -365,6 +385,185 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
       "identity_unavailable",
       "Could not mark the agent funding-ready. Try again.",
     );
+  }
+
+  async getActiveLease(
+    agentId: string,
+    now: Date,
+  ): Promise<StoredAgentLease | null> {
+    await ensureSchema(this.sql);
+    const rows = await this.sql`
+      SELECT active_lease_id, active_lease_expires_at, active_lease_acquired_at
+      FROM agents
+      WHERE agent_id = ${agentId}
+      LIMIT 1
+    `;
+    const row = rows[0] as
+      | {
+          active_lease_id: string | null;
+          active_lease_expires_at: string | null;
+          active_lease_acquired_at: string | null;
+        }
+      | undefined;
+    if (!row?.active_lease_id || !row.active_lease_expires_at) return null;
+    if (new Date(row.active_lease_expires_at).getTime() <= now.getTime()) {
+      await this.sql`
+        UPDATE agents
+        SET
+          active_lease_id = NULL,
+          active_lease_expires_at = NULL,
+          active_lease_acquired_at = NULL
+        WHERE agent_id = ${agentId}
+          AND active_lease_expires_at IS NOT NULL
+          AND active_lease_expires_at <= ${now.toISOString()}::timestamptz
+      `;
+      return null;
+    }
+    const acquiredAt = row.active_lease_acquired_at
+      ? new Date(String(row.active_lease_acquired_at)).toISOString()
+      : new Date(
+          new Date(String(row.active_lease_expires_at)).getTime() -
+            120_000,
+        ).toISOString();
+    return {
+      leaseId: String(row.active_lease_id),
+      agentId,
+      expiresAt: new Date(String(row.active_lease_expires_at)).toISOString(),
+      acquiredAt,
+    };
+  }
+
+  async acquireLease(input: {
+    agentId: string;
+    leaseId: string;
+    expiresAt: string;
+    acquiredAt: string;
+    now: Date;
+    replace?: boolean;
+  }): Promise<StoredAgentLease> {
+    await ensureSchema(this.sql);
+    const nowIso = input.now.toISOString();
+    const replace = input.replace === true;
+
+    // Atomic claim: only one concurrent acquire can satisfy the WHERE clause.
+    const updated = await this.sql`
+      UPDATE agents
+      SET
+        active_lease_id = ${input.leaseId},
+        active_lease_expires_at = ${input.expiresAt}::timestamptz,
+        active_lease_acquired_at = CASE
+          WHEN active_lease_id = ${input.leaseId}
+            AND active_lease_acquired_at IS NOT NULL
+          THEN active_lease_acquired_at
+          ELSE ${input.acquiredAt}::timestamptz
+        END
+      WHERE agent_id = ${input.agentId}
+        AND (
+          ${replace}
+          OR active_lease_id IS NULL
+          OR active_lease_expires_at IS NULL
+          OR active_lease_expires_at <= ${nowIso}::timestamptz
+          OR active_lease_id = ${input.leaseId}
+        )
+      RETURNING active_lease_id, active_lease_expires_at, active_lease_acquired_at
+    `;
+
+    if (updated[0]) {
+      const row = updated[0] as {
+        active_lease_acquired_at: string | null;
+      };
+      return {
+        leaseId: input.leaseId,
+        agentId: input.agentId,
+        expiresAt: input.expiresAt,
+        acquiredAt: row.active_lease_acquired_at
+          ? new Date(String(row.active_lease_acquired_at)).toISOString()
+          : input.acquiredAt,
+      };
+    }
+
+    const exists = await this.sql`
+      SELECT 1 FROM agents WHERE agent_id = ${input.agentId} LIMIT 1
+    `;
+    if (!exists.length) {
+      throw new AgentLeaseError(
+        "agent_not_found",
+        "No agent matches that identity.",
+      );
+    }
+
+    const active = await this.getActiveLease(input.agentId, input.now);
+    if (active) {
+      throw leaseConflictError(active, input.now);
+    }
+    throw new AgentLeaseError(
+      "lease_conflict",
+      "Could not acquire the MCP lease. Retry shortly.",
+    );
+  }
+
+  async renewLease(input: {
+    agentId: string;
+    leaseId: string;
+    expiresAt: string;
+    now: Date;
+  }): Promise<StoredAgentLease> {
+    await ensureSchema(this.sql);
+
+    const updated = await this.sql`
+      UPDATE agents
+      SET active_lease_expires_at = ${input.expiresAt}::timestamptz
+      WHERE agent_id = ${input.agentId}
+        AND active_lease_id = ${input.leaseId}
+        AND active_lease_expires_at IS NOT NULL
+        AND active_lease_expires_at > ${input.now.toISOString()}::timestamptz
+      RETURNING active_lease_id, active_lease_expires_at, active_lease_acquired_at
+    `;
+    if (updated[0]) {
+      const row = updated[0] as {
+        active_lease_acquired_at: string | null;
+      };
+      return {
+        leaseId: input.leaseId,
+        agentId: input.agentId,
+        expiresAt: input.expiresAt,
+        acquiredAt: row.active_lease_acquired_at
+          ? new Date(String(row.active_lease_acquired_at)).toISOString()
+          : input.now.toISOString(),
+      };
+    }
+
+    const active = await this.getActiveLease(input.agentId, input.now);
+    if (!active) {
+      throw new AgentLeaseError(
+        "lease_expired",
+        "The MCP lease expired. Restart the server to acquire a new lease.",
+      );
+    }
+    throw new AgentLeaseError(
+      "lease_conflict",
+      "This MCP lease was replaced by another process.",
+      {
+        activeLeaseId: active.leaseId,
+        activeLeaseExpiresAt: active.expiresAt,
+      },
+    );
+  }
+
+  async releaseLease(input: {
+    agentId: string;
+    leaseId: string;
+  }): Promise<void> {
+    await ensureSchema(this.sql);
+    await this.sql`
+      UPDATE agents
+      SET
+        active_lease_id = NULL,
+        active_lease_expires_at = NULL,
+        active_lease_acquired_at = NULL
+      WHERE agent_id = ${input.agentId}
+        AND active_lease_id = ${input.leaseId}
+    `;
   }
 }
 
