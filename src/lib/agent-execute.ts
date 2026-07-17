@@ -1,5 +1,6 @@
 // Policy-bounded trade execution — quote-before-execute, ADR 0040 / 0048.
 // Consumes a stored quote ID only; never silently requotes or substitutes terms.
+// Claim + spend reservation happen before any provider/sign side effect (ADR 0020).
 
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import {
@@ -161,6 +162,66 @@ export class MemoryAgentReceiptPersist implements AgentReceiptPersist {
   }
 }
 
+/**
+ * Tracks active spend reservations so concurrent executes cannot both pass a
+ * snapshot remaining-budget check (ADR 0020 / 0048).
+ */
+export class MemorySpendLedger {
+  private readonly reservedByAgent = new Map<string, number>();
+
+  reservedUsd(agentId: string): number {
+    return this.reservedByAgent.get(agentId) ?? 0;
+  }
+
+  remainingUsd(
+    agentId: string,
+    spendBudgetUsd: number,
+    lifetimeSpendUsd: number,
+  ): number {
+    return Math.max(
+      0,
+      spendBudgetUsd - lifetimeSpendUsd - this.reservedUsd(agentId),
+    );
+  }
+
+  /** Reserve counted debit. Returns false when over max-trade or remaining budget. */
+  tryReserve(input: {
+    agentId: string;
+    dollarsIn: number;
+    maxTradeUsd: number;
+    spendBudgetUsd: number;
+    lifetimeSpendUsd: number;
+  }): boolean {
+    if (input.dollarsIn > input.maxTradeUsd + 1e-9) return false;
+    const remaining = this.remainingUsd(
+      input.agentId,
+      input.spendBudgetUsd,
+      input.lifetimeSpendUsd,
+    );
+    if (input.dollarsIn > remaining + 1e-9) return false;
+    this.reservedByAgent.set(
+      input.agentId,
+      this.reservedUsd(input.agentId) + input.dollarsIn,
+    );
+    return true;
+  }
+
+  release(agentId: string, dollarsIn: number): void {
+    const next = this.reservedUsd(agentId) - dollarsIn;
+    if (next <= 1e-9) this.reservedByAgent.delete(agentId);
+    else this.reservedByAgent.set(agentId, next);
+  }
+
+  /** Drop reservation after a successful counted debit (lifetime updated by caller). */
+  commit(agentId: string, dollarsIn: number): void {
+    this.release(agentId, dollarsIn);
+  }
+
+  clear(): void {
+    this.reservedByAgent.clear();
+  }
+}
+
 export class AgentExecuteError extends Error {
   constructor(
     public readonly code: AgentExecuteErrorCode,
@@ -214,30 +275,10 @@ function assertTradeEnabled(agent: OwnedAgent): void {
   );
 }
 
-function remainingBudgetUsd(agent: OwnedAgent): number {
-  return Math.max(0, agent.spendBudgetUsd - agent.lifetimeSpendUsd);
-}
-
-function assertSpendAndBalance(
-  agent: OwnedAgent,
+function assertBalance(
   quote: AgentTradeQuoteRecord,
   balance: UniversalBalance,
 ): void {
-  if (quote.dollarsIn > agent.maxTradeUsd + 1e-9) {
-    throw new AgentExecuteError(
-      "spend_limit_exceeded",
-      `Trade size $${quote.dollarsIn.toFixed(2)} exceeds the per-trade limit of $${agent.maxTradeUsd.toFixed(2)}.`,
-      { quoteId: quote.quoteId },
-    );
-  }
-  const remaining = remainingBudgetUsd(agent);
-  if (quote.dollarsIn > remaining + 1e-9) {
-    throw new AgentExecuteError(
-      "spend_limit_exceeded",
-      `Trade size $${quote.dollarsIn.toFixed(2)} exceeds remaining spend budget of $${remaining.toFixed(2)}.`,
-      { quoteId: quote.quoteId },
-    );
-  }
   if (balance.totalUsd + 1e-9 < quote.dollarsIn) {
     throw new AgentExecuteError(
       "insufficient_balance",
@@ -289,16 +330,44 @@ function parseExecuteInput(
   return { quoteId, idempotencyKey };
 }
 
-const inFlight = new Map<string, Promise<AgentExecuteResult>>();
+const idempotencyInFlight = new Map<string, Promise<AgentExecuteResult>>();
+const quoteInFlight = new Map<string, Promise<unknown>>();
 
-function flightKey(agentId: string, idempotencyKey: string): string {
+function idemKey(agentId: string, idempotencyKey: string): string {
   return `${agentId}\0${idempotencyKey}`;
+}
+
+function quoteKey(agentId: string, quoteId: string): string {
+  return `${agentId}\0quote\0${quoteId}`;
+}
+
+async function withQuoteLock<T>(
+  agentId: string,
+  quoteId: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const key = quoteKey(agentId, quoteId);
+  const prior = quoteInFlight.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = prior.catch(() => undefined).then(() => gate);
+  quoteInFlight.set(key, chained);
+  await prior.catch(() => undefined);
+  try {
+    return await run();
+  } finally {
+    release();
+    if (quoteInFlight.get(key) === chained) quoteInFlight.delete(key);
+  }
 }
 
 /**
  * Execute a recent trade quote under ADR 0048 precedence.
- * Never silently requotes (ADR 0040). Floor breaches do not persist a
- * replacement quote. Idempotent retries return the stored primary result.
+ * Never silently requotes (ADR 0040). Claim + spend reservation occur before
+ * any provider call (ADR 0020). Floor breaches consume the quote identity
+ * (single-use attempt) but never store a replacement quote.
  */
 export async function executeAgentTrade(options: {
   agent: OwnedAgent;
@@ -308,6 +377,7 @@ export async function executeAgentTrade(options: {
   receipts: AgentReceiptPersist;
   ua: UAClient;
   balance: UniversalBalance;
+  spendLedger?: MemorySpendLedger;
   signers?: TradeSigners;
   now?: () => Date;
   randomId?: () => string;
@@ -322,19 +392,20 @@ export async function executeAgentTrade(options: {
     throw error;
   }
 
-  const key = flightKey(options.agent.agentId, parsed.idempotencyKey);
-  const existingFlight = inFlight.get(key);
+  const key = idemKey(options.agent.agentId, parsed.idempotencyKey);
+  const existingFlight = idempotencyInFlight.get(key);
   if (existingFlight) return existingFlight;
 
   const run = runExecuteAgentTrade({
     ...options,
     input: parsed,
+    spendLedger: options.spendLedger ?? new MemorySpendLedger(),
   });
-  inFlight.set(key, run);
+  idempotencyInFlight.set(key, run);
   try {
     return await run;
   } finally {
-    inFlight.delete(key);
+    idempotencyInFlight.delete(key);
   }
 }
 
@@ -346,6 +417,7 @@ async function runExecuteAgentTrade(options: {
   receipts: AgentReceiptPersist;
   ua: UAClient;
   balance: UniversalBalance;
+  spendLedger: MemorySpendLedger;
   signers?: TradeSigners;
   now?: () => Date;
   randomId?: () => string;
@@ -370,68 +442,136 @@ async function runExecuteAgentTrade(options: {
     assertExecuteLifecycle(options.agent);
     assertTradeEnabled(options.agent);
 
-    const quote = await loadTradeQuoteForExecute(options.quoteStore, {
-      quoteId: options.input.quoteId,
-      agentId: options.agent.agentId,
-      ...(options.now ? { now: options.now } : {}),
-    });
+    return await withQuoteLock(
+      options.agent.agentId,
+      options.input.quoteId,
+      async () => {
+        // Re-check idempotency inside the quote lock in case a sibling finished.
+        const again = await options.idempotencyStore.get(
+          options.agent.agentId,
+          options.input.idempotencyKey,
+        );
+        if (again) return again;
 
-    assertSpendAndBalance(options.agent, quote, options.balance);
-
-    const receiptSlug =
-      options.randomId?.() ??
-      `rcpt_${quote.quoteId.replace(/-/g, "").slice(0, 12)}`;
-    const signers = options.signers ?? mockTradeSigners;
-
-    let tradeResult;
-    try {
-      tradeResult = await options.ua.executeTrade({
-        intent: quote.intent,
-        sizeUsd: quote.sizeUsd,
-        agreedQuote: toAgreedQuote(quote),
-        signers,
-        receiptSlug,
-      });
-    } catch (error) {
-      if (error instanceof FloorAbortError) {
-        // ADR 0040: do not store or return the fresh quote as executable terms.
-        return persist({
-          ok: false,
-          code: "price_floor_breached",
-          message:
-            "Current execution cannot satisfy the quote's minimum-received floor. Call conviction_quote_trade for a new quoteId — execution never silently requotes.",
-          quoteId: quote.quoteId,
+        const quote = await loadTradeQuoteForExecute(options.quoteStore, {
+          quoteId: options.input.quoteId,
+          agentId: options.agent.agentId,
+          ...(options.now ? { now: options.now } : {}),
         });
-      }
-      throw error;
-    }
 
-    const claimed = await options.quoteStore.markUsed(quote.quoteId);
-    if (!claimed) {
-      return persist({
-        ok: false,
-        code: "quote_mismatch",
-        message: "That quote has already been consumed.",
-        quoteId: quote.quoteId,
-      });
-    }
+        assertBalance(quote, options.balance);
 
-    await options.receipts.save(tradeResult.receipt);
-    await options.onSpend?.(quote.dollarsIn);
+        const reserved = options.spendLedger.tryReserve({
+          agentId: options.agent.agentId,
+          dollarsIn: quote.dollarsIn,
+          maxTradeUsd: options.agent.maxTradeUsd,
+          spendBudgetUsd: options.agent.spendBudgetUsd,
+          lifetimeSpendUsd: options.agent.lifetimeSpendUsd,
+        });
+        if (!reserved) {
+          const remaining = options.spendLedger.remainingUsd(
+            options.agent.agentId,
+            options.agent.spendBudgetUsd,
+            options.agent.lifetimeSpendUsd,
+          );
+          if (quote.dollarsIn > options.agent.maxTradeUsd + 1e-9) {
+            return persist({
+              ok: false,
+              code: "spend_limit_exceeded",
+              message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds the per-trade limit of $${options.agent.maxTradeUsd.toFixed(2)}.`,
+              quoteId: quote.quoteId,
+            });
+          }
+          return persist({
+            ok: false,
+            code: "spend_limit_exceeded",
+            message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds remaining spend budget of $${remaining.toFixed(2)}.`,
+            quoteId: quote.quoteId,
+          });
+        }
 
-    return persist({
-      ok: true,
-      receiptId: tradeResult.receipt.slug,
-      quoteId: quote.quoteId,
-      quoteFingerprint: quote.quoteFingerprint,
-      transactionId: tradeResult.transactionId,
-      summary: tradeResult.summary,
-      receipt: tradeResult.receipt,
-      dollarsIn: quote.dollarsIn,
-      dollarsOut: tradeResult.receipt.dollarsOut,
-      feeUsd: tradeResult.receipt.feeUsd,
-      idempotencyKey: options.input.idempotencyKey,
-    });
+        // ADR 0020: claim the quote before any provider/sign side effect.
+        const claimed = await options.quoteStore.markUsed(quote.quoteId);
+        if (!claimed) {
+          options.spendLedger.release(options.agent.agentId, quote.dollarsIn);
+          return persist({
+            ok: false,
+            code: "quote_mismatch",
+            message: "That quote has already been consumed.",
+            quoteId: quote.quoteId,
+          });
+        }
+
+        const receiptSlug =
+          options.randomId?.() ??
+          `rcpt_${quote.quoteId.replace(/-/g, "").slice(0, 12)}`;
+        const signers = options.signers ?? mockTradeSigners;
+
+        let tradeResult;
+        try {
+          tradeResult = await options.ua.executeTrade({
+            intent: quote.intent,
+            sizeUsd: quote.sizeUsd,
+            agreedQuote: toAgreedQuote(quote),
+            signers,
+            receiptSlug,
+          });
+        } catch (error) {
+          options.spendLedger.release(options.agent.agentId, quote.dollarsIn);
+          if (error instanceof FloorAbortError) {
+            // Quote identity is consumed by the attempt; never store replacement terms.
+            return persist({
+              ok: false,
+              code: "price_floor_breached",
+              message:
+                "Current execution cannot satisfy the quote's minimum-received floor. Call conviction_quote_trade for a new quoteId — execution never silently requotes.",
+              quoteId: quote.quoteId,
+            });
+          }
+          return persist({
+            ok: false,
+            code: "unavailable",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Could not execute the trade quote.",
+            quoteId: quote.quoteId,
+          });
+        }
+
+        try {
+          await options.receipts.save(tradeResult.receipt);
+          await options.onSpend?.(quote.dollarsIn);
+          options.spendLedger.commit(options.agent.agentId, quote.dollarsIn);
+        } catch (error) {
+          // Quote already claimed and provider succeeded — do not release for retry.
+          options.spendLedger.commit(options.agent.agentId, quote.dollarsIn);
+          return persist({
+            ok: false,
+            code: "unavailable",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Trade executed but receipt persistence failed.",
+            quoteId: quote.quoteId,
+          });
+        }
+
+        return persist({
+          ok: true,
+          receiptId: tradeResult.receipt.slug,
+          quoteId: quote.quoteId,
+          quoteFingerprint: quote.quoteFingerprint,
+          transactionId: tradeResult.transactionId,
+          summary: tradeResult.summary,
+          receipt: tradeResult.receipt,
+          dollarsIn: quote.dollarsIn,
+          dollarsOut: tradeResult.receipt.dollarsOut,
+          feeUsd: tradeResult.receipt.feeUsd,
+          idempotencyKey: options.input.idempotencyKey,
+        });
+      },
+    );
   } catch (error) {
     if (error instanceof AgentExecuteError) {
       return persist(error.toBody());

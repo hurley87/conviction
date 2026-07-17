@@ -180,6 +180,47 @@ describe("mock trade execute", () => {
       quoteId,
     });
     expect(engine.quoteCount()).toBe(before);
+    // Claim-before-side-effect: attempt consumes quote; host must requote.
+    const retry = await client.callTool({
+      name: "conviction_execute_trade",
+      arguments: { quoteId, idempotencyKey: "mock-idem-floor-2" },
+    });
+    expect(retry.structuredContent).toMatchObject({
+      ok: false,
+      code: "quote_mismatch",
+    });
+  });
+
+  it("never double-executes one quote under different idempotency keys", async () => {
+    const engine = await MockTradeEngine.create({
+      now: () => new Date("2026-07-17T12:00:00.000Z"),
+    });
+    const client = await connectMock({ engine });
+    const quote = await client.callTool({
+      name: "conviction_quote_trade",
+      arguments: { toAsset: "eth", sizeUsd: 15 },
+    });
+    const quoteId = (quote.structuredContent as { quoteId: string }).quoteId;
+
+    const [a, b] = await Promise.all([
+      client.callTool({
+        name: "conviction_execute_trade",
+        arguments: { quoteId, idempotencyKey: "mock-key-a" },
+      }),
+      client.callTool({
+        name: "conviction_execute_trade",
+        arguments: { quoteId, idempotencyKey: "mock-key-b" },
+      }),
+    ]);
+
+    const bodies = [a.structuredContent, b.structuredContent] as Array<{
+      ok: boolean;
+      code?: string;
+    }>;
+    expect(bodies.filter((body) => body.ok)).toHaveLength(1);
+    expect(bodies.filter((body) => !body.ok)).toHaveLength(1);
+    expect(bodies.find((body) => !body.ok)?.code).toBe("quote_mismatch");
+    expect(engine.providerAttempts).toBe(1);
   });
 
   it("returns the same result for retries and concurrent idempotency keys", async () => {

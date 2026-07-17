@@ -148,7 +148,22 @@ type DurableState = {
   quotes: Record<string, MockTradeQuoteRecord>;
   idempotency: Record<string, MockExecuteResult>;
   receipts: Record<string, { receipt: MockReceipt; entryAt: string }>;
+  /** Active spend reservations (not yet committed to lifetimeSpendUsd). */
+  reservedSpendUsd: number;
 };
+
+function destExplorerUrl(destChain: DestChain, txHash: string): string {
+  switch (destChain) {
+    case "Arbitrum":
+      return `https://arbiscan.io/tx/${txHash}`;
+    case "Base":
+      return `https://basescan.org/tx/${txHash}`;
+    default: {
+      const _exhaustive: never = destChain;
+      return _exhaustive;
+    }
+  }
+}
 
 const DEFAULT_POLICY: MockAgentPolicy = {
   agentId: "00000000-0000-4000-8000-000000000055",
@@ -229,7 +244,13 @@ export class MockTradeEngine {
   private readonly randomId: () => string;
   private simulateStaleQuote: boolean;
   private writeChain: Promise<void> = Promise.resolve();
-  private readonly inFlight = new Map<string, Promise<MockExecuteResult>>();
+  private readonly idempotencyInFlight = new Map<
+    string,
+    Promise<MockExecuteResult>
+  >();
+  private readonly quoteInFlight = new Map<string, Promise<unknown>>();
+  /** Test helper — counts attempted executions that passed claim. */
+  providerAttempts = 0;
 
   constructor(options: MockTradeEngineOptions = {}) {
     if (options.durableDir !== undefined) {
@@ -243,6 +264,7 @@ export class MockTradeEngine {
       quotes: {},
       idempotency: {},
       receipts: {},
+      reservedSpendUsd: 0,
     };
   }
 
@@ -266,12 +288,18 @@ export class MockTradeEngine {
     this.simulateStaleQuote = value;
   }
 
+  remainingBudgetUsd(): number {
+    const policy = this.state.policy;
+    return Math.max(
+      0,
+      policy.spendBudgetUsd -
+        policy.lifetimeSpendUsd -
+        this.state.reservedSpendUsd,
+    );
+  }
+
   accountStatus() {
     const policy = this.state.policy;
-    const remainingBudgetUsd = Math.max(
-      0,
-      policy.spendBudgetUsd - policy.lifetimeSpendUsd,
-    );
     return {
       ok: true as const,
       mode: "mock" as const,
@@ -286,7 +314,7 @@ export class MockTradeEngine {
         maxTradeUsd: policy.maxTradeUsd,
         spendBudgetUsd: policy.spendBudgetUsd,
         lifetimeSpendUsd: policy.lifetimeSpendUsd,
-        remainingBudgetUsd,
+        remainingBudgetUsd: this.remainingBudgetUsd(),
         balanceUsd: policy.balanceUsd,
       },
     };
@@ -394,15 +422,38 @@ export class MockTradeEngine {
     }
 
     const flightKey = `${this.state.policy.agentId}\0${idempotencyKey}`;
-    const existing = this.inFlight.get(flightKey);
+    const existing = this.idempotencyInFlight.get(flightKey);
     if (existing) return existing;
 
     const run = this.runExecute(quoteId, idempotencyKey);
-    this.inFlight.set(flightKey, run);
+    this.idempotencyInFlight.set(flightKey, run);
     try {
       return await run;
     } finally {
-      this.inFlight.delete(flightKey);
+      this.idempotencyInFlight.delete(flightKey);
+    }
+  }
+
+  private async withQuoteLock<T>(
+    quoteId: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const key = `${this.state.policy.agentId}\0quote\0${quoteId}`;
+    const prior = this.quoteInFlight.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chained = prior.catch(() => undefined).then(() => gate);
+    this.quoteInFlight.set(key, chained);
+    await prior.catch(() => undefined);
+    try {
+      return await run();
+    } finally {
+      release();
+      if (this.quoteInFlight.get(key) === chained) {
+        this.quoteInFlight.delete(key);
+      }
     }
   }
 
@@ -481,124 +532,140 @@ export class MockTradeEngine {
       });
     }
 
-    const quote = this.state.quotes[quoteId];
-    if (!quote || quote.agentId !== policy.agentId) {
-      return persistResult({
-        ok: false,
-        mode: "mock",
-        code: "quote_not_found",
-        message: "No trade quote matches that quoteId for this agent.",
-        quoteId,
-      });
-    }
-    if (new Date(quote.expiresAt).getTime() <= this.now().getTime()) {
-      return persistResult({
-        ok: false,
-        mode: "mock",
-        code: "quote_expired",
-        message: `Quote ${quote.quoteId} expired at ${quote.expiresAt}. Call conviction_quote_trade again for a fresh quoteId.`,
-        quoteId,
-      });
-    }
-    if (quote.used) {
-      return persistResult({
-        ok: false,
-        mode: "mock",
-        code: "quote_mismatch",
-        message: "That quote has already been consumed.",
-        quoteId,
-      });
-    }
+    return this.withQuoteLock(quoteId, async () => {
+      const again = this.state.idempotency[idempotencyKey];
+      if (again) return structuredClone(again);
 
-    if (quote.dollarsIn > policy.maxTradeUsd + 1e-9) {
-      return persistResult({
-        ok: false,
-        mode: "mock",
-        code: "spend_limit_exceeded",
-        message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds the per-trade limit of $${policy.maxTradeUsd.toFixed(2)}.`,
-        quoteId,
-      });
-    }
-    const remaining = Math.max(
-      0,
-      policy.spendBudgetUsd - policy.lifetimeSpendUsd,
-    );
-    if (quote.dollarsIn > remaining + 1e-9) {
-      return persistResult({
-        ok: false,
-        mode: "mock",
-        code: "spend_limit_exceeded",
-        message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds remaining spend budget of $${remaining.toFixed(2)}.`,
-        quoteId,
-      });
-    }
-    if (policy.balanceUsd + 1e-9 < quote.dollarsIn) {
-      return persistResult({
-        ok: false,
-        mode: "mock",
-        code: "insufficient_balance",
-        message: `Unified balance $${policy.balanceUsd.toFixed(2)} is below the quoted debit of $${quote.dollarsIn.toFixed(2)}.`,
-        quoteId,
-      });
-    }
+      const quote = this.state.quotes[quoteId];
+      if (!quote || quote.agentId !== policy.agentId) {
+        return persistResult({
+          ok: false,
+          mode: "mock",
+          code: "quote_not_found",
+          message: "No trade quote matches that quoteId for this agent.",
+          quoteId,
+        });
+      }
+      if (new Date(quote.expiresAt).getTime() <= this.now().getTime()) {
+        return persistResult({
+          ok: false,
+          mode: "mock",
+          code: "quote_expired",
+          message: `Quote ${quote.quoteId} expired at ${quote.expiresAt}. Call conviction_quote_trade again for a fresh quoteId.`,
+          quoteId,
+        });
+      }
+      if (quote.used) {
+        return persistResult({
+          ok: false,
+          mode: "mock",
+          code: "quote_mismatch",
+          message: "That quote has already been consumed.",
+          quoteId,
+        });
+      }
 
-    const fresh = quoteEconomics(quote.sizeUsd, this.simulateStaleQuote);
-    if (fresh.dollarsOut < quote.floorUsd) {
+      if (quote.dollarsIn > policy.maxTradeUsd + 1e-9) {
+        return persistResult({
+          ok: false,
+          mode: "mock",
+          code: "spend_limit_exceeded",
+          message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds the per-trade limit of $${policy.maxTradeUsd.toFixed(2)}.`,
+          quoteId,
+        });
+      }
+      const remaining = this.remainingBudgetUsd();
+      if (quote.dollarsIn > remaining + 1e-9) {
+        return persistResult({
+          ok: false,
+          mode: "mock",
+          code: "spend_limit_exceeded",
+          message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds remaining spend budget of $${remaining.toFixed(2)}.`,
+          quoteId,
+        });
+      }
+      if (policy.balanceUsd + 1e-9 < quote.dollarsIn) {
+        return persistResult({
+          ok: false,
+          mode: "mock",
+          code: "insufficient_balance",
+          message: `Unified balance $${policy.balanceUsd.toFixed(2)} is below the quoted debit of $${quote.dollarsIn.toFixed(2)}.`,
+          quoteId,
+        });
+      }
+
+      // Claim + reserve before any execution side effect (ADR 0020).
+      quote.used = true;
+      this.state.reservedSpendUsd += quote.dollarsIn;
+      this.providerAttempts += 1;
+
+      const fresh = quoteEconomics(quote.sizeUsd, this.simulateStaleQuote);
+      if (fresh.dollarsOut < quote.floorUsd) {
+        this.state.reservedSpendUsd = Math.max(
+          0,
+          this.state.reservedSpendUsd - quote.dollarsIn,
+        );
+        return persistResult({
+          ok: false,
+          mode: "mock",
+          code: "price_floor_breached",
+          message:
+            "Current execution cannot satisfy the quote's minimum-received floor. Call conviction_quote_trade for a new quoteId — execution never silently requotes.",
+          quoteId,
+        });
+      }
+
+      const receiptId = this.randomId();
+      const transactionId = `mock-exec-${receiptId}`;
+      const destTxHash = `0xmockdest${receiptId.replace(/-/g, "").slice(0, 16)}`;
+      const sourceTxHash = `0xmocksource${receiptId.replace(/-/g, "").slice(0, 16)}`;
+      const receipt: MockReceipt = {
+        slug: receiptId,
+        summary: `Done — $${quote.dollarsIn.toFixed(2)} moved. You now have $${fresh.dollarsOut.toFixed(2)} in ${quote.toAsset.toUpperCase()}.`,
+        dollarsIn: quote.dollarsIn,
+        dollarsOut: fresh.dollarsOut,
+        feeUsd: fresh.feeUsd,
+        legs: [
+          {
+            chain: "Base",
+            txHash: sourceTxHash,
+            explorerUrl: `https://basescan.org/tx/${sourceTxHash}`,
+          },
+          {
+            chain: quote.destChain,
+            txHash: destTxHash,
+            explorerUrl: destExplorerUrl(quote.destChain, destTxHash),
+          },
+        ],
+      };
+      this.state.receipts[receiptId] = {
+        receipt,
+        entryAt: this.now().toISOString(),
+      };
+      this.state.policy.lifetimeSpendUsd += quote.dollarsIn;
+      this.state.reservedSpendUsd = Math.max(
+        0,
+        this.state.reservedSpendUsd - quote.dollarsIn,
+      );
+      this.state.policy.balanceUsd = Math.max(
+        0,
+        this.state.policy.balanceUsd - quote.dollarsIn,
+      );
+
       return persistResult({
-        ok: false,
+        ok: true,
         mode: "mock",
-        code: "price_floor_breached",
-        message:
-          "Current execution cannot satisfy the quote's minimum-received floor. Call conviction_quote_trade for a new quoteId — execution never silently requotes.",
-        quoteId,
+        receiptId,
+        quoteId: quote.quoteId,
+        quoteFingerprint: quote.quoteFingerprint,
+        transactionId,
+        summary: receipt.summary,
+        receipt,
+        dollarsIn: quote.dollarsIn,
+        dollarsOut: fresh.dollarsOut,
+        feeUsd: fresh.feeUsd,
+        idempotencyKey,
       });
-    }
-
-    quote.used = true;
-    const receiptId = this.randomId();
-    const transactionId = `mock-exec-${receiptId}`;
-    const receipt: MockReceipt = {
-      slug: receiptId,
-      summary: `Done — $${quote.dollarsIn.toFixed(2)} moved. You now have $${fresh.dollarsOut.toFixed(2)} in ${quote.toAsset.toUpperCase()}.`,
-      dollarsIn: quote.dollarsIn,
-      dollarsOut: fresh.dollarsOut,
-      feeUsd: fresh.feeUsd,
-      legs: [
-        {
-          chain: "Base",
-          txHash: `0xmocksource${receiptId.replace(/-/g, "").slice(0, 16)}`,
-          explorerUrl: `https://basescan.org/tx/0xmocksource${receiptId.replace(/-/g, "").slice(0, 16)}`,
-        },
-        {
-          chain: quote.destChain,
-          txHash: `0xmockdest${receiptId.replace(/-/g, "").slice(0, 16)}`,
-          explorerUrl: `https://arbiscan.io/tx/0xmockdest${receiptId.replace(/-/g, "").slice(0, 16)}`,
-        },
-      ],
-    };
-    this.state.receipts[receiptId] = {
-      receipt,
-      entryAt: this.now().toISOString(),
-    };
-    this.state.policy.lifetimeSpendUsd += quote.dollarsIn;
-    this.state.policy.balanceUsd = Math.max(
-      0,
-      this.state.policy.balanceUsd - quote.dollarsIn,
-    );
-
-    return persistResult({
-      ok: true,
-      mode: "mock",
-      receiptId,
-      quoteId: quote.quoteId,
-      quoteFingerprint: quote.quoteFingerprint,
-      transactionId,
-      summary: receipt.summary,
-      receipt,
-      dollarsIn: quote.dollarsIn,
-      dollarsOut: fresh.dollarsOut,
-      feeUsd: fresh.feeUsd,
-      idempotencyKey,
     });
   }
 
@@ -809,6 +876,8 @@ export class MockTradeEngine {
           quotes: parsed.quotes ?? {},
           idempotency: parsed.idempotency ?? {},
           receipts: parsed.receipts ?? {},
+          // Reservations are process-local; never revive them across restart.
+          reservedSpendUsd: 0,
         };
       }
     } catch (error) {
@@ -827,12 +896,14 @@ export class MockTradeEngine {
   private async persist(): Promise<void> {
     const filePath = this.statePath();
     if (!filePath) return;
-    this.writeChain = this.writeChain.then(async () => {
+    // Recover the chain after a failed write so later persists still run.
+    const write = async () => {
       await mkdir(path.dirname(filePath), { recursive: true });
-      const tempPath = `${filePath}.${process.pid}.tmp`;
+      const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
       await writeFile(tempPath, JSON.stringify(this.state), "utf8");
       await rename(tempPath, filePath);
-    });
+    };
+    this.writeChain = this.writeChain.then(write, write);
     await this.writeChain;
   }
 }

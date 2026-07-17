@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   MemoryAgentIdempotencyStore,
   MemoryAgentReceiptPersist,
+  MemorySpendLedger,
   executeAgentTrade,
 } from "@/lib/agent-execute";
 import {
@@ -285,8 +286,55 @@ describe("executeAgentTrade", () => {
       quoteId: quote.quoteId,
     });
     expect(quoteStore.size()).toBe(beforeCount);
-    expect((await quoteStore.get(quote.quoteId))?.used).toBe(false);
-    expect(JSON.stringify(result)).not.toMatch(/dollarsOut|floorUsd|freshQuote/);
+    // Claim-before-provider: the attempt consumes the quote identity (ADR 0020).
+    expect((await quoteStore.get(quote.quoteId))?.used).toBe(true);
+    expect(JSON.stringify(result)).not.toMatch(/freshQuote/);
+  });
+
+  it("never double-executes one quote under different idempotency keys", async () => {
+    const { agent, ua, quoteStore, idempotencyStore, receipts, quote } =
+      await quoteAndStores({});
+    let executeCalls = 0;
+    const original = ua.executeTrade.bind(ua);
+    ua.executeTrade = async (params) => {
+      executeCalls += 1;
+      return original(params);
+    };
+    const spendLedger = new MemorySpendLedger();
+
+    const [a, b] = await Promise.all([
+      executeAgentTrade({
+        agent,
+        input: { quoteId: quote.quoteId, idempotencyKey: "idem-a" },
+        quoteStore,
+        idempotencyStore,
+        receipts,
+        ua,
+        balance: FUNDED_BALANCE,
+        spendLedger,
+        now: () => FIXED_NOW,
+        randomId: () => "receipt-a",
+      }),
+      executeAgentTrade({
+        agent,
+        input: { quoteId: quote.quoteId, idempotencyKey: "idem-b" },
+        quoteStore,
+        idempotencyStore,
+        receipts,
+        ua,
+        balance: FUNDED_BALANCE,
+        spendLedger,
+        now: () => FIXED_NOW,
+        randomId: () => "receipt-b",
+      }),
+    ]);
+
+    const successes = [a, b].filter((result) => result.ok);
+    const failures = [a, b].filter((result) => !result.ok);
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ code: "quote_mismatch" });
+    expect(executeCalls).toBe(1);
   });
 
   it("rejects spends above the per-trade limit", async () => {
