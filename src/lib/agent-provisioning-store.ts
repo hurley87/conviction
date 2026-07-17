@@ -427,13 +427,13 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     const agent = ownedAgentFromRow(row);
     if (!agent.fundingReady) {
       throw new AgentProvisioningError(
-        "agent_not_pending",
-        "Verify the encrypted backup before recording a connection check.",
+        "setup_not_ready",
+        "Verify the encrypted backup before recording local setup verification.",
       );
     }
     if (agent.status === "retired" || agent.status === "retiring") {
       throw new AgentProvisioningError(
-        "agent_not_pending",
+        "lifecycle_blocked",
         "A retired or retiring agent cannot complete setup verification.",
       );
     }

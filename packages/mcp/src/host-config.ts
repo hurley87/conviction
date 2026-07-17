@@ -1,6 +1,6 @@
 import {
   PACKAGE_MAJOR_PIN,
-  SETUP_CONTRACT,
+  hostById,
   type SupportedHostId,
 } from "./setup-contract.js";
 
@@ -19,8 +19,6 @@ export type HostConfigSnippet = {
 
 export type HostConfigOptions = {
   profileName: string;
-  /** Optional API base for hosts that need CONVICTION_API_BASE in env. */
-  apiBaseUrl?: string;
 };
 
 const SECRET_PATTERN =
@@ -75,6 +73,21 @@ function formatHermesYaml(profileName: string): string {
   ].join("\n");
 }
 
+function snippetFor(
+  hostId: SupportedHostId,
+  primary: string,
+  secondary?: HostConfigSnippet["secondary"],
+): HostConfigSnippet {
+  const host = hostById[hostId];
+  return {
+    hostId,
+    label: host.label,
+    description: host.connectionMethod,
+    primary,
+    ...(secondary ? { secondary } : {}),
+  };
+}
+
 /** Generate major-pinned host configs that never embed secrets or one-time codes. */
 export function generateHostConfigs(
   options: HostConfigOptions,
@@ -85,34 +98,13 @@ export function generateHostConfigs(
   }
 
   const snippets: HostConfigSnippet[] = [
-    {
-      hostId: "claude-code",
-      label: "Claude Code",
-      description: SETUP_CONTRACT.hosts[0]!.connectionMethod,
-      primary: formatShellCommand("claude", profileName),
-    },
-    {
-      hostId: "codex",
-      label: "Codex",
-      description: SETUP_CONTRACT.hosts[1]!.connectionMethod,
-      primary: formatShellCommand("codex", profileName),
-      secondary: {
-        label: "~/.codex/config.toml",
-        content: formatToml(profileName),
-      },
-    },
-    {
-      hostId: "hermes",
-      label: "Hermes",
-      description: SETUP_CONTRACT.hosts[2]!.connectionMethod,
-      primary: formatHermesYaml(profileName),
-    },
-    {
-      hostId: "openclaw",
-      label: "OpenClaw",
-      description: SETUP_CONTRACT.hosts[3]!.connectionMethod,
-      primary: formatShellCommand("openclaw", profileName),
-    },
+    snippetFor("claude-code", formatShellCommand("claude", profileName)),
+    snippetFor("codex", formatShellCommand("codex", profileName), {
+      label: "~/.codex/config.toml",
+      content: formatToml(profileName),
+    }),
+    snippetFor("hermes", formatHermesYaml(profileName)),
+    snippetFor("openclaw", formatShellCommand("openclaw", profileName)),
   ];
 
   for (const snippet of snippets) {

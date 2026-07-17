@@ -6,11 +6,14 @@ export const SETUP_CONTRACT_VERSION = 1 as const;
 /** Package-runner pin for generated host configs (ADR 0046). */
 export const PACKAGE_MAJOR_PIN = "@conviction/mcp@1" as const;
 
+/**
+ * Operator-facing steps that map 1:1 to observable backend state.
+ * Host configuration is content inside `verify`, not a separate progress step.
+ */
 export const SETUP_STEP_IDS = [
   "create",
   "provision",
   "backup",
-  "connect",
   "verify",
   "fund",
 ] as const;
@@ -100,23 +103,18 @@ export const SETUP_CONTRACT: SetupContract = setupContractSchema.parse({
       operatorRequired: true,
     },
     {
-      id: "connect",
-      title: "Configure host",
-      summary: "Add the shared MCP server to Claude Code, Codex, Hermes, or OpenClaw.",
-      nextAction: "Copy a major-pinned host configuration and add it to your MCP host.",
-      operatorRequired: true,
-    },
-    {
       id: "verify",
-      title: "Verify connection",
-      summary: "Run a non-value-moving doctor check before sending funds.",
-      nextAction: "Run conviction-mcp doctor --profile <name> and confirm success.",
+      title: "Verify locally",
+      summary:
+        "Configure a host with the shared MCP contract, then run a non-value-moving doctor check.",
+      nextAction:
+        "Add a major-pinned host config, then run conviction-mcp doctor --profile <name>.",
       operatorRequired: true,
     },
     {
       id: "fund",
       title: "Fund account",
-      summary: "Send funds to the Universal Account after connection verification succeeds.",
+      summary: "Send funds to the Universal Account after local verification succeeds.",
       nextAction: "Send funds to the displayed deposit address.",
       operatorRequired: true,
     },
@@ -187,71 +185,120 @@ export const SETUP_CONTRACT: SetupContract = setupContractSchema.parse({
     "Claude Code, Codex, Hermes, and OpenClaw share one MCP tool contract. Host-specific content is configuration only.",
 });
 
+const stepById = Object.fromEntries(
+  SETUP_CONTRACT.steps.map((step) => [step.id, step]),
+) as Record<SetupStepId, SetupContract["steps"][number]>;
+
+export const hostById = Object.fromEntries(
+  SETUP_CONTRACT.hosts.map((host) => [host.id, host]),
+) as Record<SupportedHostId, SetupContract["hosts"][number]>;
+
+export function setupStep(id: SetupStepId) {
+  return stepById[id];
+}
+
+/** Default local profile name derived from an agent handle (matches init). */
+export function defaultProfileName(handle: string): string {
+  return handle.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+}
+
 export type SetupAgentSnapshot = {
   status: string;
   fundingReady: boolean;
   setupVerifiedAt: string | null;
 };
 
-export type SetupProgress = {
-  contractVersion: typeof SETUP_CONTRACT_VERSION;
-  currentStep: SetupStepId;
+export type SetupPhaseKind =
+  | "create"
+  | "provision"
+  | "backup"
+  | "verify"
+  | "fund"
+  | "terminal";
+
+/** Single view-model for progress rail + action panels. */
+export type SetupPhase = {
+  kind: SetupPhaseKind;
+  currentStep: SetupStepId | null;
   completedStepIds: SetupStepId[];
   nextAction: string;
   suggestFunding: boolean;
 };
 
-/** Derive setup progress from backend-authoritative agent state. */
-export function resolveSetupProgress(
+function phase(
+  kind: SetupPhaseKind,
+  currentStep: SetupStepId | null,
+  completedStepIds: SetupStepId[],
+  nextAction: string,
+  suggestFunding = false,
+): SetupPhase {
+  return { kind, currentStep, completedStepIds, nextAction, suggestFunding };
+}
+
+const TERMINAL_STATUSES = new Set([
+  "disabled",
+  "capped",
+  "retiring",
+  "retired",
+]);
+
+/** Derive one setup phase from backend-authoritative agent state. */
+export function resolveSetupPhase(
   agent: SetupAgentSnapshot | null,
-): SetupProgress {
+): SetupPhase {
   if (!agent) {
-    return {
-      contractVersion: SETUP_CONTRACT_VERSION,
-      currentStep: "create",
-      completedStepIds: [],
-      nextAction: SETUP_CONTRACT.steps[0]!.nextAction,
-      suggestFunding: false,
-    };
+    return phase("create", "create", [], setupStep("create").nextAction);
+  }
+
+  if (TERMINAL_STATUSES.has(agent.status)) {
+    return phase(
+      "terminal",
+      null,
+      [],
+      `This agent is ${agent.status}. Retire or resolve that lifecycle state before continuing setup.`,
+    );
   }
 
   if (agent.status === "provisioning") {
-    return {
-      contractVersion: SETUP_CONTRACT_VERSION,
-      currentStep: "provision",
-      completedStepIds: ["create"],
-      nextAction: SETUP_CONTRACT.steps[1]!.nextAction,
-      suggestFunding: false,
-    };
+    return phase("provision", "provision", ["create"], setupStep("provision").nextAction);
   }
 
   if (!agent.fundingReady) {
-    return {
-      contractVersion: SETUP_CONTRACT_VERSION,
-      currentStep: "backup",
-      completedStepIds: ["create", "provision"],
-      nextAction: SETUP_CONTRACT.steps[2]!.nextAction,
-      suggestFunding: false,
-    };
+    return phase(
+      "backup",
+      "backup",
+      ["create", "provision"],
+      setupStep("backup").nextAction,
+    );
   }
 
   if (!agent.setupVerifiedAt) {
-    return {
-      contractVersion: SETUP_CONTRACT_VERSION,
-      currentStep: "connect",
-      completedStepIds: ["create", "provision", "backup"],
-      nextAction:
-        "Configure an MCP host, then run conviction-mcp doctor --profile <name>.",
-      suggestFunding: false,
-    };
+    return phase(
+      "verify",
+      "verify",
+      ["create", "provision", "backup"],
+      setupStep("verify").nextAction,
+    );
   }
 
+  return phase(
+    "fund",
+    "fund",
+    ["create", "provision", "backup", "verify"],
+    setupStep("fund").nextAction,
+    true,
+  );
+}
+
+/** @deprecated Prefer resolveSetupPhase — kept for call-site migration. */
+export function resolveSetupProgress(agent: SetupAgentSnapshot | null) {
+  const resolved = resolveSetupPhase(agent);
   return {
     contractVersion: SETUP_CONTRACT_VERSION,
-    currentStep: "fund",
-    completedStepIds: ["create", "provision", "backup", "connect", "verify"],
-    nextAction: SETUP_CONTRACT.steps[5]!.nextAction,
-    suggestFunding: true,
+    currentStep: resolved.currentStep ?? "create",
+    completedStepIds: resolved.completedStepIds,
+    nextAction: resolved.nextAction,
+    suggestFunding: resolved.suggestFunding,
   };
 }
 

@@ -1,12 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { ConvictionApiError } from "./api-client.js";
-import {
-  formatDoctorOutput,
-  formatStatusOutput,
-  runDoctor,
-  runStatus,
-} from "./doctor.js";
+import { formatDoctorOutput, runDoctor } from "./doctor.js";
 import { formatHostConfigGuide } from "./host-config.js";
 import { runInit, describeInitUnlockHint } from "./init.js";
 import { loadWalletFromKeystore } from "./keystore.js";
@@ -19,11 +14,13 @@ import {
   PACKAGE_MAJOR_PIN,
   SETUP_CONTRACT_VERSION,
 } from "./setup-contract.js";
+import { formatStatusOutput, runStatus } from "./status.js";
 import {
   createDefaultUnlockSecretStore,
   KEYSTORE_PASSWORD_ENV,
   MemoryUnlockSecretStore,
   requireUnlockSecret,
+  resolveUnlockStore,
 } from "./unlock-secret.js";
 
 const HELP = `Conviction MCP
@@ -153,14 +150,9 @@ async function runDoctorCommand(args: string[]): Promise<void> {
   const home = readFlag(args, "--home")?.trim();
   const reportPath = readFlag(args, "--report")?.trim();
 
-  const unlockStore = process.env[KEYSTORE_PASSWORD_ENV]?.trim()
-    ? new MemoryUnlockSecretStore()
-    : await createDefaultUnlockSecretStore();
-
   const result = await runDoctor({
     profileName,
     apiBaseUrl,
-    unlockStore,
     ...(home ? { home } : {}),
     ...(reportPath ? { reportPath } : {}),
   });
@@ -179,14 +171,9 @@ async function runStatusCommand(args: string[]): Promise<void> {
   const apiBaseUrl = resolveApiBase(args);
   const home = readFlag(args, "--home")?.trim();
 
-  const unlockStore = process.env[KEYSTORE_PASSWORD_ENV]?.trim()
-    ? new MemoryUnlockSecretStore()
-    : await createDefaultUnlockSecretStore();
-
   const status = await runStatus({
     profileName,
     apiBaseUrl,
-    unlockStore,
     ...(home ? { home } : {}),
   });
   console.log(formatStatusOutput(status));
@@ -201,9 +188,7 @@ async function runLiveServe(args: string[]): Promise<void> {
   const paths = resolveConvictionPaths(home);
   const profile = await readAgentProfile(profilePath(paths, profileName));
 
-  const unlockStore = process.env[KEYSTORE_PASSWORD_ENV]?.trim()
-    ? new MemoryUnlockSecretStore()
-    : await createDefaultUnlockSecretStore();
+  const { store: unlockStore } = await resolveUnlockStore(process.env);
   const unlockSecret = requireUnlockSecret({
     signerAddress: profile.signerAddress,
     store: unlockStore,

@@ -1,8 +1,5 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { inspect } from "node:util";
-
 import { ConvictionApiError } from "./api-client.js";
+import { writeDoctorReport } from "./doctor-report.js";
 import { formatHostConfigGuide } from "./host-config.js";
 import { loadWalletFromKeystore } from "./keystore.js";
 import {
@@ -10,18 +7,11 @@ import {
   markSetupVerified,
   type LiveAgentStatus,
 } from "./live-api-client.js";
-import { LIVE_TOOLS } from "./live-server.js";
 import { profilePath, resolveConvictionPaths } from "./paths.js";
 import { readAgentProfile, type AgentProfile } from "./profile.js";
+import { SETUP_CONTRACT_VERSION } from "./setup-contract.js";
 import {
-  PACKAGE_MAJOR_PIN,
-  SETUP_CONTRACT,
-  SETUP_CONTRACT_VERSION,
-} from "./setup-contract.js";
-import {
-  createDefaultUnlockSecretStore,
-  KEYSTORE_PASSWORD_ENV,
-  MemoryUnlockSecretStore,
+  resolveUnlockStore,
   requireUnlockSecret,
   type UnlockSecretStore,
 } from "./unlock-secret.js";
@@ -53,7 +43,10 @@ export type DoctorOptions = {
   unlockStore?: UnlockSecretStore;
   fetchImpl?: typeof fetch;
   env?: NodeJS.ProcessEnv;
-  /** Skip backend mark when testing pure local diagnostics. */
+  /**
+   * When true (default), a successful doctor records setup verification on the backend.
+   * This is an intentional mutating side effect of the connection check.
+   */
   recordSetupVerification?: boolean;
 };
 
@@ -66,22 +59,19 @@ function check(
   return { id, title, status, detail };
 }
 
-async function resolveUnlockStore(
-  env: NodeJS.ProcessEnv,
-  provided?: UnlockSecretStore,
-): Promise<{ store: UnlockSecretStore; source: string }> {
-  if (provided) {
-    return { store: provided, source: "provided" };
-  }
-  if (env[KEYSTORE_PASSWORD_ENV]?.trim()) {
-    return {
-      store: new MemoryUnlockSecretStore(),
-      source: KEYSTORE_PASSWORD_ENV,
-    };
-  }
+function failedResult(
+  profileName: string,
+  checks: DoctorCheck[],
+  hostConfigGuide: string | null = null,
+): DoctorResult {
   return {
-    store: await createDefaultUnlockSecretStore(),
-    source: "os-credential-store",
+    ok: false,
+    profileName,
+    checks,
+    status: null,
+    depositAddress: null,
+    suggestFunding: false,
+    hostConfigGuide,
   };
 }
 
@@ -112,15 +102,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
         error instanceof Error ? error.message : "Profile could not be read.",
       ),
     );
-    return {
-      ok: false,
-      profileName: options.profileName,
-      checks,
-      status: null,
-      depositAddress: null,
-      suggestFunding: false,
-      hostConfigGuide: null,
-    };
+    return failedResult(options.profileName, checks);
   }
 
   const { store, source } = await resolveUnlockStore(env, options.unlockStore);
@@ -163,36 +145,12 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
         error instanceof Error ? error.message : "Keystore unlock failed.",
       ),
     );
-    return {
-      ok: false,
-      profileName: profile.profileName,
+    return failedResult(
+      profile.profileName,
       checks,
-      status: null,
-      depositAddress: null,
-      suggestFunding: false,
-      hostConfigGuide: formatHostConfigGuide({
-        profileName: profile.profileName,
-      }),
-    };
+      formatHostConfigGuide({ profileName: profile.profileName }),
+    );
   }
-
-  checks.push(
-    check(
-      "tool_discovery",
-      "Tool discovery",
-      LIVE_TOOLS.length === 10 ? "pass" : "fail",
-      `Canonical v1 contract exposes ${LIVE_TOOLS.length} tools locally without moving funds.`,
-    ),
-  );
-
-  checks.push(
-    check(
-      "particle",
-      "Particle configuration",
-      "warn",
-      "Particle execution paths are exercised by quote/execute tools after funding; doctor does not call them.",
-    ),
-  );
 
   let status: LiveAgentStatus | null = null;
   try {
@@ -229,11 +187,15 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     );
   }
 
-  const failed = checks.some((entry) => entry.status === "fail");
   let suggestFunding = false;
   let depositAddress = status?.depositAddress ?? profile.universalAccountAddress;
+  const shouldRecord = options.recordSetupVerification !== false;
 
-  if (!failed && status?.fundingReady && options.recordSetupVerification !== false) {
+  if (
+    !checks.some((entry) => entry.status === "fail") &&
+    status?.fundingReady &&
+    shouldRecord
+  ) {
     try {
       const verified = await markSetupVerified({
         apiBaseUrl: options.apiBaseUrl,
@@ -248,7 +210,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
           "setup_verification",
           "Setup verification",
           "pass",
-          `Connection verified at ${verified.setupVerifiedAt ?? "now"}. Funding may be suggested.`,
+          `Local verification recorded at ${verified.setupVerifiedAt}. Funding may be suggested.`,
         ),
       );
     } catch (error) {
@@ -285,99 +247,6 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   return result;
 }
 
-async function writeDoctorReport(
-  reportPath: string,
-  result: DoctorResult,
-  env: NodeJS.ProcessEnv,
-): Promise<void> {
-  const absolute = path.resolve(reportPath);
-  await mkdir(path.dirname(absolute), { recursive: true, mode: 0o700 });
-
-  const redactedStatus = result.status
-    ? {
-        ...result.status,
-        address: redactAddress(result.status.address),
-        depositAddress: redactAddress(result.status.depositAddress),
-      }
-    : null;
-
-  const bundle = {
-    manifest: {
-      version: SETUP_CONTRACT_VERSION,
-      packageMajorPin: PACKAGE_MAJOR_PIN,
-      generatedAt: new Date().toISOString(),
-      redactions: [
-        "private keys",
-        "keystore passwords",
-        "recovery passphrases",
-        "credential-store values",
-        "provisioning codes",
-        "signed payloads",
-        "full addresses where unnecessary",
-        "environment-variable values",
-        "host prompts and MCP conversations",
-      ],
-      included: [
-        "package and runtime versions",
-        "operating-system family",
-        "doctor check results",
-        "redacted account status",
-        "setup contract version",
-      ],
-    },
-    runtime: {
-      node: process.version,
-      platform: process.platform,
-      arch: process.arch,
-      packageMajorPin: PACKAGE_MAJOR_PIN,
-      setupContractVersion: SETUP_CONTRACT_VERSION,
-      envKeysPresent: {
-        [KEYSTORE_PASSWORD_ENV]: Boolean(env[KEYSTORE_PASSWORD_ENV]?.trim()),
-        CONVICTION_API_BASE: Boolean(env.CONVICTION_API_BASE?.trim()),
-      },
-    },
-    doctor: {
-      ok: result.ok,
-      profileName: result.profileName,
-      checks: result.checks,
-      status: redactedStatus,
-      suggestFunding: result.suggestFunding,
-    },
-    contract: {
-      version: SETUP_CONTRACT.version,
-      hosts: SETUP_CONTRACT.hosts.map((host) => host.id),
-      platforms: SETUP_CONTRACT.platforms.map((platform) => ({
-        id: platform.id,
-        support: platform.support,
-      })),
-    },
-  };
-
-  const serialized = `${JSON.stringify(bundle, null, 2)}\n`;
-  assertReportHasNoSecrets(serialized);
-  await writeFile(absolute, serialized, { encoding: "utf8", mode: 0o600 });
-  await chmod(absolute, 0o600);
-}
-
-function redactAddress(address: string): string {
-  if (address.length < 12) return "[redacted]";
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
-function assertReportHasNoSecrets(serialized: string): void {
-  const banned = [
-    "CONVICTION_BACKUP_PASSPHRASE=",
-    "CONVICTION_KEYSTORE_PASSWORD=",
-    "CONVICTION_PRIVATE_KEY=",
-    "--code ",
-  ];
-  for (const token of banned) {
-    if (serialized.includes(token)) {
-      throw new Error("Doctor report contained a forbidden secret pattern.");
-    }
-  }
-}
-
 export function formatDoctorOutput(result: DoctorResult): string {
   const lines = [
     `Conviction MCP doctor (setup contract v${SETUP_CONTRACT_VERSION})`,
@@ -397,7 +266,7 @@ export function formatDoctorOutput(result: DoctorResult): string {
     return lines.join("\n");
   }
 
-  lines.push("Connection check succeeded. No funds were moved.");
+  lines.push("Local verification succeeded. No funds were moved.");
   if (result.suggestFunding && result.depositAddress) {
     lines.push("");
     lines.push("Next: fund the Universal Account.");
@@ -408,50 +277,4 @@ export function formatDoctorOutput(result: DoctorResult): string {
     lines.push(result.hostConfigGuide);
   }
   return lines.join("\n");
-}
-
-export type StatusOptions = {
-  profileName: string;
-  apiBaseUrl: string;
-  home?: string;
-  unlockStore?: UnlockSecretStore;
-  fetchImpl?: typeof fetch;
-  env?: NodeJS.ProcessEnv;
-};
-
-export async function runStatus(options: StatusOptions): Promise<LiveAgentStatus> {
-  const env = options.env ?? process.env;
-  const paths = resolveConvictionPaths(options.home);
-  const profile = await readAgentProfile(
-    profilePath(paths, options.profileName),
-  );
-  const { store } = await resolveUnlockStore(env, options.unlockStore);
-  const unlockSecret = requireUnlockSecret({
-    signerAddress: profile.signerAddress,
-    store,
-    env,
-  });
-  const wallet = await loadWalletFromKeystore(profile.keystorePath, unlockSecret);
-  return fetchAgentStatus({
-    apiBaseUrl: options.apiBaseUrl,
-    wallet,
-    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-  });
-}
-
-export function formatStatusOutput(status: LiveAgentStatus): string {
-  return inspect(
-    {
-      handle: status.handle,
-      agentId: status.agentId,
-      status: status.status,
-      publicStatus: status.publicStatus,
-      fundingReady: status.fundingReady,
-      setupVerifiedAt: status.setupVerifiedAt ?? null,
-      depositAddress: status.depositAddress,
-      remainingBudgetUsd: status.remainingBudgetUsd,
-      actionPolicy: status.actionPolicy,
-    },
-    { colors: false, depth: 3, compact: false },
-  );
 }

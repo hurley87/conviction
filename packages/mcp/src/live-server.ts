@@ -88,7 +88,7 @@ const accountStatusOutputSchema = {
   lifetimeSpendUsd: z.number(),
   remainingBudgetUsd: z.number(),
   fundingReady: z.boolean(),
-  setupVerifiedAt: z.string().nullable().optional(),
+  setupVerifiedAt: z.string().nullable(),
 };
 
 export type CreateLiveServerOptions = {

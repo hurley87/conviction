@@ -31,12 +31,13 @@ On headless Linux or WSL, the operator may provide `CONVICTION_KEYSTORE_PASSWORD
 
 ## Setup steps
 
+These steps map to observable backend state:
+
 1. **Create agent** — Operator creates a pending agent in Agent Access.
 2. **Provision locally** — Operator runs the one-time `conviction-mcp init --code …` handoff from Agent Access.
 3. **Verify backup** — Init must export and decrypt-verify the encrypted backup before funding is unlocked.
-4. **Configure host** — Operator adds a major-pinned stdio config for one of the four hosts.
-5. **Verify connection** — Operator runs `conviction-mcp doctor --profile <name>` (non-value-moving).
-6. **Fund account** — Only after doctor succeeds should the operator send funds to the deposit address.
+4. **Verify locally** — Operator configures a host with the shared MCP contract, then runs `conviction-mcp doctor --profile <name>` (non-value-moving). Host configuration is part of this step, not a separate progress gate.
+5. **Fund account** — Only after doctor records setup verification should the operator send funds to the deposit address.
 
 ## Host configuration patterns
 
@@ -68,9 +69,8 @@ args = ["-y", "@conviction/mcp@1", "serve", "--profile", "<name>"]
 
 ### Hermes
 
-Add under `mcp_servers` in `~/.hermes/config.yaml`:
-
 ```yaml
+# Add under mcp_servers in ~/.hermes/config.yaml
 mcp_servers:
   conviction:
     command: "npx"
@@ -90,11 +90,11 @@ openclaw mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
 
 ## Diagnostics
 
-- `conviction-mcp doctor --profile <name>` verifies profile integrity, keystore access, backend authentication, tool discovery, and account status without moving funds.
+- `conviction-mcp doctor --profile <name>` verifies profile integrity, keystore access, backend authentication, and account status without moving funds. On success it records setup verification.
 - `conviction-mcp doctor --profile <name> --report <path>` writes a redacted local support bundle. It never uploads.
 - `conviction-mcp status --profile <name>` prints backend-authoritative identity and policy state.
 
-Doctor success is the clear connection success state. Suggest funding only after that succeeds.
+Doctor success is the clear local verification success state. Suggest funding only after that succeeds.
 
 ## When operator action is required
 

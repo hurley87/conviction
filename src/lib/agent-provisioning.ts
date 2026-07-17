@@ -301,7 +301,9 @@ export type ProvisioningErrorCode =
   | "invalid_proof"
   | "agent_not_pending"
   | "address_mismatch"
-  | "agent_not_found";
+  | "agent_not_found"
+  | "setup_not_ready"
+  | "lifecycle_blocked";
 
 export class AgentProvisioningError extends Error {
   constructor(
@@ -692,13 +694,13 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
     const { agent } = record;
     if (!agent.fundingReady) {
       throw new AgentProvisioningError(
-        "agent_not_pending",
-        "Verify the encrypted backup before recording a connection check.",
+        "setup_not_ready",
+        "Verify the encrypted backup before recording local setup verification.",
       );
     }
     if (agent.status === "retired" || agent.status === "retiring") {
       throw new AgentProvisioningError(
-        "agent_not_pending",
+        "lifecycle_blocked",
         "A retired or retiring agent cannot complete setup verification.",
       );
     }

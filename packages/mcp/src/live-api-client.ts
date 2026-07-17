@@ -23,7 +23,7 @@ export type LiveAgentStatus = {
   remainingBudgetUsd: number;
   fundingReady: boolean;
   /** ISO timestamp set by a successful non-value-moving doctor check. */
-  setupVerifiedAt?: string | null;
+  setupVerifiedAt: string | null;
 };
 
 export type LiveLease = {

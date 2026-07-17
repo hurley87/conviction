@@ -1,7 +1,5 @@
 import { buildAgentAccountStatus } from "@/lib/agent-lease";
-import {
-  AgentProvisioningError,
-} from "@/lib/agent-provisioning";
+import { AgentProvisioningError } from "@/lib/agent-provisioning";
 import {
   AgentRequestAuthError,
   agentAuthErrorStatus,
@@ -16,7 +14,8 @@ function provisioningErrorStatus(
   switch (code) {
     case "agent_not_found":
       return 404;
-    case "agent_not_pending":
+    case "setup_not_ready":
+    case "lifecycle_blocked":
       return 409;
     case "invalid_request":
       return 422;
@@ -25,7 +24,7 @@ function provisioningErrorStatus(
   }
 }
 
-/** Record a successful non-value-moving doctor/status connection check. */
+/** Record a successful non-value-moving doctor connection check. */
 export async function POST(request: Request) {
   const rawBody = await request.text();
   try {

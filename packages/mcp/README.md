@@ -33,16 +33,16 @@ Headless unlock uses `CONVICTION_KEYSTORE_PASSWORD`. Recovery passphrase may be
 passed with `--backup-passphrase` or `CONVICTION_BACKUP_PASSPHRASE`. Raw private
 key environment variables are rejected.
 
-## Verify the connection before funding
+## Verify locally before funding
 
 ```sh
 conviction-mcp doctor --profile <name> --api-base https://your-conviction-host
 ```
 
-Doctor checks profile integrity, keystore access, backend authentication, tool
-discovery, and account status without moving funds. On success it records setup
-verification and only then suggests funding. Optional `--report <path>` writes a
-redacted local support bundle and never uploads it.
+Doctor checks profile integrity, keystore access, backend authentication, and
+account status without moving funds. On success it records setup verification
+and only then suggests funding. Optional `--report <path>` writes a redacted
+local support bundle and never uploads it.
 
 ```sh
 conviction-mcp status --profile <name>

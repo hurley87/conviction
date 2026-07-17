@@ -120,6 +120,26 @@ async function tryImportKeyring(): Promise<KeyringModule | null> {
   }
 }
 
+/** Resolve the unlock store for CLI/doctor/status (env, provided, or OS keyring). */
+export async function resolveUnlockStore(
+  env: NodeJS.ProcessEnv = process.env,
+  provided?: UnlockSecretStore,
+): Promise<{ store: UnlockSecretStore; source: string }> {
+  if (provided) {
+    return { store: provided, source: "provided" };
+  }
+  if (env[KEYSTORE_PASSWORD_ENV]?.trim()) {
+    return {
+      store: new MemoryUnlockSecretStore(),
+      source: KEYSTORE_PASSWORD_ENV,
+    };
+  }
+  return {
+    store: await createDefaultUnlockSecretStore(env),
+    source: "os-credential-store",
+  };
+}
+
 /**
  * Prefer @napi-rs/keyring when available; otherwise require the headless env var.
  */
