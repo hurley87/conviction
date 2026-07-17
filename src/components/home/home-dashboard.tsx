@@ -49,7 +49,7 @@ export function HomeDashboard() {
           Welcome to Conviction
         </h1>
         <p className="mt-3 max-w-md text-ink-3">
-          Sign in with Twitter to view your unified balance and trade across
+          Sign in with email or X to view your unified balance and trade across
           chains.
         </p>
         <button
@@ -57,7 +57,7 @@ export function HomeDashboard() {
           onClick={() => account.login()}
           className={`${PRIMARY_LIGHT} mt-8 px-8 py-3`}
         >
-          Sign in with Twitter
+          Sign in with email or X
         </button>
       </div>
     );

@@ -4,7 +4,7 @@
 
 ## Locked decisions
 - **Privy** is the wallet provider and 7702 signer (ADR 0004, decided) — exactly as the demo does. Particle Auth-only stays a possible later simplification, not a blocker.
-- **Twitter-only** social login; no MetaMask path (ADR 0004).
+- **Passwordless email OTP or X** login; no MetaMask path. Email must be enabled in the Privy dashboard for each deployment (ADR 0004).
 - **LI.FI** is the token list + spot price + logo source (`getTokens()`), mirroring the demo. Charts (OHLC) would need a separate source later.
 - Mainnet, small funds (ADR 0001); **Arbitrum** is the settlement chain (ADR 0005).
 

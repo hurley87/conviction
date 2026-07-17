@@ -51,7 +51,7 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
         onClick={() => account.login()}
         className={`${PRIMARY_LIGHT} w-full py-2 text-sm`}
       >
-        Sign in with Twitter
+        Sign in with email or X
       </button>
     );
   }

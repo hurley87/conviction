@@ -78,7 +78,7 @@ const FAQS = [
   },
   {
     q: "Do I need a crypto wallet to start?",
-    a: "No. Sign in with X and Conviction creates your account behind the scenes. You can add money with a card without managing a seed phrase.",
+    a: "No. Sign in with email or X and Conviction creates an embedded wallet behind the scenes. You can add money with a card without managing a seed phrase or switching networks.",
   },
   {
     q: "What is a unified balance?",
@@ -263,8 +263,8 @@ export function LandingPage() {
               className={`${styles.fadeUp} mt-7 text-xs leading-relaxed text-ink-4`}
               style={{ animationDelay: "320ms" }}
             >
-              Sign in with X, or connect your existing wallet. Same address. No
-              migration. You choose every position.
+              Sign in with email or X. Your embedded wallet uses one address,
+              and you choose every position.
             </p>
           </div>
 
