@@ -1,0 +1,28 @@
+{
+  "name": "@conviction/mcp",
+  "version": "1.0.0",
+  "description": "Local Model Context Protocol server for Conviction",
+  "type": "module",
+  "bin": {
+    "conviction-mcp": "bin/conviction-mcp.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  }
+}
