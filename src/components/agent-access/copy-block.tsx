@@ -15,8 +15,8 @@ export function CopyBlock({
       <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-ink-3">
         {label}
       </p>
-      <div className="mt-2 flex flex-col gap-3 sm:flex-row">
-        <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all rounded-[14px] bg-ink px-4 py-3 font-mono text-xs leading-5 text-white">
+      <div className="relative mt-2">
+        <pre className="min-w-0 overflow-x-auto whitespace-pre-wrap break-all rounded-[14px] bg-ink px-4 py-3 pr-20 font-mono text-xs leading-5 text-white">
           {value}
         </pre>
         <button
@@ -26,7 +26,7 @@ export function CopyBlock({
             setCopied(true);
             window.setTimeout(() => setCopied(false), 1800);
           }}
-          className="rounded-[14px] bg-brand px-5 py-3 text-sm font-extrabold text-brand-on transition hover:bg-brand-hover"
+          className="absolute right-2 top-2 rounded-[10px] bg-white/12 px-3 py-1.5 text-xs font-extrabold text-white backdrop-blur-sm transition hover:bg-white/20"
         >
           {copied ? "Copied" : "Copy"}
         </button>
