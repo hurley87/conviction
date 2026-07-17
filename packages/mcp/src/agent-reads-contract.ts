@@ -195,6 +195,13 @@ export const receiptGetResultSchema = z.object({
   entryAt: z.string(),
 });
 
+/** Shared structured error payload returned by live read tools (`isError: true`). */
+export const structuredErrorResultSchema = z.object({
+  ok: z.literal(false),
+  code: z.string(),
+  message: z.string(),
+});
+
 export type UniversalBalance = z.infer<typeof universalBalanceSchema>;
 export type DepositAddresses = z.infer<typeof depositAddressesSchema>;
 export type AccountStatusResult = z.infer<typeof accountStatusResultSchema>;
@@ -205,10 +212,4 @@ export type ConvictionListResult = z.infer<typeof convictionListResultSchema>;
 export type ConvictionGetResult = z.infer<typeof convictionGetResultSchema>;
 export type FeedSummaryResult = z.infer<typeof feedSummaryResultSchema>;
 export type ReceiptGetResult = z.infer<typeof receiptGetResultSchema>;
-
-/** MCP registerTool outputSchema shapes (SDK expects ZodRawShape). */
-export const accountStatusOutputSchema = accountStatusResultSchema.shape;
-export const listConvictionsOutputSchema = convictionListResultSchema.shape;
-export const getConvictionOutputSchema = convictionGetResultSchema.shape;
-export const summarizeFeedOutputSchema = feedSummaryResultSchema.shape;
-export const getReceiptOutputSchema = receiptGetResultSchema.shape;
+export type StructuredErrorResult = z.infer<typeof structuredErrorResultSchema>;
