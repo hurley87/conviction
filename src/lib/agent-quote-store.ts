@@ -197,6 +197,18 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
     const row = rows[0];
     return row ? recordFromRow(row) : null;
   }
+
+  async markUsed(quoteId: string): Promise<boolean> {
+    await this.ensureSchema();
+    const rows = (await this.sql`
+      UPDATE agent_trade_quotes
+      SET used = true
+      WHERE quote_id = ${quoteId}::uuid
+        AND used = false
+      RETURNING quote_id
+    `) as Array<{ quote_id: string }>;
+    return rows.length > 0;
+  }
 }
 
 /** Neon-authoritative when DATABASE_URL is set; memory fallback for local/mock. */

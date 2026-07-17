@@ -6,7 +6,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MOCK_ACCOUNT_STATUS } from "../src/mock-fixtures.js";
 import { MOCK_TOOLS } from "../src/mock-server.js";
 
 const packageRoot = path.resolve(import.meta.dirname, "..");
@@ -23,10 +22,11 @@ async function connectMockHost() {
 
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [executable, "serve", "--mock"],
+    args: [executable, "serve", "--mock", "--home", home],
     cwd: packageRoot,
     env: {
       HOME: home,
+      CONVICTION_HOME: home,
       PATH: process.env.PATH ?? "",
       CONVICTION_PRIVATE_KEY: "must-not-be-read-or-logged",
     },
@@ -56,9 +56,42 @@ describe("Conviction MCP mock host", () => {
 
       expect(response.tools.map(({ name }) => name)).toEqual([...MOCK_TOOLS]);
       expect(response.tools.every(({ inputSchema }) => inputSchema.type === "object")).toBe(true);
-      expect(status.structuredContent).toEqual(MOCK_ACCOUNT_STATUS);
+      expect(status.structuredContent).toMatchObject({
+        ok: true,
+        mode: "mock",
+        funded: true,
+        signingAvailable: false,
+        agent: { handle: "mock-conviction-agent", address: null },
+      });
       expect(await readdir(home)).toEqual([]);
       expect(readStderr()).toContain("mock server ready on stdio");
+      expect(readStderr()).not.toContain("must-not-be-read-or-logged");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("completes mock quote → execute over stdio without secrets", async () => {
+    const { client, home, readStderr } = await connectMockHost();
+
+    try {
+      const quote = await client.callTool({
+        name: "conviction_quote_trade",
+        arguments: { toAsset: "eth", sizeUsd: 10, destChain: "Arbitrum" },
+      });
+      const quoteId = (quote.structuredContent as { quoteId: string }).quoteId;
+
+      const executed = await client.callTool({
+        name: "conviction_execute_trade",
+        arguments: { quoteId, idempotencyKey: "stdio-mock-1" },
+      });
+
+      expect(executed.structuredContent).toMatchObject({
+        ok: true,
+        mode: "mock",
+        quoteId,
+      });
+      expect(await readdir(home)).toEqual(["mock"]);
       expect(readStderr()).not.toContain("must-not-be-read-or-logged");
     } finally {
       await client.close();

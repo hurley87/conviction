@@ -1,0 +1,838 @@
+// Deterministic mock quote → execute → receipt engine (issue #55).
+// Same write precedence and quote-before-execute contract as live.
+// Offline only — no remote trading providers, local secrets, or fund movement.
+
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+export const MOCK_QUOTE_TTL_MS = 60_000;
+export const MOCK_FEE_RATE = 0.005;
+export const MOCK_FLOOR_TOLERANCE = 0.01;
+
+export const MCP_TRADE_ASSETS = [
+  "cash",
+  "eth",
+  "usdc",
+  "usdt",
+  "btc",
+  "sol",
+  "arb",
+] as const;
+
+export type McpTradeAsset = (typeof MCP_TRADE_ASSETS)[number];
+export type DestChain = "Arbitrum" | "Base";
+
+export type MockAgentStatus =
+  | "provisioning"
+  | "active"
+  | "disabled"
+  | "capped"
+  | "retiring"
+  | "retired";
+
+export type MockAgentPolicy = {
+  agentId: string;
+  handle: string;
+  status: MockAgentStatus;
+  actionPolicy: { trade: boolean; back: boolean; publish: boolean };
+  maxTradeUsd: number;
+  spendBudgetUsd: number;
+  lifetimeSpendUsd: number;
+  balanceUsd: number;
+};
+
+export type MockTradeQuoteRecord = {
+  quoteId: string;
+  agentId: string;
+  quoteFingerprint: string;
+  toAsset: McpTradeAsset;
+  fromAsset?: McpTradeAsset;
+  sizeUsd: number;
+  destChain: DestChain;
+  publicationIntent: boolean;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  floorUsd: number;
+  sourceChain: string;
+  issuedAt: string;
+  expiresAt: string;
+  used: boolean;
+};
+
+export type MockReceipt = {
+  slug: string;
+  summary: string;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  legs: Array<{ chain: string; txHash: string; explorerUrl: string }>;
+};
+
+export type MockExecuteSuccess = {
+  ok: true;
+  mode: "mock";
+  receiptId: string;
+  quoteId: string;
+  quoteFingerprint: string;
+  transactionId: string;
+  summary: string;
+  receipt: MockReceipt;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  idempotencyKey: string;
+};
+
+export type MockExecuteErrorCode =
+  | "invalid_input"
+  | "lifecycle_blocked"
+  | "action_disabled"
+  | "quote_not_found"
+  | "quote_expired"
+  | "quote_mismatch"
+  | "insufficient_balance"
+  | "spend_limit_exceeded"
+  | "price_floor_breached"
+  | "unsupported_asset"
+  | "arbitrary_token_rejected"
+  | "unavailable";
+
+export type MockExecuteError = {
+  ok: false;
+  mode: "mock";
+  code: MockExecuteErrorCode;
+  message: string;
+  action?: "trade";
+  quoteId?: string;
+  fields?: Array<{ field: string; code: string; message: string }>;
+};
+
+export type MockExecuteResult = MockExecuteSuccess | MockExecuteError;
+
+export type MockQuoteSuccess = {
+  ok: true;
+  mode: "mock";
+  quoteId: string;
+  action: "trade";
+  quoteFingerprint: string;
+  issuedAt: string;
+  serverTime: string;
+  expiresAt: string;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  floorUsd: number;
+  sourceChain: string;
+  destChain: DestChain;
+  toAsset: McpTradeAsset;
+  sizeUsd: number;
+  publicationIntent: boolean;
+};
+
+export type MockQuoteResult = MockQuoteSuccess | MockExecuteError;
+
+export type MockReceiptGetResult =
+  | {
+      ok: true;
+      mode: "mock";
+      receiptId: string;
+      receipt: MockReceipt;
+      entryAt: string;
+    }
+  | MockExecuteError;
+
+type DurableState = {
+  policy: MockAgentPolicy;
+  quotes: Record<string, MockTradeQuoteRecord>;
+  idempotency: Record<string, MockExecuteResult>;
+  receipts: Record<string, { receipt: MockReceipt; entryAt: string }>;
+};
+
+const DEFAULT_POLICY: MockAgentPolicy = {
+  agentId: "00000000-0000-4000-8000-000000000055",
+  handle: "mock-conviction-agent",
+  status: "active",
+  actionPolicy: { trade: true, back: true, publish: true },
+  maxTradeUsd: 25,
+  spendBudgetUsd: 100,
+  lifetimeSpendUsd: 0,
+  balanceUsd: 242.5,
+};
+
+const ALLOWED_QUOTE_KEYS = new Set([
+  "toAsset",
+  "fromAsset",
+  "sizeUsd",
+  "fraction",
+  "destChain",
+  "publicationIntent",
+]);
+
+function isMcpTradeAsset(value: unknown): value is McpTradeAsset {
+  return (
+    typeof value === "string" &&
+    (MCP_TRADE_ASSETS as readonly string[]).includes(value)
+  );
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries
+    .map(([key, v]) => `${JSON.stringify(key)}:${canonicalJson(v)}`)
+    .join(",")}}`;
+}
+
+function hashFingerprint(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
+}
+
+function quoteEconomics(sizeUsd: number, stale = false) {
+  const feeUsd = Number((sizeUsd * MOCK_FEE_RATE).toFixed(6));
+  const dollarsOut = stale
+    ? Number((sizeUsd * 0.97).toFixed(6))
+    : Number((sizeUsd - feeUsd).toFixed(6));
+  const floorUsd = Number((dollarsOut * (1 - MOCK_FLOOR_TOLERANCE)).toFixed(6));
+  // When stale, dollarsOut is below the floor computed from a fresh non-stale quote.
+  const agreedFloorUsd = Number(
+    ((sizeUsd - feeUsd) * (1 - MOCK_FLOOR_TOLERANCE)).toFixed(6),
+  );
+  return {
+    dollarsIn: sizeUsd,
+    dollarsOut,
+    feeUsd,
+    floorUsd: stale ? agreedFloorUsd : floorUsd,
+  };
+}
+
+export type MockTradeEngineOptions = {
+  durableDir?: string;
+  now?: () => Date;
+  randomId?: () => string;
+  simulateStaleQuote?: boolean;
+  policy?: Partial<MockAgentPolicy>;
+};
+
+export class MockTradeEngine {
+  private state: DurableState;
+  private readonly durableDir?: string;
+  private readonly now: () => Date;
+  private readonly randomId: () => string;
+  private simulateStaleQuote: boolean;
+  private writeChain: Promise<void> = Promise.resolve();
+  private readonly inFlight = new Map<string, Promise<MockExecuteResult>>();
+
+  constructor(options: MockTradeEngineOptions = {}) {
+    if (options.durableDir !== undefined) {
+      this.durableDir = options.durableDir;
+    }
+    this.now = options.now ?? (() => new Date());
+    this.randomId = options.randomId ?? (() => randomUUID());
+    this.simulateStaleQuote = options.simulateStaleQuote ?? false;
+    this.state = {
+      policy: { ...DEFAULT_POLICY, ...options.policy },
+      quotes: {},
+      idempotency: {},
+      receipts: {},
+    };
+  }
+
+  static async create(
+    options: MockTradeEngineOptions = {},
+  ): Promise<MockTradeEngine> {
+    const engine = new MockTradeEngine(options);
+    await engine.load();
+    return engine;
+  }
+
+  getPolicy(): MockAgentPolicy {
+    return { ...this.state.policy };
+  }
+
+  setPolicy(patch: Partial<MockAgentPolicy>): void {
+    this.state.policy = { ...this.state.policy, ...patch };
+  }
+
+  setSimulateStaleQuote(value: boolean): void {
+    this.simulateStaleQuote = value;
+  }
+
+  accountStatus() {
+    const policy = this.state.policy;
+    const remainingBudgetUsd = Math.max(
+      0,
+      policy.spendBudgetUsd - policy.lifetimeSpendUsd,
+    );
+    return {
+      ok: true as const,
+      mode: "mock" as const,
+      status: policy.status === "active" ? ("ready" as const) : policy.status,
+      funded: policy.balanceUsd > 0,
+      signingAvailable: false,
+      agent: {
+        handle: policy.handle,
+        address: null,
+        agentId: policy.agentId,
+        actionPolicy: policy.actionPolicy,
+        maxTradeUsd: policy.maxTradeUsd,
+        spendBudgetUsd: policy.spendBudgetUsd,
+        lifetimeSpendUsd: policy.lifetimeSpendUsd,
+        remainingBudgetUsd,
+        balanceUsd: policy.balanceUsd,
+      },
+    };
+  }
+
+  async quoteTrade(input: Record<string, unknown>): Promise<MockQuoteResult> {
+    try {
+      const parsed = this.parseQuoteInput(input);
+      const issuedAt = this.now();
+      const economics = quoteEconomics(parsed.sizeUsd, false);
+      const quoteId = this.randomId();
+      const quoteFingerprint = hashFingerprint({
+        action: "trade",
+        toAsset: parsed.toAsset,
+        fromAsset: parsed.fromAsset ?? null,
+        sizeUsd: parsed.sizeUsd,
+        destChain: parsed.destChain,
+        publicationIntent: parsed.publicationIntent,
+        ...economics,
+        sourceChain: "Base",
+      });
+      const record: MockTradeQuoteRecord = {
+        quoteId,
+        agentId: this.state.policy.agentId,
+        quoteFingerprint,
+        toAsset: parsed.toAsset,
+        ...(parsed.fromAsset ? { fromAsset: parsed.fromAsset } : {}),
+        sizeUsd: parsed.sizeUsd,
+        destChain: parsed.destChain,
+        publicationIntent: parsed.publicationIntent,
+        dollarsIn: economics.dollarsIn,
+        dollarsOut: economics.dollarsOut,
+        feeUsd: economics.feeUsd,
+        floorUsd: economics.floorUsd,
+        sourceChain: "Base",
+        issuedAt: issuedAt.toISOString(),
+        expiresAt: new Date(issuedAt.getTime() + MOCK_QUOTE_TTL_MS).toISOString(),
+        used: false,
+      };
+      this.state.quotes[quoteId] = record;
+      await this.persist();
+      return {
+        ok: true,
+        mode: "mock",
+        quoteId: record.quoteId,
+        action: "trade",
+        quoteFingerprint: record.quoteFingerprint,
+        issuedAt: record.issuedAt,
+        serverTime: issuedAt.toISOString(),
+        expiresAt: record.expiresAt,
+        dollarsIn: record.dollarsIn,
+        dollarsOut: record.dollarsOut,
+        feeUsd: record.feeUsd,
+        floorUsd: record.floorUsd,
+        sourceChain: record.sourceChain,
+        destChain: record.destChain,
+        toAsset: record.toAsset,
+        sizeUsd: record.sizeUsd,
+        publicationIntent: record.publicationIntent,
+      };
+    } catch (error) {
+      return this.errorFromUnknown(error);
+    }
+  }
+
+  async executeTrade(input: {
+    quoteId: string;
+    idempotencyKey: string;
+  }): Promise<MockExecuteResult> {
+    const quoteId =
+      typeof input.quoteId === "string" ? input.quoteId.trim() : "";
+    const idempotencyKey =
+      typeof input.idempotencyKey === "string"
+        ? input.idempotencyKey.trim()
+        : "";
+    if (!quoteId) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "invalid_input",
+        message: "Provide the quoteId returned by conviction_quote_trade.",
+        fields: [
+          {
+            field: "quoteId",
+            code: "required",
+            message: "Provide the quoteId returned by conviction_quote_trade.",
+          },
+        ],
+      };
+    }
+    if (!idempotencyKey) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "invalid_input",
+        message: "Provide a durable idempotencyKey for this execution.",
+        fields: [
+          {
+            field: "idempotencyKey",
+            code: "required",
+            message: "Provide a durable idempotencyKey for this execution.",
+          },
+        ],
+      };
+    }
+
+    const flightKey = `${this.state.policy.agentId}\0${idempotencyKey}`;
+    const existing = this.inFlight.get(flightKey);
+    if (existing) return existing;
+
+    const run = this.runExecute(quoteId, idempotencyKey);
+    this.inFlight.set(flightKey, run);
+    try {
+      return await run;
+    } finally {
+      this.inFlight.delete(flightKey);
+    }
+  }
+
+  async getReceipt(receiptId: string): Promise<MockReceiptGetResult> {
+    const id = typeof receiptId === "string" ? receiptId.trim() : "";
+    if (!id) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "invalid_input",
+        message: "Provide a receiptId.",
+        fields: [
+          {
+            field: "receiptId",
+            code: "required",
+            message: "Provide a receiptId.",
+          },
+        ],
+      };
+    }
+    const stored = this.state.receipts[id];
+    if (!stored) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "unavailable",
+        message: "No mock receipt matches that receiptId.",
+      };
+    }
+    return {
+      ok: true,
+      mode: "mock",
+      receiptId: id,
+      receipt: structuredClone(stored.receipt),
+      entryAt: stored.entryAt,
+    };
+  }
+
+  /** Test helper — count stored quotes (detect silent requotes). */
+  quoteCount(): number {
+    return Object.keys(this.state.quotes).length;
+  }
+
+  private async runExecute(
+    quoteId: string,
+    idempotencyKey: string,
+  ): Promise<MockExecuteResult> {
+    const prior = this.state.idempotency[idempotencyKey];
+    if (prior) return structuredClone(prior);
+
+    const persistResult = async (
+      result: MockExecuteResult,
+    ): Promise<MockExecuteResult> => {
+      this.state.idempotency[idempotencyKey] = structuredClone(result);
+      await this.persist();
+      return structuredClone(result);
+    };
+
+    const policy = this.state.policy;
+    if (policy.status !== "active") {
+      return persistResult({
+        ok: false,
+        mode: "mock",
+        code: "lifecycle_blocked",
+        message: `Agent @${policy.handle} is ${policy.status} and cannot execute trades.`,
+      });
+    }
+    if (!policy.actionPolicy.trade) {
+      return persistResult({
+        ok: false,
+        mode: "mock",
+        code: "action_disabled",
+        message:
+          "Trade is disabled for this agent. Only the operator can enable it through Agent Settings or the operator CLI.",
+        action: "trade",
+      });
+    }
+
+    const quote = this.state.quotes[quoteId];
+    if (!quote || quote.agentId !== policy.agentId) {
+      return persistResult({
+        ok: false,
+        mode: "mock",
+        code: "quote_not_found",
+        message: "No trade quote matches that quoteId for this agent.",
+        quoteId,
+      });
+    }
+    if (new Date(quote.expiresAt).getTime() <= this.now().getTime()) {
+      return persistResult({
+        ok: false,
+        mode: "mock",
+        code: "quote_expired",
+        message: `Quote ${quote.quoteId} expired at ${quote.expiresAt}. Call conviction_quote_trade again for a fresh quoteId.`,
+        quoteId,
+      });
+    }
+    if (quote.used) {
+      return persistResult({
+        ok: false,
+        mode: "mock",
+        code: "quote_mismatch",
+        message: "That quote has already been consumed.",
+        quoteId,
+      });
+    }
+
+    if (quote.dollarsIn > policy.maxTradeUsd + 1e-9) {
+      return persistResult({
+        ok: false,
+        mode: "mock",
+        code: "spend_limit_exceeded",
+        message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds the per-trade limit of $${policy.maxTradeUsd.toFixed(2)}.`,
+        quoteId,
+      });
+    }
+    const remaining = Math.max(
+      0,
+      policy.spendBudgetUsd - policy.lifetimeSpendUsd,
+    );
+    if (quote.dollarsIn > remaining + 1e-9) {
+      return persistResult({
+        ok: false,
+        mode: "mock",
+        code: "spend_limit_exceeded",
+        message: `Trade size $${quote.dollarsIn.toFixed(2)} exceeds remaining spend budget of $${remaining.toFixed(2)}.`,
+        quoteId,
+      });
+    }
+    if (policy.balanceUsd + 1e-9 < quote.dollarsIn) {
+      return persistResult({
+        ok: false,
+        mode: "mock",
+        code: "insufficient_balance",
+        message: `Unified balance $${policy.balanceUsd.toFixed(2)} is below the quoted debit of $${quote.dollarsIn.toFixed(2)}.`,
+        quoteId,
+      });
+    }
+
+    const fresh = quoteEconomics(quote.sizeUsd, this.simulateStaleQuote);
+    if (fresh.dollarsOut < quote.floorUsd) {
+      return persistResult({
+        ok: false,
+        mode: "mock",
+        code: "price_floor_breached",
+        message:
+          "Current execution cannot satisfy the quote's minimum-received floor. Call conviction_quote_trade for a new quoteId — execution never silently requotes.",
+        quoteId,
+      });
+    }
+
+    quote.used = true;
+    const receiptId = this.randomId();
+    const transactionId = `mock-exec-${receiptId}`;
+    const receipt: MockReceipt = {
+      slug: receiptId,
+      summary: `Done — $${quote.dollarsIn.toFixed(2)} moved. You now have $${fresh.dollarsOut.toFixed(2)} in ${quote.toAsset.toUpperCase()}.`,
+      dollarsIn: quote.dollarsIn,
+      dollarsOut: fresh.dollarsOut,
+      feeUsd: fresh.feeUsd,
+      legs: [
+        {
+          chain: "Base",
+          txHash: `0xmocksource${receiptId.replace(/-/g, "").slice(0, 16)}`,
+          explorerUrl: `https://basescan.org/tx/0xmocksource${receiptId.replace(/-/g, "").slice(0, 16)}`,
+        },
+        {
+          chain: quote.destChain,
+          txHash: `0xmockdest${receiptId.replace(/-/g, "").slice(0, 16)}`,
+          explorerUrl: `https://arbiscan.io/tx/0xmockdest${receiptId.replace(/-/g, "").slice(0, 16)}`,
+        },
+      ],
+    };
+    this.state.receipts[receiptId] = {
+      receipt,
+      entryAt: this.now().toISOString(),
+    };
+    this.state.policy.lifetimeSpendUsd += quote.dollarsIn;
+    this.state.policy.balanceUsd = Math.max(
+      0,
+      this.state.policy.balanceUsd - quote.dollarsIn,
+    );
+
+    return persistResult({
+      ok: true,
+      mode: "mock",
+      receiptId,
+      quoteId: quote.quoteId,
+      quoteFingerprint: quote.quoteFingerprint,
+      transactionId,
+      summary: receipt.summary,
+      receipt,
+      dollarsIn: quote.dollarsIn,
+      dollarsOut: fresh.dollarsOut,
+      feeUsd: fresh.feeUsd,
+      idempotencyKey,
+    });
+  }
+
+  private parseQuoteInput(input: Record<string, unknown>): {
+    toAsset: McpTradeAsset;
+    fromAsset?: McpTradeAsset;
+    sizeUsd: number;
+    destChain: DestChain;
+    publicationIntent: boolean;
+  } {
+    const unknownKeys = Object.keys(input).filter(
+      (key) => !ALLOWED_QUOTE_KEYS.has(key),
+    );
+    if (unknownKeys.length > 0) {
+      const looksLikeToken = unknownKeys.some((key) =>
+        /token|address|contract|chainId/i.test(key),
+      );
+      throw Object.assign(new Error("invalid quote fields"), {
+        code: looksLikeToken ? "arbitrary_token_rejected" : "invalid_input",
+        fields: unknownKeys.map((field) => ({
+          field,
+          code: looksLikeToken ? "forbidden_field" : "unknown_field",
+          message: looksLikeToken
+            ? `Remove "${field}". Use a named product asset instead.`
+            : `Unknown field "${field}".`,
+        })),
+      });
+    }
+
+    if (!isMcpTradeAsset(input.toAsset)) {
+      throw Object.assign(new Error("unsupported asset"), {
+        code:
+          input.toAsset === "token"
+            ? "arbitrary_token_rejected"
+            : "unsupported_asset",
+        fields: [
+          {
+            field: "toAsset",
+            code: "unsupported_asset",
+            message: `Supported assets: ${MCP_TRADE_ASSETS.join(", ")}.`,
+          },
+        ],
+      });
+    }
+
+    const hasSize = input.sizeUsd !== undefined;
+    const hasFraction = input.fraction !== undefined;
+    if (hasSize === hasFraction) {
+      throw Object.assign(new Error("size required"), {
+        code: "invalid_input",
+        fields: [
+          {
+            field: "sizeUsd|fraction",
+            code: "size_required",
+            message:
+              "Provide exactly one of sizeUsd or fraction — not both, not neither.",
+          },
+        ],
+      });
+    }
+
+    let sizeUsd: number;
+    if (hasSize) {
+      if (
+        typeof input.sizeUsd !== "number" ||
+        !Number.isFinite(input.sizeUsd) ||
+        input.sizeUsd <= 0
+      ) {
+        throw Object.assign(new Error("invalid sizeUsd"), {
+          code: "invalid_input",
+          fields: [
+            {
+              field: "sizeUsd",
+              code: "invalid_value",
+              message: "sizeUsd must be a finite positive number.",
+            },
+          ],
+        });
+      }
+      sizeUsd = input.sizeUsd;
+    } else {
+      if (
+        typeof input.fraction !== "number" ||
+        !Number.isFinite(input.fraction) ||
+        input.fraction <= 0 ||
+        input.fraction > 1
+      ) {
+        throw Object.assign(new Error("invalid fraction"), {
+          code: "invalid_input",
+          fields: [
+            {
+              field: "fraction",
+              code: "invalid_value",
+              message: "fraction must be greater than 0 and at most 1.",
+            },
+          ],
+        });
+      }
+      sizeUsd = Number(
+        (this.state.policy.balanceUsd * input.fraction).toFixed(6),
+      );
+      if (sizeUsd <= 0) {
+        throw Object.assign(new Error("fraction needs balance"), {
+          code: "invalid_input",
+          fields: [
+            {
+              field: "sizeUsd",
+              code: "size_required",
+              message:
+                "Account balance is empty — provide sizeUsd instead of fraction.",
+            },
+          ],
+        });
+      }
+    }
+
+    let destChain: DestChain = "Arbitrum";
+    if (input.destChain !== undefined) {
+      if (input.destChain !== "Arbitrum" && input.destChain !== "Base") {
+        throw Object.assign(new Error("unsupported chain"), {
+          code: "invalid_input",
+          fields: [
+            {
+              field: "destChain",
+              code: "unsupported_chain",
+              message: 'destChain must be "Arbitrum" or "Base".',
+            },
+          ],
+        });
+      }
+      destChain = input.destChain;
+    }
+
+    let fromAsset: McpTradeAsset | undefined;
+    if (input.fromAsset !== undefined) {
+      if (!isMcpTradeAsset(input.fromAsset)) {
+        throw Object.assign(new Error("unsupported fromAsset"), {
+          code: "unsupported_asset",
+          fields: [
+            {
+              field: "fromAsset",
+              code: "unsupported_asset",
+              message: `Supported assets: ${MCP_TRADE_ASSETS.join(", ")}.`,
+            },
+          ],
+        });
+      }
+      fromAsset = input.fromAsset;
+    }
+
+    const publicationIntent =
+      typeof input.publicationIntent === "boolean"
+        ? input.publicationIntent
+        : false;
+
+    return {
+      toAsset: input.toAsset,
+      ...(fromAsset ? { fromAsset } : {}),
+      sizeUsd,
+      destChain,
+      publicationIntent,
+    };
+  }
+
+  private errorFromUnknown(error: unknown): MockExecuteError {
+    if (error && typeof error === "object" && "code" in error) {
+      const coded = error as {
+        code: MockExecuteErrorCode;
+        message?: string;
+        fields?: MockExecuteError["fields"];
+      };
+      return {
+        ok: false,
+        mode: "mock",
+        code: coded.code,
+        message:
+          typeof coded.message === "string" && coded.message
+            ? coded.message
+            : error instanceof Error
+              ? error.message
+              : "Mock quote failed.",
+        ...(coded.fields ? { fields: coded.fields } : {}),
+      };
+    }
+    return {
+      ok: false,
+      mode: "mock",
+      code: "unavailable",
+      message:
+        error instanceof Error ? error.message : "Mock quote unavailable.",
+    };
+  }
+
+  private statePath(): string | null {
+    if (!this.durableDir) return null;
+    return path.join(this.durableDir, "trade-state.json");
+  }
+
+  private async load(): Promise<void> {
+    const filePath = this.statePath();
+    if (!filePath) return;
+    try {
+      const raw = await readFile(filePath, "utf8");
+      const parsed = JSON.parse(raw) as DurableState;
+      if (parsed && typeof parsed === "object") {
+        this.state = {
+          policy: { ...DEFAULT_POLICY, ...parsed.policy },
+          quotes: parsed.quotes ?? {},
+          idempotency: parsed.idempotency ?? {},
+          receipts: parsed.receipts ?? {},
+        };
+      }
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code?: string }).code === "ENOENT"
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private async persist(): Promise<void> {
+    const filePath = this.statePath();
+    if (!filePath) return;
+    this.writeChain = this.writeChain.then(async () => {
+      await mkdir(path.dirname(filePath), { recursive: true });
+      const tempPath = `${filePath}.${process.pid}.tmp`;
+      await writeFile(tempPath, JSON.stringify(this.state), "utf8");
+      await rename(tempPath, filePath);
+    });
+    await this.writeChain;
+  }
+}

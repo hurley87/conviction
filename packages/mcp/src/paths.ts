@@ -7,6 +7,8 @@ export type ConvictionPaths = {
   keystoresDir: string;
   /** Durable per-code provisioning state (in-progress and completed). */
   bindingsDir: string;
+  /** Durable mock quote / execute / receipt state for serve --mock. */
+  mockDir: string;
 };
 
 const PROFILE_NAME_RE = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/i;
@@ -32,6 +34,7 @@ export function resolveConvictionPaths(home = process.env.CONVICTION_HOME): Conv
     profilesDir: path.join(root, "profiles"),
     keystoresDir: path.join(root, "keystores"),
     bindingsDir: path.join(root, "bindings"),
+    mockDir: path.join(root, "mock"),
   };
 }
 
