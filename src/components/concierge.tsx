@@ -5,7 +5,8 @@
 // inside the ConciergeBubble panel, which owns the card chrome and header.
 
 import { useEffect, useRef, useState } from "react";
-import { useConciergeCore } from "@/hooks/use-concierge-core";
+import { usePrivy } from "@privy-io/react-auth";
+import { usePersistentConcierge } from "@/hooks/use-persistent-concierge";
 import { useLiveTradeSigners } from "@/hooks/use-live-trade-signers";
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 import { useAccount } from "@/components/account/account-context";
@@ -24,24 +25,47 @@ function ConciergePanel({
   signers,
   handle,
   active,
+  liveHistory,
+  getAccessToken,
 }: {
   ua: UAClient;
   balance: UniversalBalance;
   signers: TradeSigners;
   handle: string | null;
   active: boolean;
+  liveHistory: boolean;
+  getAccessToken?: () => Promise<string | null>;
 }) {
   const { markUpgraded } = useAccount();
-  const c = useConciergeCore(ua, balance, signers, handle, markUpgraded);
+  const c = usePersistentConcierge({
+    ua,
+    balance,
+    signers,
+    handle,
+    onUpgraded: markUpgraded,
+    active,
+    live: liveHistory,
+    getAccessToken,
+  });
+  const { history } = c;
   const [input, setInput] = useState("");
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const preserveScrollRef = useRef<{
+    height: number;
+    top: number;
+  } | null>(null);
 
   const permalink =
     typeof window !== "undefined" && c.receipt
       ? `${window.location.origin}/r/${c.receipt.slug}`
       : undefined;
 
-  const inputDisabled = c.phase === "executing" || c.phase === "quoting";
+  const inputDisabled =
+    c.phase === "executing" ||
+    c.phase === "quoting" ||
+    history.clearing ||
+    !history.ready;
   const composerVisible = c.phase !== "confirm" && c.phase !== "done";
   const speech = useSpeechRecognition({
     draft: input,
@@ -51,8 +75,41 @@ function ConciergePanel({
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const preserved = preserveScrollRef.current;
+    if (preserved) {
+      el.scrollTop = preserved.top + (el.scrollHeight - preserved.height);
+      preserveScrollRef.current = null;
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [c.messages.length, c.phase]);
+
+  const clearDisabled =
+    c.phase === "quoting" ||
+    c.phase === "confirm" ||
+    c.phase === "executing" ||
+    history.clearing;
+
+  const handleLoadEarlier = async () => {
+    const el = scrollRef.current;
+    if (el) {
+      preserveScrollRef.current = {
+        height: el.scrollHeight,
+        top: el.scrollTop,
+      };
+    }
+    const earlier = await c.loadEarlier();
+    if (earlier.length === 0) preserveScrollRef.current = null;
+  };
+
+  const handleClear = async () => {
+    const cleared = await c.clearChat();
+    if (!cleared) return;
+    speech.cancel();
+    setInput("");
+    setConfirmingClear(false);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,13 +122,79 @@ function ConciergePanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-11 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface px-4 py-2 text-xs">
+        <div aria-live="polite" className="min-w-0 text-ink-4">
+          {history.loading && !history.ready ? (
+            "Loading history…"
+          ) : history.saveStatus === "saving" ? (
+            "Saving…"
+          ) : history.saveStatus === "error" ? (
+            <button
+              type="button"
+              onClick={history.retry}
+              className="font-bold text-danger underline decoration-danger/30 underline-offset-2"
+            >
+              History not saved — Retry
+            </button>
+          ) : (
+            "Saved"
+          )}
+        </div>
+        {confirmingClear && !clearDisabled ? (
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-ink-3">Clear chat?</span>
+            <button
+              type="button"
+              onClick={() => setConfirmingClear(false)}
+              disabled={history.clearing}
+              className="font-bold text-ink-2 hover:text-ink"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleClear()}
+              disabled={history.clearing}
+              className="font-bold text-danger hover:text-danger/80 disabled:opacity-50"
+            >
+              {history.clearing ? "Clearing…" : "Clear"}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmingClear(true)}
+            disabled={clearDisabled}
+            title={
+              clearDisabled
+                ? "Finish or cancel the current quote before clearing chat"
+                : "Permanently delete chat history"
+            }
+            className="shrink-0 font-bold text-ink-3 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Clear chat
+          </button>
+        )}
+      </div>
       <div
         ref={scrollRef}
         className="flex-1 space-y-2 overflow-y-auto px-4 py-3"
       >
-        {c.messages.map((m, i) => (
+        {history.hasEarlier && (
+          <div className="flex justify-center pb-1">
+            <button
+              type="button"
+              onClick={() => void handleLoadEarlier()}
+              disabled={history.loadingEarlier}
+              className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-bold text-ink-3 shadow-sm hover:border-line-strong hover:text-ink disabled:opacity-50"
+            >
+              {history.loadingEarlier ? "Loading…" : "Load earlier"}
+            </button>
+          </div>
+        )}
+        {c.messages.map((m) => (
           <p
-            key={`${m.role}-${i}`}
+            key={m.id}
             className={
               m.role === "user"
                 ? "ml-auto w-fit max-w-[85%] rounded-[18px] rounded-br-md bg-brand px-3.5 py-2.5 text-sm leading-relaxed text-brand-on shadow-sm"
@@ -210,6 +333,7 @@ export function LiveConcierge({
   active: boolean;
 }) {
   const signers = useLiveTradeSigners();
+  const { getAccessToken } = usePrivy();
   return (
     <ConciergePanel
       ua={ua}
@@ -217,6 +341,8 @@ export function LiveConcierge({
       signers={signers}
       handle={handle}
       active={active}
+      liveHistory
+      getAccessToken={getAccessToken}
     />
   );
 }
@@ -250,6 +376,7 @@ export function Concierge({
       signers={mockTradeSigners}
       handle={handle}
       active={active}
+      liveHistory={false}
     />
   );
 }

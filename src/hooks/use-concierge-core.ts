@@ -3,6 +3,16 @@
 // Core concierge state machine — no Privy dependency (ADR 0014 mock path).
 
 import { useCallback, useState } from "react";
+import {
+  CHAT_WELCOME_MESSAGE,
+  createChatMessage,
+  mergeChatMessages,
+  prependChatMessages,
+  QUOTE_READY_MESSAGE,
+  QUOTE_REQUOTE_MESSAGE,
+  restoreChatMessages,
+  type ChatMessage,
+} from "@/lib/chat-types";
 import type { UAClient } from "@/lib/ua";
 import {
   isFeedSummaryRequest,
@@ -43,10 +53,7 @@ async function parseText(text: string): Promise<ParseResult> {
   }
 }
 
-export type ConciergeMessage = {
-  role: "user" | "assistant";
-  text: string;
-};
+export type ConciergeMessage = ChatMessage;
 
 export type ConciergePhase =
   | "idle"
@@ -64,13 +71,14 @@ export function useConciergeCore(
   balance: UniversalBalance | null,
   signers: TradeSigners,
   handle: string | null,
-  onUpgraded?: () => void,
+  options: {
+    onUpgraded?: () => void;
+    onMessage?: (message: ConciergeMessage) => void;
+  } = {},
 ) {
+  const { onUpgraded, onMessage } = options;
   const [messages, setMessages] = useState<ConciergeMessage[]>([
-    {
-      role: "assistant",
-      text: 'What would you like to do? For example: "Move $25 to cash", "Convert half my ETH to cash", or "Summarize the feed".',
-    },
+    CHAT_WELCOME_MESSAGE,
   ]);
   const [phase, setPhase] = useState<ConciergePhase>("idle");
   const [pendingQuote, setPendingQuote] = useState<TradeQuote | null>(null);
@@ -82,8 +90,30 @@ export function useConciergeCore(
   const [convictionPhase, setConvictionPhase] =
     useState<ConvictionPhase>("idle");
 
-  const appendMessage = useCallback((msg: ConciergeMessage) => {
-    setMessages((prev) => [...prev, msg]);
+  const appendMessage = useCallback(
+    (input: Pick<ConciergeMessage, "role" | "text">) => {
+      const message = createChatMessage(input);
+      setMessages((prev) => [...prev, message]);
+      onMessage?.(message);
+    },
+    [onMessage],
+  );
+
+  const replaceMessages = useCallback(
+    (restored: ConciergeMessage[]) => {
+      const result = restoreChatMessages(restored);
+      setMessages(result.messages);
+      if (result.interruption) onMessage?.(result.interruption);
+    },
+    [onMessage],
+  );
+
+  const mergeMessages = useCallback((restored: ConciergeMessage[]) => {
+    setMessages((current) => mergeChatMessages(current, restored));
+  }, []);
+
+  const prependMessages = useCallback((earlier: ConciergeMessage[]) => {
+    setMessages((current) => prependChatMessages(current, earlier));
   }, []);
 
   const summarizeFeed = useCallback(async () => {
@@ -165,7 +195,7 @@ export function useConciergeCore(
         setPhase("confirm");
         appendMessage({
           role: "assistant",
-          text: "Here's your quote — review and confirm below.",
+          text: QUOTE_READY_MESSAGE,
         });
       } catch (e) {
         const msg =
@@ -229,7 +259,7 @@ export function useConciergeCore(
         setPhase("confirm");
         appendMessage({
           role: "assistant",
-          text: "The price moved since you last saw it — please review the updated quote and confirm again.",
+          text: QUOTE_REQUOTE_MESSAGE,
         });
         return;
       }
@@ -269,6 +299,11 @@ export function useConciergeCore(
     setClarifyContext(null);
     setConvictionPhase("idle");
   }, []);
+
+  const clearTranscript = useCallback(() => {
+    reset();
+    setMessages([CHAT_WELCOME_MESSAGE]);
+  }, [reset]);
 
   const postConviction = useCallback(
     async (thesis: string) => {
@@ -348,6 +383,10 @@ export function useConciergeCore(
     reset,
     postConviction,
     skipConviction,
+    replaceMessages,
+    mergeMessages,
+    prependMessages,
+    clearTranscript,
     canTrade: Boolean(ua && balance && balance.totalUsd > 0),
     canPostConviction: Boolean(
       handle && phase === "done" && receipt && convictionPhase !== "posted",
