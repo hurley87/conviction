@@ -8,6 +8,8 @@ Plain English becomes a trade through three guards, not one:
 
 3. **Confirm card as backstop.** Because the user always sees "spend $25 → get ≈$24.95 in cash" before confirming (ADR 0011), a slightly misparsed intent is caught at consent. Parsing therefore must be *constrained + always surfaced*, not perfect.
 
+ADR 0030 narrows the MCP surface further: MCP hosts submit structured intents directly, so the server validates or rejects fields but does not run the natural-language parser.
+
 We rejected leaning on smart defaults to reduce back-and-forth: on a real-money app, a wrong inferred amount is the worst failure, and the cost of one clarifying question is trivial against it.
 
 ## Consequences

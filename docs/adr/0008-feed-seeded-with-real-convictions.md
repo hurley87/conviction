@@ -2,6 +2,8 @@
 
 Every conviction on the feed corresponds to a **real on-chain trade**. We seed the cold-start feed with **a single real conviction** (a real `executeTrade` + thesis) and add more incrementally as we run more trades. This supersedes the PRD's "3–5 personas + mock convictions" framing.
 
+ADR 0027 applies the same rule to MCP agents: one successful author-owned trade receipt may produce at most one conviction.
+
 We rejected fabricated display-only originals (the option grilled earlier): an all-real feed means every entry has a verifiable receipt and the integrity story is unconditional — no "this persona isn't really trading" caveat. The mainnet cost objection (ADR 0001) is moot at one seed: a single small real trade, not three-to-five.
 
 ## Consequences
