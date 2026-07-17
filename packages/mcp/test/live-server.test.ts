@@ -345,70 +345,17 @@ describe("createLiveServer", () => {
     ]);
   });
 
-  it("surfaces stable backend error codes from read tools", async () => {
+  it("delivers structured read-tool errors after tools/list enables output validation", async () => {
     const wallet = Wallet.createRandom();
     const lease = mockLease(wallet);
-    const client = await connectLiveServer({
-      wallet,
-      lease,
-      fetchImpl: async () =>
-        new Response(
-          JSON.stringify({
-            error: { code: "not_found", message: "Conviction not found." },
-          }),
-          { status: 404, headers: { "content-type": "application/json" } },
-        ),
-    });
-
-    const result = await client.callTool({
-      name: "conviction_get_conviction",
-      arguments: { entryId: "missing" },
-    });
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      ok: false,
-      code: "not_found",
-    });
-  });
-
-  it("stops tool handling cleanly after lease loss", async () => {
-    const wallet = Wallet.createRandom();
-    const lease = mockLease(wallet);
-    const client = await connectLiveServer({
-      wallet,
-      lease,
-      fetchImpl: async () => new Response("{}", { status: 500 }),
-    });
-
-    lease.markLost("replaced");
-
-    for (const name of [
+    const readToolNames = [
       "conviction_account_status",
       "conviction_list_convictions",
       "conviction_get_conviction",
       "conviction_summarize_feed",
       "conviction_get_receipt",
-    ] as const) {
-      const result = await client.callTool({
-        name,
-        arguments:
-          name === "conviction_get_conviction"
-            ? { entryId: "x" }
-            : name === "conviction_get_receipt"
-              ? { receiptId: "x" }
-              : {},
-      });
-      expect(result.isError).toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        ok: false,
-        code: "lease_lost",
-      });
-    }
-  });
+    ] as const;
 
-  it("delivers structured read-tool errors after tools/list enables output validation", async () => {
-    const wallet = Wallet.createRandom();
-    const lease = mockLease(wallet);
     const client = await connectLiveServer({
       wallet,
       lease,
@@ -456,20 +403,12 @@ describe("createLiveServer", () => {
     });
 
     const listed = await client.listTools();
-    for (const name of [
-      "conviction_account_status",
-      "conviction_list_convictions",
-      "conviction_get_conviction",
-      "conviction_summarize_feed",
-      "conviction_get_receipt",
-    ] as const) {
+    for (const name of readToolNames) {
       const tool = listed.tools.find((entry) => entry.name === name);
-      expect(tool?.outputSchema).toMatchObject({ type: "object" });
-      expect(tool?.outputSchema).toEqual(
-        expect.objectContaining({
-          oneOf: expect.any(Array),
-        }),
-      );
+      expect(tool?.outputSchema).toMatchObject({
+        type: "object",
+        oneOf: expect.any(Array),
+      });
     }
 
     const missingConviction = await client.callTool({
@@ -517,15 +456,22 @@ describe("createLiveServer", () => {
     });
 
     lease.markLost("replaced");
-    const leaseLost = await client.callTool({
-      name: "conviction_summarize_feed",
-      arguments: {},
-    });
-    expect(leaseLost.isError).toBe(true);
-    expect(leaseLost.structuredContent).toMatchObject({
-      ok: false,
-      code: "lease_lost",
-    });
+    for (const name of readToolNames) {
+      const result = await client.callTool({
+        name,
+        arguments:
+          name === "conviction_get_conviction"
+            ? { entryId: "x" }
+            : name === "conviction_get_receipt"
+              ? { receiptId: "x" }
+              : {},
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        code: "lease_lost",
+      });
+    }
   });
 
   it("keeps happy-path output validation strict after tools/list", async () => {

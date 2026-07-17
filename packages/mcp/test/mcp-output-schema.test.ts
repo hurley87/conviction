@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
-  mcpReadToolOutputSchema,
-  structuredErrorResultSchema,
-} from "../src/agent-reads-contract.js";
+import { structuredErrorResultSchema } from "../src/agent-reads-contract.js";
+import { mcpReadToolOutputSchema } from "../src/mcp-output-schema.js";
 
 describe("mcpReadToolOutputSchema", () => {
   const successSchema = z.object({
