@@ -182,6 +182,11 @@ export function quoteErrorStatus(code: AgentQuoteErrorCode): number {
 export type AgentQuoteStore = {
   save(record: AgentTradeQuoteRecord): Promise<AgentTradeQuoteRecord>;
   get(quoteId: string): Promise<AgentTradeQuoteRecord | null>;
+  /**
+   * Atomically mark a quote consumed. Returns true only when this caller
+   * transitions `used` from false → true (compare-and-swap).
+   */
+  markUsed(quoteId: string): Promise<boolean>;
 };
 
 /** In-memory quote store for tests and local mock mode (no DATABASE_URL). */
@@ -196,6 +201,23 @@ export class MemoryAgentQuoteStore implements AgentQuoteStore {
 
   async get(quoteId: string): Promise<AgentTradeQuoteRecord | null> {
     return this.records.get(quoteId) ?? null;
+  }
+
+  async markUsed(quoteId: string): Promise<boolean> {
+    const record = this.records.get(quoteId);
+    if (!record || record.used) return false;
+    this.records.set(
+      quoteId,
+      Object.freeze({
+        ...record,
+        used: true,
+      }),
+    );
+    return true;
+  }
+
+  size(): number {
+    return this.records.size;
   }
 
   clear(): void {
@@ -811,7 +833,7 @@ export async function issueTradeQuote(
   return toQuoteResponse(record, issuedAt);
 }
 
-/** Lookup helper for later execute (#55) — enforces expiry and fingerprint. */
+/** Lookup helper for execute — enforces expiry, one-time use, and fingerprint. */
 export async function getExecutableTradeQuote(
   store: AgentQuoteStore,
   input: {
@@ -854,4 +876,31 @@ export async function getExecutableTradeQuote(
     );
   }
   return record;
+}
+
+/**
+ * Load a stored quote for execute by quoteId only.
+ * Uses the persisted fingerprint as the binding (host sends quoteId alone).
+ */
+export async function loadTradeQuoteForExecute(
+  store: AgentQuoteStore,
+  input: {
+    quoteId: string;
+    agentId: string;
+    now?: () => Date;
+  },
+): Promise<AgentTradeQuoteRecord> {
+  const record = await store.get(input.quoteId);
+  if (!record || record.agentId !== input.agentId) {
+    throw new AgentQuoteError(
+      "quote_not_found",
+      "No trade quote matches that quoteId for this agent.",
+    );
+  }
+  return getExecutableTradeQuote(store, {
+    quoteId: input.quoteId,
+    agentId: input.agentId,
+    quoteFingerprint: record.quoteFingerprint,
+    ...(input.now ? { now: input.now } : {}),
+  });
 }

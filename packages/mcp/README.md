@@ -56,6 +56,12 @@ Run the v1-major-pinned package directly:
 npx -y @conviction/mcp@1 serve --mock
 ```
 
+Mock mode exposes deterministic `conviction_quote_trade`, `conviction_execute_trade`,
+and `conviction_get_receipt` tools with the same quote-before-execute contract as
+live mode. It never calls remote trading providers, unlocks a signer, or moves
+real funds. Quote, idempotency, and receipt state persist under
+`CONVICTION_HOME/mock` (override with `--home`).
+
 The process speaks MCP over stdio. Its stdout is reserved for protocol messages;
 startup diagnostics go to stderr.
 

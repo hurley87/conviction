@@ -41,6 +41,9 @@ Commands:
   status                     Show backend-authoritative account status
   help                       Show this help
 
+Serve --mock options:
+  --home <dir>               Override ~/.conviction (also CONVICTION_HOME); persists mock trades under <home>/mock
+
 Serve --profile options:
   --profile <name>           Local profile name (required)
   --api-base <url>           Conviction API base URL
@@ -67,7 +70,7 @@ Environment:
   CONVICTION_API_BASE            Default API base URL for init, serve, doctor, and status
 
 Setup contract v${SETUP_CONTRACT_VERSION} pins package-runner configs to ${PACKAGE_MAJOR_PIN}.
-Mock mode uses no account, credentials, signer, or signing material.
+Mock mode uses no account credentials, Particle, signer, or real funds; quote and execute persist under CONVICTION_HOME/mock.
 Live mode authenticates with the local signer and never exposes signing tools.
 macOS, Linux, and Windows through WSL are supported; native Windows is deferred.`;
 
@@ -300,8 +303,12 @@ export async function runCli(args: string[]): Promise<void> {
 
   if (args[0] === "serve") {
     const serveArgs = args.slice(1);
-    if (serveArgs[0] === "--mock" && serveArgs.length === 1) {
-      const server = createMockServer();
+    if (serveArgs[0] === "--mock") {
+      const home = readFlag(serveArgs, "--home")?.trim();
+      const paths = resolveConvictionPaths(
+        home || process.env.CONVICTION_HOME,
+      );
+      const server = await createMockServer({ durableDir: paths.mockDir });
       const transport = new StdioServerTransport();
       console.error("Conviction MCP mock server ready on stdio");
       await server.connect(transport);

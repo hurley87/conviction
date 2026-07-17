@@ -1,14 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 
 import {
-  accountStatusResult,
-  mockAccountStatusOutputSchema,
   mockInteractionInputSchema,
   mockInteractionOutputSchema,
   mockInteractionResult,
   type MockInteractionScenario,
 } from "./mock-fixtures.js";
+import { MockTradeEngine, type MockTradeEngineOptions } from "./mock-trade-engine.js";
 import { toolResult } from "./tool-result.js";
 
 const mockReadOnlyAnnotations = {
@@ -18,35 +18,50 @@ const mockReadOnlyAnnotations = {
   openWorldHint: false,
 } satisfies ToolAnnotations;
 
-const MOCK_TOOL_DEFINITIONS = [
-  {
-    name: "conviction_account_status",
-    title: "Get mock Conviction account status",
-    description:
-      "Return deterministic mock account state without accessing a live account.",
-    inputSchema: {},
-    outputSchema: mockAccountStatusOutputSchema,
-    annotations: mockReadOnlyAnnotations,
-    handler: async () => toolResult(accountStatusResult()),
-  },
-  {
-    name: "conviction_mock_interaction",
-    title: "Run a deterministic mock interaction",
-    description:
-      "Return a structured deterministic success or error for host integration checks.",
-    inputSchema: mockInteractionInputSchema,
-    outputSchema: mockInteractionOutputSchema,
-    annotations: mockReadOnlyAnnotations,
-    handler: async ({ scenario }: { scenario: MockInteractionScenario }) => {
-      const structuredContent = mockInteractionResult(scenario);
-      return toolResult(structuredContent, !structuredContent.ok);
-    },
-  },
+const idempotentWriteAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: false,
+} satisfies ToolAnnotations;
+
+const mcpTradeAssetValues = [
+  "cash",
+  "eth",
+  "usdc",
+  "usdt",
+  "btc",
+  "sol",
+  "arb",
 ] as const;
 
-export const MOCK_TOOLS = MOCK_TOOL_DEFINITIONS.map((tool) => tool.name);
+export const MOCK_TOOLS = [
+  "conviction_account_status",
+  "conviction_mock_interaction",
+  "conviction_quote_trade",
+  "conviction_execute_trade",
+  "conviction_get_receipt",
+] as const;
 
-export function createMockServer(): McpServer {
+export type CreateMockServerOptions = MockTradeEngineOptions & {
+  engine?: MockTradeEngine;
+};
+
+export async function createMockServer(
+  options: CreateMockServerOptions = {},
+): Promise<McpServer> {
+  const engine =
+    options.engine ??
+    (await MockTradeEngine.create({
+      ...(options.durableDir ? { durableDir: options.durableDir } : {}),
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.randomId ? { randomId: options.randomId } : {}),
+      ...(options.simulateStaleQuote !== undefined
+        ? { simulateStaleQuote: options.simulateStaleQuote }
+        : {}),
+      ...(options.policy ? { policy: options.policy } : {}),
+    }));
+
   const server = new McpServer(
     {
       name: "conviction-mcp",
@@ -54,23 +69,121 @@ export function createMockServer(): McpServer {
     },
     {
       instructions:
-        "Deterministic mock mode only. It uses no account, credentials, signer, signing material, network services, or real funds.",
+        "Deterministic mock mode only. Quote with conviction_quote_trade, then execute with conviction_execute_trade using the returned quoteId. It uses no account credentials, signer, signing material, Particle, network services, or real funds.",
     },
   );
 
-  for (const tool of MOCK_TOOL_DEFINITIONS) {
-    server.registerTool(
-      tool.name,
+  server.registerTool(
+    "conviction_account_status",
+    {
+      title: "Get mock Conviction account status",
+      description:
+        "Return deterministic mock account state without accessing a live account.",
+      inputSchema: {},
+      annotations: mockReadOnlyAnnotations,
+    },
+    async () => toolResult(engine.accountStatus()),
+  );
+
+  server.registerTool(
+    "conviction_mock_interaction",
+    {
+      title: "Run a deterministic mock interaction",
+      description:
+        "Return a structured deterministic success or error for host integration checks.",
+      inputSchema: mockInteractionInputSchema,
+      outputSchema: mockInteractionOutputSchema,
+      annotations: mockReadOnlyAnnotations,
+    },
+    async ({ scenario }: { scenario: MockInteractionScenario }) => {
+      const structuredContent = mockInteractionResult(scenario);
+      return toolResult(structuredContent, !structuredContent.ok);
+    },
+  );
+
+  const mcpTradeAsset = z.enum(mcpTradeAssetValues);
+  const mcpTradeQuoteInput = z
+    .object({
+      toAsset: mcpTradeAsset,
+      fromAsset: mcpTradeAsset.optional(),
+      sizeUsd: z.number().positive().optional(),
+      fraction: z.number().gt(0).max(1).optional(),
+      destChain: z.enum(["Arbitrum", "Base"]).optional(),
+      publicationIntent: z.boolean().optional(),
+    })
+    .passthrough();
+  mcpTradeQuoteInput._zod.toJSONSchema = () => ({
+    type: "object",
+    properties: {
+      toAsset: { type: "string", enum: [...mcpTradeAssetValues] },
+      fromAsset: { type: "string", enum: [...mcpTradeAssetValues] },
+      sizeUsd: { type: "number", exclusiveMinimum: 0 },
+      fraction: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+      destChain: { type: "string", enum: ["Arbitrum", "Base"] },
+      publicationIntent: { type: "boolean" },
+    },
+    required: ["toAsset"],
+    oneOf: [
       {
-        title: tool.title,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        outputSchema: tool.outputSchema,
-        annotations: tool.annotations,
+        required: ["sizeUsd"],
+        not: { required: ["fraction"] },
       },
-      tool.handler,
-    );
-  }
+      {
+        required: ["fraction"],
+        not: { required: ["sizeUsd"] },
+      },
+    ],
+    additionalProperties: false,
+  });
+
+  server.registerTool(
+    "conviction_quote_trade",
+    {
+      title: "Quote a structured mock trade",
+      description:
+        "Validate structured trade fields and return a short-lived mock quote with costs, floor, exact expiresAt, and quoteId. Moves no funds.",
+      inputSchema: mcpTradeQuoteInput,
+      annotations: mockReadOnlyAnnotations,
+    },
+    async (args) => {
+      const result = await engine.quoteTrade(args as Record<string, unknown>);
+      return toolResult(result, !result.ok);
+    },
+  );
+
+  server.registerTool(
+    "conviction_execute_trade",
+    {
+      title: "Execute a mock trade quote",
+      description:
+        "Execute a recent mock trade quote by quoteId. Never silently requotes. Uses no Particle, signer, or real funds.",
+      inputSchema: {
+        quoteId: z.string().min(1),
+        idempotencyKey: z.string().min(1),
+      },
+      annotations: idempotentWriteAnnotations,
+    },
+    async ({ quoteId, idempotencyKey }) => {
+      const result = await engine.executeTrade({ quoteId, idempotencyKey });
+      return toolResult(result, !result.ok);
+    },
+  );
+
+  server.registerTool(
+    "conviction_get_receipt",
+    {
+      title: "Get a mock receipt",
+      description: "Retrieve one mock receipt and explorer links.",
+      inputSchema: {
+        receiptId: z.string().min(1),
+      },
+      annotations: mockReadOnlyAnnotations,
+    },
+    async ({ receiptId }) => {
+      const result = await engine.getReceipt(receiptId);
+      return toolResult(result, !result.ok);
+    },
+  );
 
   return server;
 }
