@@ -6,7 +6,7 @@ describe("FifoSaveQueue", () => {
     const saved: number[] = [];
     const statuses: ChatSaveStatus[] = [];
     const queue = new FifoSaveQueue<number>(
-      async (value) => {
+      () => async (value) => {
         saved.push(value);
       },
       (status) => statuses.push(status),
@@ -25,7 +25,7 @@ describe("FifoSaveQueue", () => {
     const statuses: ChatSaveStatus[] = [];
     let fail = true;
     const queue = new FifoSaveQueue<string>(
-      async (value) => {
+      () => async (value) => {
         attempts.push(value);
         if (fail) {
           fail = false;
@@ -49,11 +49,30 @@ describe("FifoSaveQueue", () => {
     const save = new Promise<void>((resolve) => {
       resolveSave = resolve;
     });
-    const queue = new FifoSaveQueue<string>(() => save, () => {});
+    const queue = new FifoSaveQueue<string>(() => () => save, () => {});
     queue.enqueue("old conversation");
     queue.reset();
     resolveSave?.();
     await save;
     expect(queue.pending()).toEqual([]);
+  });
+
+  it("uses the latest save function across drains", async () => {
+    const saved: string[] = [];
+    let saver = async (value: string) => {
+      saved.push(`old:${value}`);
+    };
+    const queue = new FifoSaveQueue<string>(
+      () => saver,
+      () => {},
+    );
+    queue.enqueue("one");
+    await queue.retry();
+    saver = async (value: string) => {
+      saved.push(`new:${value}`);
+    };
+    queue.enqueue("two");
+    await queue.retry();
+    expect(saved).toEqual(["old:one", "new:two"]);
   });
 });

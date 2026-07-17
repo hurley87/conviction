@@ -1,22 +1,17 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import {
+  CHAT_PAGE_SIZE,
+  type ChatMessage,
+  type ChatPage,
+} from "@/lib/chat-types";
 import { getSql } from "@/lib/db";
 
-export const CHAT_PAGE_SIZE = 100;
+export { CHAT_PAGE_SIZE, type ChatPage };
 
-export type StoredChatMessage = {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
+export type StoredChatMessage = ChatMessage & {
   sequence: string;
-  createdAt: string;
-};
-
-export type ChatPage = {
-  conversationId: string;
-  messages: StoredChatMessage[];
-  nextCursor: string | null;
 };
 
 export type AppendChatMessage = Pick<StoredChatMessage, "id" | "role" | "text"> & {

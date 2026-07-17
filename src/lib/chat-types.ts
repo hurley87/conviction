@@ -6,6 +6,14 @@ export type ChatMessage = {
   sequence?: string;
 };
 
+export type ChatPage = {
+  conversationId: string;
+  messages: ChatMessage[];
+  nextCursor: string | null;
+};
+
+export const CHAT_PAGE_SIZE = 100;
+
 export const CHAT_WELCOME_MESSAGE: ChatMessage = {
   id: "local-welcome-v1",
   role: "assistant",
@@ -13,12 +21,18 @@ export const CHAT_WELCOME_MESSAGE: ChatMessage = {
   createdAt: "1970-01-01T00:00:00.000Z",
 };
 
+export const QUOTE_READY_MESSAGE =
+  "Here's your quote — review and confirm below.";
+
+export const QUOTE_REQUOTE_MESSAGE =
+  "The price moved since you last saw it — please review the updated quote and confirm again.";
+
 export const INTERRUPTED_QUOTE_NOTICE =
   "That quote was interrupted and can’t be resumed. Check Activity for any completed transaction, then ask for a fresh quote.";
 
 const RESTORED_QUOTE_PROMPTS = new Set([
-  "Here's your quote — review and confirm below.",
-  "The price moved since you last saw it — please review the updated quote and confirm again.",
+  QUOTE_READY_MESSAGE,
+  QUOTE_REQUOTE_MESSAGE,
 ]);
 
 export function createChatMessage(
@@ -65,7 +79,9 @@ export function prependChatMessages(
 ) {
   const seen = new Set(current.map((message) => message.id));
   return [
-    current[0]?.id === CHAT_WELCOME_MESSAGE.id ? current[0] : CHAT_WELCOME_MESSAGE,
+    current[0]?.id === CHAT_WELCOME_MESSAGE.id
+      ? current[0]
+      : CHAT_WELCOME_MESSAGE,
     ...incoming.filter((message) => !seen.has(message.id)),
     ...current.filter((message) => message.id !== CHAT_WELCOME_MESSAGE.id),
   ];

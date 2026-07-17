@@ -4,10 +4,9 @@
 // the main flow — confirm card and receipt are separate surfaces. Renders
 // inside the ConciergeBubble panel, which owns the card chrome and header.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { useConciergeCore } from "@/hooks/use-concierge-core";
-import { useChatHistory } from "@/hooks/use-chat-history";
+import { usePersistentConcierge } from "@/hooks/use-persistent-concierge";
 import { useLiveTradeSigners } from "@/hooks/use-live-trade-signers";
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 import { useAccount } from "@/components/account/account-context";
@@ -19,7 +18,6 @@ import { IS_LIVE } from "@/lib/env";
 import type { UAClient } from "@/lib/ua";
 import { mockTradeSigners } from "@/lib/ua/mock";
 import type { TradeSigners, UniversalBalance } from "@/lib/verbs/types";
-import type { ChatMessage } from "@/lib/chat-types";
 
 function ConciergePanel({
   ua,
@@ -39,35 +37,17 @@ function ConciergePanel({
   getAccessToken?: () => Promise<string | null>;
 }) {
   const { markUpgraded } = useAccount();
-  const enqueueRef = useRef<(message: ChatMessage) => void>(() => {});
-  const persistMessage = useCallback((message: ChatMessage) => {
-    enqueueRef.current(message);
-  }, []);
-  const c = useConciergeCore(
+  const c = usePersistentConcierge({
     ua,
     balance,
     signers,
     handle,
-    markUpgraded,
-    persistMessage,
-  );
-  const { mergeMessages, replaceMessages } = c;
-  const hydrate = useCallback(
-    (messages: ChatMessage[], mode: "replace" | "merge") => {
-      if (mode === "replace") replaceMessages(messages);
-      else mergeMessages(messages);
-    },
-    [mergeMessages, replaceMessages],
-  );
-  const history = useChatHistory({
+    onUpgraded: markUpgraded,
     active,
     live: liveHistory,
     getAccessToken,
-    onHydrate: hydrate,
   });
-  useEffect(() => {
-    enqueueRef.current = history.enqueue;
-  }, [history.enqueue]);
+  const { history } = c;
   const [input, setInput] = useState("");
   const [confirmingClear, setConfirmingClear] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -119,18 +99,16 @@ function ConciergePanel({
         top: el.scrollTop,
       };
     }
-    const earlier = await history.loadEarlier();
-    if (earlier.length > 0) c.prependMessages(earlier);
-    else preserveScrollRef.current = null;
+    const earlier = await c.loadEarlier();
+    if (earlier.length === 0) preserveScrollRef.current = null;
   };
 
   const handleClear = async () => {
-    const cleared = await history.clear();
+    const cleared = await c.clearChat();
     if (!cleared) return;
     speech.cancel();
     setInput("");
     setConfirmingClear(false);
-    c.clearTranscript();
   };
 
   const handleSubmit = (e: React.FormEvent) => {

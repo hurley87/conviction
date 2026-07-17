@@ -8,6 +8,8 @@ import {
   createChatMessage,
   mergeChatMessages,
   prependChatMessages,
+  QUOTE_READY_MESSAGE,
+  QUOTE_REQUOTE_MESSAGE,
   restoreChatMessages,
   type ChatMessage,
 } from "@/lib/chat-types";
@@ -69,9 +71,12 @@ export function useConciergeCore(
   balance: UniversalBalance | null,
   signers: TradeSigners,
   handle: string | null,
-  onUpgraded?: () => void,
-  onMessage?: (message: ConciergeMessage) => void,
+  options: {
+    onUpgraded?: () => void;
+    onMessage?: (message: ConciergeMessage) => void;
+  } = {},
 ) {
+  const { onUpgraded, onMessage } = options;
   const [messages, setMessages] = useState<ConciergeMessage[]>([
     CHAT_WELCOME_MESSAGE,
   ]);
@@ -190,7 +195,7 @@ export function useConciergeCore(
         setPhase("confirm");
         appendMessage({
           role: "assistant",
-          text: "Here's your quote — review and confirm below.",
+          text: QUOTE_READY_MESSAGE,
         });
       } catch (e) {
         const msg =
@@ -254,7 +259,7 @@ export function useConciergeCore(
         setPhase("confirm");
         appendMessage({
           role: "assistant",
-          text: "The price moved since you last saw it — please review the updated quote and confirm again.",
+          text: QUOTE_REQUOTE_MESSAGE,
         });
         return;
       }
@@ -296,16 +301,9 @@ export function useConciergeCore(
   }, []);
 
   const clearTranscript = useCallback(() => {
+    reset();
     setMessages([CHAT_WELCOME_MESSAGE]);
-    setPhase("idle");
-    setPendingQuote(null);
-    setPendingIntent(null);
-    setPendingSizeUsd(null);
-    setReceipt(null);
-    setError(null);
-    setClarifyContext(null);
-    setConvictionPhase("idle");
-  }, []);
+  }, [reset]);
 
   const postConviction = useCallback(
     async (thesis: string) => {

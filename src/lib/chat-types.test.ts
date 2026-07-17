@@ -3,6 +3,7 @@ import {
   CHAT_WELCOME_MESSAGE,
   INTERRUPTED_QUOTE_NOTICE,
   mergeChatMessages,
+  QUOTE_READY_MESSAGE,
   restoreChatMessages,
   type ChatMessage,
 } from "@/lib/chat-types";
@@ -28,7 +29,7 @@ describe("chat hydration", () => {
 
   it("adds one interruption notice for a restored quote prompt", () => {
     const first = restoreChatMessages([
-      message("quote", "Here's your quote — review and confirm below."),
+      message("quote", QUOTE_READY_MESSAGE),
     ]);
     expect(first.interruption?.text).toBe(INTERRUPTED_QUOTE_NOTICE);
     const second = restoreChatMessages(

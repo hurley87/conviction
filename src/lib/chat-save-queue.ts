@@ -1,12 +1,17 @@
 export type ChatSaveStatus = "saving" | "saved" | "error";
 
+/**
+ * Serializes async saves. `getSave` is resolved on each item so callers can
+ * keep a stable queue instance while the underlying saver (auth token, etc.)
+ * updates across renders.
+ */
 export class FifoSaveQueue<T> {
   private items: T[] = [];
   private running: Promise<void> | null = null;
   private epoch = 0;
 
   constructor(
-    private readonly save: (item: T) => Promise<void>,
+    private readonly getSave: () => (item: T) => Promise<void>,
     private readonly onStatus: (status: ChatSaveStatus) => void,
   ) {}
 
@@ -46,7 +51,7 @@ export class FifoSaveQueue<T> {
       while (this.items.length > 0 && this.epoch === epoch) {
         const item = this.items[0];
         try {
-          await this.save(item);
+          await this.getSave()(item);
         } catch {
           if (this.epoch === epoch) this.onStatus("error");
           return;
