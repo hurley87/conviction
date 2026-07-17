@@ -1,11 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  canAdvance,
   clearCurrentLesson,
   createOnboardingState,
   onboardingProgress,
   onboardingReducer,
   onboardingStorageKey,
-  performSandboxAction,
   readCurrentLesson,
   writeCurrentLesson,
 } from "@/lib/onboarding-machine";
@@ -44,19 +44,35 @@ describe("onboarding reducer and persistence", () => {
     expect(readCurrentLesson(storage, "did:privy:1")).toBe(0);
   });
 
-  it("sandbox actions cannot call fetch or live mutation callbacks", () => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    const liveMutation = vi.fn();
-    const dispatch = vi.fn();
-
-    performSandboxAction(dispatch, { type: "deck", gesture: "back" });
-    performSandboxAction(dispatch, { type: "trade-phase", phase: "receipt" });
-    performSandboxAction(dispatch, { type: "conviction-preview" });
-
-    expect(dispatch).toHaveBeenCalledTimes(3);
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(liveMutation).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
+  it("gates continue on practice milestones and email username validity", () => {
+    const state = createOnboardingState();
+    expect(
+      canAdvance("identity", state, {
+        source: "email",
+        usernameDraftValid: false,
+      }),
+    ).toBe(false);
+    expect(
+      canAdvance("identity", state, {
+        source: "twitter",
+        usernameDraftValid: false,
+      }),
+    ).toBe(true);
+    expect(
+      canAdvance("deck", state, { source: "email", usernameDraftValid: true }),
+    ).toBe(false);
+    const deckDone = onboardingReducer(
+      onboardingReducer(
+        onboardingReducer(state, { type: "deck", gesture: "skip" }),
+        { type: "deck", gesture: "save" },
+      ),
+      { type: "deck", gesture: "back" },
+    );
+    expect(
+      canAdvance("deck", deckDone, {
+        source: "email",
+        usernameDraftValid: true,
+      }),
+    ).toBe(true);
   });
 });

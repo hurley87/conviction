@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
+import { AccountGate } from "@/components/account/account-gate";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { SidebarWallet } from "@/components/sidebar-wallet";
 import { UserMenu } from "@/components/user-menu";
@@ -11,10 +11,6 @@ import {
   ConciergeBubbleProvider,
 } from "@/components/concierge-bubble";
 import { UpgradeBeatHost } from "@/components/upgrade-beat-host";
-import { useAccount } from "@/components/account/account-context";
-import { LandingPage } from "@/components/landing/landing-page";
-import { IS_LIVE } from "@/lib/env";
-import { shouldForceOnboarding } from "@/lib/onboarding-rollout";
 
 const ROUTE_META: Record<string, { eyebrow: string; title: string }> = {
   "/": { eyebrow: "Today’s ritual", title: "The daily deck" },
@@ -24,21 +20,8 @@ const ROUTE_META: Record<string, { eyebrow: string; title: string }> = {
   "/settings": { eyebrow: "Your space", title: "Settings" },
 };
 
-export function AppShell({ children }: { children: React.ReactNode }) {
-  const account = useAccount();
+function AppShellChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const forceOnboarding = shouldForceOnboarding({
-    live: IS_LIVE,
-    authReady: account.ready,
-    authenticated: account.authenticated,
-    profileReady: account.profileReady,
-    needsOnboarding: account.needsOnboarding,
-  });
-
-  useEffect(() => {
-    if (forceOnboarding) router.replace("/onboarding");
-  }, [forceOnboarding, router]);
   const routeMeta =
     ROUTE_META[
       Object.keys(ROUTE_META).find((route) =>
@@ -46,53 +29,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       ) ?? "/"
     ];
 
-  // Logged-out visitors get the marketing landing instead of the app chrome;
-  // hold on a quiet canvas until Privy resolves so the deck never flashes.
-  if (!account.ready) {
-    return <div className="min-h-screen bg-canvas" />;
-  }
-  if (!account.authenticated) {
-    return <LandingPage />;
-  }
-  if (account.profileError) {
-    return (
-      <main className="grid min-h-screen place-items-center bg-canvas px-6 text-center text-ink">
-        <div className="max-w-md rounded-[28px] border border-line bg-surface p-8 shadow-md">
-          <p className="pt-eyebrow">Profile unavailable</p>
-          <h1 className="mt-3 font-display text-3xl font-semibold">
-            We couldn&apos;t open your account.
-          </h1>
-          <p className="mt-3 text-sm leading-relaxed text-ink-3">
-            {account.profileError}
-          </p>
-          <div className="mt-6 flex justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => void account.retryProfile()}
-              className="rounded-full bg-brand px-5 py-2.5 text-sm font-bold text-brand-on"
-            >
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={account.logout}
-              className="rounded-full border border-line-strong px-5 py-2.5 text-sm font-bold"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
-      </main>
-    );
-  }
-  if (!account.profileReady || forceOnboarding) {
-    return <div className="min-h-screen bg-canvas" aria-busy="true" />;
-  }
-
   return (
     <ConciergeBubbleProvider>
       <div className="relative flex min-h-screen overflow-x-clip bg-canvas text-ink">
-        <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden>
+        <div
+          className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
+          aria-hidden
+        >
           <div
             className="absolute -right-52 -top-72 h-[650px] w-[760px] rounded-full opacity-45 blur-[110px]"
             style={{ background: "var(--pt-grad-dawn)" }}
@@ -169,5 +112,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <UpgradeBeatHost />
       </div>
     </ConciergeBubbleProvider>
+  );
+}
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  return (
+    <AccountGate mode="app">
+      <AppShellChrome>{children}</AppShellChrome>
+    </AccountGate>
   );
 }

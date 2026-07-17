@@ -5,7 +5,7 @@ import {
   type User,
   type VerifyAccessTokenResponse,
 } from "@privy-io/node";
-import type { IdentitySource } from "@/lib/users";
+import type { IdentitySource } from "@/lib/identity";
 
 export type VerifiedPrivyIdentity = {
   privyId: string;

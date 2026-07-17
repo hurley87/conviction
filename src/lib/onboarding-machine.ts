@@ -1,3 +1,5 @@
+import type { IdentitySource } from "@/lib/identity";
+
 export const ONBOARDING_VERSION = 1;
 
 export const ONBOARDING_STEPS = [
@@ -33,6 +35,40 @@ export type OnboardingAction =
   | { type: "trade-phase"; phase: TradePhase }
   | { type: "conviction-preview" };
 
+export const ONBOARDING_STEP_COPY: Record<
+  OnboardingStep,
+  readonly [title: string, description: string]
+> = {
+  identity: [
+    "Your public identity",
+    "Choose how people will recognize your reasoning.",
+  ],
+  account: [
+    "One account, every move",
+    "Your embedded wallet and unified balance stay out of the way.",
+  ],
+  deck: [
+    "Learn the deck",
+    "Use a practice card to learn the three daily gestures.",
+  ],
+  ask: [
+    "Ask Conviction",
+    "See how research becomes a clear, trade-ready brief.",
+  ],
+  trade: [
+    "Practice a trade",
+    "Size, review, confirm, and receive a simulated receipt.",
+  ],
+  conviction: [
+    "Share your reasoning",
+    "Draft a public thesis without posting anything.",
+  ],
+  ready: [
+    "You’re ready",
+    "The real app stays deliberate: you choose every action.",
+  ],
+};
+
 export function createOnboardingState(step = 0): OnboardingState {
   return {
     step: Math.max(0, Math.min(step, ONBOARDING_STEPS.length - 1)),
@@ -50,7 +86,10 @@ export function onboardingReducer(
 ): OnboardingState {
   switch (action.type) {
     case "next":
-      return { ...state, step: Math.min(state.step + 1, ONBOARDING_STEPS.length - 1) };
+      return {
+        ...state,
+        step: Math.min(state.step + 1, ONBOARDING_STEPS.length - 1),
+      };
     case "back":
       return { ...state, step: Math.max(state.step - 1, 0) };
     case "go":
@@ -71,11 +110,49 @@ export function onboardingReducer(
       return { ...state, tradePhase: action.phase };
     case "conviction-preview":
       return { ...state, convictionPreviewed: true };
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
   }
 }
 
 export function onboardingProgress(step: number) {
   return Math.round(((step + 1) / ONBOARDING_STEPS.length) * 100);
+}
+
+export function currentOnboardingStep(state: OnboardingState): OnboardingStep {
+  return ONBOARDING_STEPS[state.step] ?? "identity";
+}
+
+export function canAdvance(
+  step: OnboardingStep,
+  state: OnboardingState,
+  identity: {
+    source: IdentitySource | null;
+    usernameDraftValid: boolean;
+  },
+): boolean {
+  switch (step) {
+    case "identity":
+      return identity.source === "twitter" || identity.usernameDraftValid;
+    case "account":
+      return true;
+    case "deck":
+      return Object.values(state.deckGestures).every(Boolean);
+    case "ask":
+      return state.askAnswered;
+    case "trade":
+      return state.tradePhase === "receipt";
+    case "conviction":
+      return state.convictionPreviewed;
+    case "ready":
+      return true;
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
 }
 
 export function onboardingStorageKey(privyId: string) {
@@ -102,16 +179,4 @@ export function writeCurrentLesson(
 
 export function clearCurrentLesson(storage: LessonStorage, privyId: string) {
   storage.removeItem(onboardingStorageKey(privyId));
-}
-
-/**
- * Practice events have exactly one capability: dispatching to the local
- * reducer. Keeping this boundary free of network/storage/account dependencies
- * makes it impossible for simulated actions to mutate live product state.
- */
-export function performSandboxAction(
-  dispatch: (action: OnboardingAction) => void,
-  action: OnboardingAction,
-) {
-  dispatch(action);
 }

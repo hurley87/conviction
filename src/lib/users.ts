@@ -1,11 +1,17 @@
 import "server-only";
 
 import { getSql } from "@/lib/db";
-import { normalizeUsername, validateUsername } from "@/lib/usernames";
+import {
+  ensureUserSchema,
+  resetUserSchemaForTests,
+} from "@/lib/users-schema";
+import type { IdentitySource } from "@/lib/identity";
+import { mergeUserColumns } from "@/lib/user-identity";
+import { validateUsername } from "@/lib/usernames";
 
+export type { IdentitySource } from "@/lib/identity";
 export { normalizeUsername, validateUsername } from "@/lib/usernames";
-
-export type IdentitySource = "twitter" | "email";
+export { resetUserSchemaForTests };
 
 export type UserProfile = {
   privyId: string;
@@ -13,8 +19,8 @@ export type UserProfile = {
   address: string;
   email: string | null;
   identitySource: IdentitySource;
+  /** Single client-facing onboarding truth derived from storage columns. */
   onboardingRequired: boolean;
-  onboardingCompletedAt: string | null;
   created: boolean;
 };
 
@@ -47,40 +53,6 @@ export class UserProfileError extends Error {
   }
 }
 
-let schemaReady = false;
-
-async function ensureSchema(sql: NonNullable<ReturnType<typeof getSql>>) {
-  if (schemaReady) return;
-
-  // Adding onboarding_required with a false default backfills every existing
-  // row as not requiring onboarding. The final ALTER changes the default only
-  // for genuinely new rows created after this migration.
-  await sql`
-    CREATE TABLE IF NOT EXISTS users (
-      privy_id                 text PRIMARY KEY,
-      handle                   text,
-      address                  text NOT NULL,
-      email                    text,
-      identity_source          text,
-      onboarding_required      boolean NOT NULL DEFAULT true,
-      onboarding_completed_at timestamptz,
-      created_at               timestamptz NOT NULL DEFAULT now(),
-      updated_at               timestamptz NOT NULL DEFAULT now()
-    )
-  `;
-  await sql`ALTER TABLE users ALTER COLUMN handle DROP NOT NULL`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email text`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS identity_source text`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_required boolean DEFAULT false`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`;
-  await sql`UPDATE users SET identity_source = 'twitter' WHERE identity_source IS NULL AND handle IS NOT NULL`;
-  await sql`UPDATE users SET onboarding_required = false WHERE onboarding_required IS NULL`;
-  await sql`ALTER TABLE users ALTER COLUMN onboarding_required SET NOT NULL`;
-  await sql`ALTER TABLE users ALTER COLUMN onboarding_required SET DEFAULT true`;
-  await sql`CREATE UNIQUE INDEX IF NOT EXISTS users_handle_lower_unique ON users (lower(handle)) WHERE handle IS NOT NULL`;
-  schemaReady = true;
-}
-
 function sqlClient() {
   const sql = getSql();
   if (!sql) {
@@ -108,55 +80,92 @@ function toProfile(row: UserRow): UserProfile {
     address: row.address,
     email: row.email,
     identitySource: row.identity_source,
+    // Existing users were backfilled with onboarding_required=false; new users
+    // stay required until completeUserOnboarding clears the flag.
     onboardingRequired:
       row.onboarding_required && !row.onboarding_completed_at,
-    onboardingCompletedAt: row.onboarding_completed_at
-      ? new Date(row.onboarding_completed_at).toISOString()
-      : null,
     created: Boolean(row.created),
   };
+}
+
+async function getUserRow(
+  sql: NonNullable<ReturnType<typeof getSql>>,
+  privyId: string,
+) {
+  const rows = await sql`
+    SELECT
+      privy_id,
+      handle,
+      address,
+      email,
+      identity_source,
+      onboarding_required,
+      onboarding_completed_at
+    FROM users
+    WHERE privy_id = ${privyId}
+  `;
+  return (rows[0] as UserRow | undefined) ?? null;
 }
 
 export async function initializeUser(
   input: InitializeUser,
 ): Promise<UserProfile> {
   const sql = sqlClient();
-  await ensureSchema(sql);
-  const providerHandle = input.providerHandle
-    ? normalizeUsername(input.providerHandle)
-    : null;
+  await ensureUserSchema(sql);
+
+  const existing = await getUserRow(sql, input.privyId);
+  const next = mergeUserColumns(
+    existing
+      ? {
+          handle: existing.handle,
+          email: existing.email,
+          identitySource: existing.identity_source,
+        }
+      : null,
+    input,
+  );
 
   try {
+    if (!existing) {
+      const rows = await sql`
+        INSERT INTO users (
+          privy_id,
+          handle,
+          address,
+          email,
+          identity_source,
+          onboarding_required
+        )
+        VALUES (
+          ${input.privyId},
+          ${next.handle},
+          ${next.address},
+          ${next.email},
+          ${next.identitySource},
+          true
+        )
+        RETURNING
+          privy_id,
+          handle,
+          address,
+          email,
+          identity_source,
+          onboarding_required,
+          onboarding_completed_at,
+          true AS created
+      `;
+      return toProfile(rows[0] as UserRow);
+    }
+
     const rows = await sql`
-      INSERT INTO users (
-        privy_id,
-        handle,
-        address,
-        email,
-        identity_source,
-        onboarding_required
-      )
-      VALUES (
-        ${input.privyId},
-        ${input.identitySource === "twitter" ? providerHandle : null},
-        ${input.address},
-        ${input.email},
-        ${input.identitySource},
-        true
-      )
-      ON CONFLICT (privy_id)
-      DO UPDATE SET
-        handle = CASE
-          WHEN EXCLUDED.identity_source = 'twitter' THEN EXCLUDED.handle
-          ELSE users.handle
-        END,
-        address = EXCLUDED.address,
-        email = COALESCE(EXCLUDED.email, users.email),
-        identity_source = CASE
-          WHEN EXCLUDED.identity_source = 'twitter' THEN 'twitter'
-          ELSE COALESCE(users.identity_source, EXCLUDED.identity_source)
-        END,
+      UPDATE users
+      SET
+        handle = ${next.handle},
+        address = ${next.address},
+        email = ${next.email},
+        identity_source = ${next.identitySource},
         updated_at = now()
+      WHERE privy_id = ${input.privyId}
       RETURNING
         privy_id,
         handle,
@@ -165,11 +174,13 @@ export async function initializeUser(
         identity_source,
         onboarding_required,
         onboarding_completed_at,
-        (xmax = 0) AS created
+        false AS created
     `;
     return toProfile(rows[0] as UserRow);
   } catch (error) {
     if (isUniqueViolation(error)) {
+      // Concurrent first login: retry as an update after the other writer wins.
+      if (!existing) return initializeUser(input);
       throw new UserProfileError(
         "That public username is already in use.",
         "conflict",
@@ -185,7 +196,7 @@ export async function saveUserHandle(privyId: string, value: string) {
     throw new UserProfileError(validation.error, "validation");
   }
   const sql = sqlClient();
-  await ensureSchema(sql);
+  await ensureUserSchema(sql);
   try {
     const rows = await sql`
       UPDATE users
@@ -209,6 +220,7 @@ export async function saveUserHandle(privyId: string, value: string) {
     }
     return toProfile(rows[0] as UserRow);
   } catch (error) {
+    if (error instanceof UserProfileError) throw error;
     if (isUniqueViolation(error)) {
       throw new UserProfileError(
         "That public username is already in use.",
@@ -221,7 +233,7 @@ export async function saveUserHandle(privyId: string, value: string) {
 
 export async function completeUserOnboarding(privyId: string) {
   const sql = sqlClient();
-  await ensureSchema(sql);
+  await ensureUserSchema(sql);
   const rows = await sql`
     UPDATE users
     SET
@@ -246,8 +258,4 @@ export async function completeUserOnboarding(privyId: string) {
     );
   }
   return toProfile(rows[0] as UserRow);
-}
-
-export function resetUserSchemaForTests() {
-  schemaReady = false;
 }

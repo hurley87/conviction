@@ -54,7 +54,6 @@ const profile = {
   handle: null,
   address: "0xabc",
   onboardingRequired: true,
-  onboardingCompletedAt: null,
   created: true,
 };
 
@@ -75,6 +74,11 @@ describe("authenticated profile API", () => {
     mocks.identity.mockResolvedValue(verifiedIdentity);
     mocks.initialize.mockResolvedValue(profile);
     mocks.saveHandle.mockResolvedValue({ ...profile, handle: "public_name" });
+    mocks.complete.mockResolvedValue({
+      ...profile,
+      handle: "public_name",
+      onboardingRequired: false,
+    });
   });
 
   it("derives identity server-side and ignores client identity claims", async () => {
@@ -101,7 +105,13 @@ describe("authenticated profile API", () => {
     mocks.saveHandle.mockRejectedValueOnce(
       new UserProfileError("already used", "conflict"),
     );
-    expect((await PATCH(request("PATCH", { handle: "Taken" }))).status).toBe(409);
+    expect(
+      (
+        await PATCH(
+          request("PATCH", { action: "saveHandle", handle: "Taken" }),
+        )
+      ).status,
+    ).toBe(409);
 
     expect((await PATCH(request("PATCH", { nope: true }))).status).toBe(422);
 
@@ -112,10 +122,15 @@ describe("authenticated profile API", () => {
   });
 
   it("normalizes uniqueness through the save contract", async () => {
-    await PATCH(request("PATCH", { handle: "@Trader" }));
+    await PATCH(request("PATCH", { action: "saveHandle", handle: "@Trader" }));
     expect(mocks.saveHandle).toHaveBeenCalledWith(
       "did:privy:verified",
       "@Trader",
     );
+  });
+
+  it("completes onboarding through an explicit action discriminant", async () => {
+    await PATCH(request("PATCH", { action: "completeOnboarding" }));
+    expect(mocks.complete).toHaveBeenCalledWith("did:privy:verified");
   });
 });

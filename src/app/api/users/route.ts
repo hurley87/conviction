@@ -3,6 +3,10 @@ import {
   PrivyProfileAuthError,
 } from "@/lib/privy-profile-auth";
 import {
+  initializeUserBodySchema,
+  patchUserBodySchema,
+} from "@/lib/user-profile-request";
+import {
   completeUserOnboarding,
   initializeUser,
   saveUserHandle,
@@ -30,9 +34,9 @@ function errorResponse(error: unknown) {
   );
 }
 
-async function readBody(request: Request) {
+async function readJson(request: Request) {
   try {
-    return (await request.json()) as Record<string, unknown>;
+    return await request.json();
   } catch {
     throw new UserProfileError("Send a valid JSON body.", "validation");
   }
@@ -41,19 +45,17 @@ async function readBody(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await getAuthenticatedPrivyIdentity(request);
-    const body = await readBody(request);
-    const address = body.address;
-    if (
-      typeof address !== "string" ||
-      address.length < 3 ||
-      address.length > 200
-    ) {
+    const parsed = initializeUserBodySchema.safeParse(await readJson(request));
+    if (!parsed.success) {
       throw new UserProfileError(
         "An embedded wallet address is required.",
         "validation",
       );
     }
-    const profile = await initializeUser({ ...identity, address });
+    const profile = await initializeUser({
+      ...identity,
+      address: parsed.data.address,
+    });
     return Response.json({ profile });
   } catch (error) {
     return errorResponse(error);
@@ -63,18 +65,19 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const identity = await getAuthenticatedPrivyIdentity(request);
-    const body = await readBody(request);
-    let profile;
-    if (typeof body.handle === "string") {
-      profile = await saveUserHandle(identity.privyId, body.handle);
-    } else if (body.onboardingComplete === true) {
-      profile = await completeUserOnboarding(identity.privyId);
-    } else {
+    const parsed = patchUserBodySchema.safeParse(await readJson(request));
+    if (!parsed.success) {
       throw new UserProfileError(
         "Provide a username or mark onboarding complete.",
         "validation",
       );
     }
+
+    const profile =
+      parsed.data.action === "saveHandle"
+        ? await saveUserHandle(identity.privyId, parsed.data.handle)
+        : await completeUserOnboarding(identity.privyId);
+
     return Response.json({ profile });
   } catch (error) {
     return errorResponse(error);

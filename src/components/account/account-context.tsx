@@ -4,7 +4,7 @@ import { createContext, useContext } from "react";
 import { IS_LIVE } from "@/lib/env";
 import type { UAClient } from "@/lib/ua";
 import type { DepositAddresses, UniversalBalance } from "@/lib/verbs/types";
-import type { IdentitySource } from "@/lib/users";
+import type { IdentitySource } from "@/lib/identity";
 import { LiveAccountProvider } from "@/components/account/live-account-provider";
 import { MockAccountProvider } from "@/components/account/mock-account-provider";
 
@@ -18,7 +18,6 @@ export type AccountContextValue = {
   email: string | null;
   identitySource: IdentitySource | null;
   needsOnboarding: boolean;
-  onboardingCompletedAt: string | null;
   pfp: string | null;
   address: string | null;
   balance: UniversalBalance | null;

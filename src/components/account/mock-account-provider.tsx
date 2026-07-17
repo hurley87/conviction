@@ -39,7 +39,6 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
       email: "demo@getconviction.xyz",
       identitySource: "twitter",
       needsOnboarding: false,
-      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
       pfp: DEMO_PFP,
       address: deposits?.evm ?? null,
       balance,

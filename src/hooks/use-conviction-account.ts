@@ -16,12 +16,16 @@ import {
 import { getUAClient } from "@/lib/ua";
 import { useUASnapshot } from "@/hooks/use-ua-snapshot";
 import { FUNDING_TARGET } from "@/lib/funding";
+import type {
+  InitializeUserBody,
+  PatchUserBody,
+} from "@/lib/user-profile-request";
 import type { UserProfile } from "@/lib/users";
 
 async function profileRequest(
   getAccessToken: () => Promise<string | null>,
   method: "POST" | "PATCH",
-  body: Record<string, unknown>,
+  body: InitializeUserBody | PatchUserBody,
 ) {
   const token = await getAccessToken();
   if (!token) throw new Error("Your Privy session has expired. Sign in again.");
@@ -121,7 +125,10 @@ export function useConvictionAccount() {
 
   const saveHandle = useCallback(
     async (handle: string) => {
-      const next = await profileRequest(getAccessToken, "PATCH", { handle });
+      const next = await profileRequest(getAccessToken, "PATCH", {
+        action: "saveHandle",
+        handle,
+      });
       setProfile(next);
     },
     [getAccessToken],
@@ -129,9 +136,9 @@ export function useConvictionAccount() {
 
   const completeOnboarding = useCallback(async () => {
     // Replaying the tour must not rewrite an existing completion timestamp.
-    if (!profile?.onboardingRequired || profile.onboardingCompletedAt) return;
+    if (!profile?.onboardingRequired) return;
     const next = await profileRequest(getAccessToken, "PATCH", {
-      onboardingComplete: true,
+      action: "completeOnboarding",
     });
     setProfile(next);
   }, [getAccessToken, profile]);
@@ -181,7 +188,6 @@ export function useConvictionAccount() {
     email: profile?.email ?? null,
     identitySource: profile?.identitySource ?? null,
     needsOnboarding: Boolean(profile?.onboardingRequired),
-    onboardingCompletedAt: profile?.onboardingCompletedAt ?? null,
     saveHandle,
     completeOnboarding,
     address,
