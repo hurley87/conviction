@@ -90,6 +90,8 @@ async function startMockApi(walletAddress: string) {
             operatorHandle: "operator",
             address: walletAddress,
             depositAddress: walletAddress,
+            depositAddresses: { evm: walletAddress, solana: null },
+            balance: { totalUsd: 0, sources: [] },
             status: "active",
             publicStatus: "active",
             actionPolicy: { trade: true, back: true, publish: false },

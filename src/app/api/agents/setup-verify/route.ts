@@ -1,4 +1,4 @@
-import { buildAgentAccountStatus } from "@/lib/agent-lease";
+import { loadAgentAccountStatus } from "@/lib/agent-account-status";
 import { AgentProvisioningError } from "@/lib/agent-provisioning";
 import {
   AgentRequestAuthError,
@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     });
 
     return Response.json(
-      { status: buildAgentAccountStatus(agent) },
+      { status: await loadAgentAccountStatus(agent) },
       { status: 200, headers: { "cache-control": "no-store" } },
     );
   } catch (error) {

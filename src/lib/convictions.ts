@@ -7,6 +7,13 @@ import { DECK_SEED_CARDS } from "@/lib/deck-seed";
 import { getSql } from "@/lib/db";
 import { appendBacker } from "@/lib/verbs/conviction";
 import { orderDeckCards } from "@/lib/verbs/deck";
+import {
+  clampConvictionPageLimit,
+  decodeConvictionCursor,
+  encodeConvictionCursor,
+  toCompactConviction,
+  type ConvictionPage,
+} from "@/lib/agent-network-reads";
 import type {
   ConvictionEntry,
   GateCheck,
@@ -135,6 +142,26 @@ export async function saveConviction(
   return true;
 }
 
+function compareConvictionNewestFirst(
+  a: ConvictionEntry,
+  b: ConvictionEntry,
+): number {
+  const byTime =
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  if (byTime !== 0) return byTime;
+  return b.entryId.localeCompare(a.entryId);
+}
+
+function isBeforeCursor(
+  entry: ConvictionEntry,
+  cursor: { createdAt: string; entryId: string },
+): boolean {
+  const entryMs = new Date(entry.createdAt).getTime();
+  const cursorMs = new Date(cursor.createdAt).getTime();
+  if (entryMs !== cursorMs) return entryMs < cursorMs;
+  return entry.entryId < cursor.entryId;
+}
+
 export async function listConvictions(
   limit = 50,
 ): Promise<ConvictionEntry[]> {
@@ -142,10 +169,7 @@ export async function listConvictions(
   if (!sql) {
     ensureMemorySeed();
     return [...memoryStore.values()]
-      .sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      )
+      .sort(compareConvictionNewestFirst)
       .slice(0, limit);
   }
   await ensureSchema(sql);
@@ -153,10 +177,110 @@ export async function listConvictions(
     SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
            why_now, what_breaks_it, gate_report
     FROM convictions
-    ORDER BY created_at DESC
+    ORDER BY created_at DESC, entry_id DESC
     LIMIT ${limit}
   `;
   return (rows as Parameters<typeof rowToEntry>[0][]).map(rowToEntry);
+}
+
+/** Fetch one canonical conviction by entryId, or null when missing. */
+export async function getConviction(
+  entryId: string,
+): Promise<ConvictionEntry | null> {
+  const trimmed = entryId.trim();
+  if (!trimmed) return null;
+
+  const sql = getSql();
+  if (!sql) {
+    ensureMemorySeed();
+    return memoryStore.get(trimmed) ?? null;
+  }
+  await ensureSchema(sql);
+  const rows = await sql`
+    SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
+           why_now, what_breaks_it, gate_report
+    FROM convictions
+    WHERE entry_id = ${trimmed}
+    LIMIT 1
+  `;
+  const row = (rows as Parameters<typeof rowToEntry>[0][])[0];
+  return row ? rowToEntry(row) : null;
+}
+
+/**
+ * Bounded keyset pagination for MCP list tools.
+ * Cursor is opaque; invalid cursors throw with code `invalid_cursor`.
+ */
+export async function listConvictionsPage(options: {
+  cursor?: string;
+  limit?: number;
+}): Promise<ConvictionPage> {
+  const limit = clampConvictionPageLimit(options.limit);
+  let cursor: { createdAt: string; entryId: string } | null = null;
+  if (options.cursor) {
+    cursor = decodeConvictionCursor(options.cursor);
+    if (!cursor) {
+      throw new ConvictionReadError(
+        "invalid_cursor",
+        "The pagination cursor is invalid.",
+      );
+    }
+  }
+
+  const sql = getSql();
+  let page: ConvictionEntry[];
+  if (!sql) {
+    ensureMemorySeed();
+    const sorted = [...memoryStore.values()].sort(compareConvictionNewestFirst);
+    const afterCursor = cursor
+      ? sorted.filter((entry) => isBeforeCursor(entry, cursor))
+      : sorted;
+    page = afterCursor.slice(0, limit + 1);
+  } else {
+    await ensureSchema(sql);
+    const rows = cursor
+      ? await sql`
+          SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
+                 why_now, what_breaks_it, gate_report
+          FROM convictions
+          WHERE created_at < ${cursor.createdAt}::timestamptz
+             OR (
+               created_at = ${cursor.createdAt}::timestamptz
+               AND entry_id < ${cursor.entryId}
+             )
+          ORDER BY created_at DESC, entry_id DESC
+          LIMIT ${limit + 1}
+        `
+      : await sql`
+          SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
+                 why_now, what_breaks_it, gate_report
+          FROM convictions
+          ORDER BY created_at DESC, entry_id DESC
+          LIMIT ${limit + 1}
+        `;
+    page = (rows as Parameters<typeof rowToEntry>[0][]).map(rowToEntry);
+  }
+
+  const hasMore = page.length > limit;
+  const entries = page.slice(0, limit);
+  const last = entries[entries.length - 1];
+  return {
+    entries: entries.map(toCompactConviction),
+    nextCursor: hasMore && last ? encodeConvictionCursor(last) : null,
+    hasMore,
+  };
+}
+
+export type ConvictionReadErrorCode = "invalid_cursor";
+
+export class ConvictionReadError extends Error {
+  constructor(
+    public readonly code: ConvictionReadErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ConvictionReadError";
+  }
 }
 
 export async function listConvictionsByHandle(
