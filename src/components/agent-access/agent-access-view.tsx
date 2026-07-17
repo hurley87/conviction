@@ -15,7 +15,9 @@ type OwnedAgentSummary = {
   agentId: string;
   handle: string;
   operatorHandle: string;
+  address: string | null;
   status: AgentStatus;
+  fundingReady: boolean;
   maxTradeUsd: number;
   spendBudgetUsd: number;
 };
@@ -220,7 +222,7 @@ export function AgentAccessView() {
               <div className="mt-7 rounded-[22px] border border-brand/15 bg-brand-soft/45 p-6">
                 <p className="text-sm font-extrabold text-ink">Use this handoff once</p>
                 <p className="mt-2 text-sm leading-6 text-ink-2">
-                  Run it before {new Date(handoff.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. It will not be shown again after you leave this page.
+                  Run it before {new Date(handoff.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. It will not be shown again after you leave this page. Export and decrypt-verify the encrypted backup in the CLI before funding.
                 </p>
                 <div className="mt-4 flex flex-col gap-3 sm:flex-row">
                   <code className="min-w-0 flex-1 overflow-x-auto rounded-[14px] bg-ink px-4 py-3 text-sm text-white">{handoff.command}</code>
@@ -234,12 +236,28 @@ export function AgentAccessView() {
                 This account already used its one-time handoff. Return to the local terminal where you began setup, or wait for a future recovery flow.
               </div>
             )
+          ) : agent.status === "active" && !agent.fundingReady ? (
+            <div className="mt-7 rounded-[18px] border border-warning/25 bg-[#fff8e8] px-5 py-4 text-sm leading-6 text-ink-2">
+              Local signer is bound, but funding stays locked until the CLI exports and decrypt-verifies an encrypted backup. Resume{" "}
+              <code className="rounded bg-ink/5 px-1.5 py-0.5 text-xs">conviction-mcp init</code> with the same code and profile—no deposit address is shown here yet.
+            </div>
+          ) : agent.status === "active" && agent.fundingReady ? (
+            <div className="mt-7 space-y-3 rounded-[18px] border border-brand/15 bg-brand-soft/45 px-5 py-4 text-sm leading-6 text-ink-2">
+              <p>
+                Backup verified. This agent is ready for funding. Connect an MCP host next, then send funds to the Universal Account.
+              </p>
+              {agent.address ? (
+                <p>
+                  <span className="font-extrabold text-ink">Deposit address:</span>{" "}
+                  <code className="break-all rounded bg-ink/5 px-1.5 py-0.5 font-mono text-xs text-ink">
+                    {agent.address}
+                  </code>
+                </p>
+              ) : null}
+            </div>
           ) : (
             <div className="mt-7 rounded-[18px] border border-line bg-surface-2 px-5 py-4 text-sm leading-6 text-ink-2">
-              This account already holds its v1 agent slot
-              {agent.status === "active"
-                ? " with a bound local signer."
-                : ` (${statusLabel(agent.status).toLowerCase()}).`}{" "}
+              This account already holds its v1 agent slot ({statusLabel(agent.status).toLowerCase()}).
               Retire it before creating another.
             </div>
           )}

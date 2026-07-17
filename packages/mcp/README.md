@@ -1,10 +1,31 @@
 # Conviction MCP
 
 `@conviction/mcp` is Conviction's local stdio Model Context Protocol server. The
-package is TypeScript-first; published artifacts are compiled to `dist/`. The
-first slice provides a deterministic mock mode for validating package,
-transport, and host integration without an account, credentials, signer, or
-funds.
+package is TypeScript-first; published artifacts are compiled to `dist/`. Current
+surfaces:
+
+- deterministic mock mode for host integration without credentials
+- `init` to redeem a one-time Agent Access handoff into a local encrypted profile
+
+## Provision a local profile
+
+After Agent Access creates a pending agent, redeem the handoff locally:
+
+```sh
+conviction-mcp init \
+  --code <one-time-code> \
+  --backup-path ~/conviction-signer.backup.json \
+  --api-base https://your-conviction-host
+```
+
+`init` generates an ethers v6 encrypted keystore on the machine, proves
+possession of the public address to Conviction, exports a separately
+passphrase-encrypted backup, decrypt-verifies that backup, then marks the agent
+funding-ready. The private key never leaves the local process.
+
+Headless unlock uses `CONVICTION_KEYSTORE_PASSWORD`. Recovery passphrase may be
+passed with `--backup-passphrase` or `CONVICTION_BACKUP_PASSPHRASE`. Raw private
+key environment variables are rejected.
 
 ## Start mock mode
 

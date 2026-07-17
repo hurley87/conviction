@@ -23,7 +23,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "ethers": "^6.17.0",
     "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "^1.2.0"
   },
   "devDependencies": {
     "@types/node": "^20",
