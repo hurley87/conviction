@@ -5,11 +5,7 @@ import { z } from "zod";
 import { ConvictionApiError } from "./api-client.js";
 import type { LocalWallet } from "./keystore.js";
 import type { LeaseHandle } from "./lease.js";
-import {
-  fetchAgentStatus,
-  requestTradeQuote,
-  type QuoteApiErrorDetails,
-} from "./live-api-client.js";
+import { fetchAgentStatus, requestTradeQuote } from "./live-api-client.js";
 import type { AgentProfile } from "./profile.js";
 import { toolResult } from "./tool-result.js";
 
@@ -290,15 +286,18 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
         return toolResult(quote);
       } catch (error) {
         if (error instanceof ConvictionApiError) {
-          const details = error as ConvictionApiError & QuoteApiErrorDetails;
           return toolResult(
             {
               ok: false,
               code: error.code,
               message: error.message,
-              ...(details.fields ? { fields: details.fields } : {}),
-              ...(details.gateReport ? { gateReport: details.gateReport } : {}),
-              ...(details.preview ? { preview: details.preview } : {}),
+              ...(error.details.fields ? { fields: error.details.fields } : {}),
+              ...(error.details.gateReport
+                ? { gateReport: error.details.gateReport }
+                : {}),
+              ...(error.details.preview
+                ? { preview: error.details.preview }
+                : {}),
             },
             true,
           );

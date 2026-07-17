@@ -1,4 +1,7 @@
-import { parseAgentJsonObject } from "@/lib/agent-api-body";
+import {
+  AgentApiBodyError,
+  parseAgentJsonObject,
+} from "@/lib/agent-api-body";
 import {
   AgentQuoteError,
   issueTradeQuote,
@@ -13,7 +16,6 @@ import {
 } from "@/lib/agent-request-auth";
 import { getPublicAgentProvisioningStore } from "@/lib/agent-provisioning-store";
 import { getUAClient } from "@/lib/ua";
-import { AgentLeaseError } from "@/lib/agent-lease";
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
@@ -31,7 +33,7 @@ export async function POST(request: Request) {
     try {
       body = parseAgentJsonObject(rawBody);
     } catch (error) {
-      if (error instanceof AgentLeaseError) {
+      if (error instanceof AgentApiBodyError) {
         throw new AgentQuoteError("invalid_input", error.message);
       }
       throw error;

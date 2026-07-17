@@ -1,4 +1,7 @@
-import { parseAgentJsonObject } from "@/lib/agent-api-body";
+import {
+  AgentApiBodyError,
+  parseAgentJsonObject,
+} from "@/lib/agent-api-body";
 import {
   AgentLeaseError,
   acquireAgentLease,
@@ -49,6 +52,12 @@ export async function POST(request: Request) {
       return Response.json(
         { error: { code: error.code, message: error.message } },
         { status: agentAuthErrorStatus(error.code) },
+      );
+    }
+    if (error instanceof AgentApiBodyError) {
+      return Response.json(
+        { error: { code: error.code, message: error.message } },
+        { status: 422 },
       );
     }
     if (error instanceof AgentLeaseError) {
@@ -107,6 +116,12 @@ export async function DELETE(request: Request) {
       return Response.json(
         { error: { code: error.code, message: error.message } },
         { status: agentAuthErrorStatus(error.code) },
+      );
+    }
+    if (error instanceof AgentApiBodyError) {
+      return Response.json(
+        { error: { code: error.code, message: error.message } },
+        { status: 422 },
       );
     }
     if (error instanceof AgentLeaseError) {

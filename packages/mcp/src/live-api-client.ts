@@ -1,4 +1,8 @@
-import { ConvictionApiError, type ApiErrorBody } from "./api-client.js";
+import {
+  ConvictionApiError,
+  type ApiErrorBody,
+  type ConvictionApiErrorDetails,
+} from "./api-client.js";
 import type { LocalWallet } from "./keystore.js";
 import { signAgentRequest } from "./signed-request.js";
 
@@ -33,30 +37,10 @@ export type LiveLease = {
   acquiredAt: string;
 };
 
-export type LeaseConflictDetails = {
-  activeLeaseId?: string;
-  activeLeaseExpiresAt?: string;
-  leaseAgeMs?: number;
-};
-
-export type QuoteApiErrorDetails = {
-  fields?: Array<{ field: string; code: string; message: string }>;
-  gateReport?: Array<{
-    id?: string;
-    name: string;
-    passed: boolean;
-    detail?: string;
-    evidenceUrl?: string;
-  }>;
-  preview?: {
-    dollarsIn: number;
-    dollarsOut: number;
-    feeUsd: number;
-    floorUsd: number;
-    sourceChain: string;
-    destChain: string;
-  };
-};
+export type QuoteApiErrorDetails = Pick<
+  ConvictionApiErrorDetails,
+  "fields" | "gateReport" | "preview"
+>;
 
 async function signedFetch<T>(options: {
   apiBaseUrl: string;
@@ -90,27 +74,32 @@ async function signedFetch<T>(options: {
   });
 
   const payload = (await response.json().catch(() => ({}))) as T &
-    ApiErrorBody &
-    LeaseConflictDetails & {
-      error?: LeaseConflictDetails &
-        QuoteApiErrorDetails & { code?: string; message?: string };
+    ApiErrorBody & {
+      error?: ConvictionApiErrorDetails & { code?: string; message?: string };
     };
 
   if (!response.ok) {
-    const error = new ConvictionApiError(
+    throw new ConvictionApiError(
       payload.error?.code ?? "unavailable",
       payload.error?.message ?? `Request failed with status ${response.status}`,
       response.status,
+      {
+        ...(payload.error?.activeLeaseId
+          ? { activeLeaseId: payload.error.activeLeaseId }
+          : {}),
+        ...(payload.error?.activeLeaseExpiresAt
+          ? { activeLeaseExpiresAt: payload.error.activeLeaseExpiresAt }
+          : {}),
+        ...(payload.error?.leaseAgeMs !== undefined
+          ? { leaseAgeMs: payload.error.leaseAgeMs }
+          : {}),
+        ...(payload.error?.fields ? { fields: payload.error.fields } : {}),
+        ...(payload.error?.gateReport
+          ? { gateReport: payload.error.gateReport }
+          : {}),
+        ...(payload.error?.preview ? { preview: payload.error.preview } : {}),
+      },
     );
-    Object.assign(error, {
-      activeLeaseId: payload.error?.activeLeaseId,
-      activeLeaseExpiresAt: payload.error?.activeLeaseExpiresAt,
-      leaseAgeMs: payload.error?.leaseAgeMs,
-      fields: payload.error?.fields,
-      gateReport: payload.error?.gateReport,
-      preview: payload.error?.preview,
-    });
-    throw error;
   }
 
   return payload;
@@ -209,7 +198,7 @@ export type LiveTradeQuote = {
   ok: true;
   quoteId: string;
   action: "trade";
-  intentFingerprint: string;
+  quoteFingerprint: string;
   issuedAt: string;
   serverTime: string;
   expiresAt: string;
@@ -223,7 +212,6 @@ export type LiveTradeQuote = {
   receivedSymbol?: string;
   sizeUsd: number;
   publicationIntent: boolean;
-  eligibleForExecution: boolean;
   gateReport?: QuoteApiErrorDetails["gateReport"];
   gateVersion?: string;
   targetFingerprint?: string;

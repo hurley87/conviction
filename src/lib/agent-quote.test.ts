@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgentQuoteError,
   MemoryAgentQuoteStore,
-  buildIntentFingerprint,
+  buildQuoteFingerprint,
   computeQuoteExpiresAt,
   getExecutableTradeQuote,
   issueTradeQuote,
@@ -28,9 +28,7 @@ const EMPTY_BALANCE: UniversalBalance = {
   sources: [],
 };
 
-function testAgent(
-  overrides: Partial<OwnedAgent> = {},
-): OwnedAgent {
+function testAgent(overrides: Partial<OwnedAgent> = {}): OwnedAgent {
   return {
     agentId: "00000000-0000-4000-8000-000000000054",
     ownerUserId: "did:privy:owner-quote",
@@ -68,7 +66,7 @@ describe("parseStructuredTradeQuoteInput", () => {
     });
   });
 
-  it("rejects caller-supplied token/contract fields", () => {
+  it("rejects caller-supplied token/contract fields via allowlist", () => {
     expect(() =>
       parseStructuredTradeQuoteInput({
         toAsset: "eth",
@@ -95,18 +93,26 @@ describe("parseStructuredTradeQuoteInput", () => {
     }
   });
 
+  it("rejects unknown non-token fields", () => {
+    expect(() =>
+      parseStructuredTradeQuoteInput({
+        toAsset: "eth",
+        sizeUsd: 20,
+        side: "buy",
+      }),
+    ).toThrow(expect.objectContaining({ code: "invalid_input" }));
+  });
+
   it("rejects toAsset token sentinel", () => {
     expect(() =>
       parseStructuredTradeQuoteInput({ toAsset: "token", sizeUsd: 10 }),
-    ).toThrow(
-      expect.objectContaining({ code: "arbitrary_token_rejected" }),
-    );
+    ).toThrow(expect.objectContaining({ code: "arbitrary_token_rejected" }));
   });
 
   it("requires exactly one of sizeUsd or fraction", () => {
-    expect(() =>
-      parseStructuredTradeQuoteInput({ toAsset: "eth" }),
-    ).toThrow(expect.objectContaining({ code: "invalid_input" }));
+    expect(() => parseStructuredTradeQuoteInput({ toAsset: "eth" })).toThrow(
+      expect.objectContaining({ code: "invalid_input" }),
+    );
 
     expect(() =>
       parseStructuredTradeQuoteInput({
@@ -148,17 +154,17 @@ describe("computeQuoteExpiresAt", () => {
   it("caps provider expiry at 60 seconds", () => {
     const issuedAt = FIXED_NOW;
     const provider = new Date(FIXED_NOW.getTime() + 120_000);
-    expect(computeQuoteExpiresAt({ issuedAt, providerExpiresAt: provider })).toEqual(
-      new Date(FIXED_NOW.getTime() + 60_000),
-    );
+    expect(
+      computeQuoteExpiresAt({ issuedAt, providerExpiresAt: provider }),
+    ).toEqual(new Date(FIXED_NOW.getTime() + 60_000));
   });
 
   it("honors provider expiry shorter than the cap", () => {
     const issuedAt = FIXED_NOW;
     const provider = new Date(FIXED_NOW.getTime() + 15_000);
-    expect(computeQuoteExpiresAt({ issuedAt, providerExpiresAt: provider })).toEqual(
-      provider,
-    );
+    expect(
+      computeQuoteExpiresAt({ issuedAt, providerExpiresAt: provider }),
+    ).toEqual(provider);
   });
 
   it("applies a default lifetime when provider omits expiry", () => {
@@ -177,7 +183,9 @@ describe("issueTradeQuote", () => {
     const quote = await issueTradeQuote({
       store,
       ua,
-      agent: testAgent({ actionPolicy: { trade: false, back: true, publish: true } }),
+      agent: testAgent({
+        actionPolicy: { trade: false, back: true, publish: true },
+      }),
       body: { toAsset: "eth", sizeUsd: 20, destChain: "Arbitrum" },
       now: () => FIXED_NOW,
       randomId: () => "00000000-0000-4000-8000-00000000q001",
@@ -190,7 +198,6 @@ describe("issueTradeQuote", () => {
       action: "trade",
       dollarsIn: 20,
       publicationIntent: false,
-      eligibleForExecution: true,
       destChain: "Arbitrum",
       toAsset: "eth",
       issuedAt: FIXED_NOW.toISOString(),
@@ -198,9 +205,8 @@ describe("issueTradeQuote", () => {
     });
     expect(quote.floorUsd).toBeCloseTo(quote.dollarsOut * 0.99, 5);
     expect(quote.feeUsd).toBeGreaterThan(0);
-    expect(quote.intentFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(quote.quoteFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(quote.sourceChain).toBeTruthy();
-    // quoteTrade was called once; executeTrade was not.
     expect(ua.tradeRecords.length).toBe(beforeTrades + 1);
   });
 
@@ -223,7 +229,6 @@ describe("issueTradeQuote", () => {
 
     expect(quote.ok).toBe(true);
     expect(quote.sizeUsd).toBe(12);
-    expect(quote.eligibleForExecution).toBe(true);
   });
 
   it("binds a passing publication gate to the quote", async () => {
@@ -288,7 +293,6 @@ describe("issueTradeQuote", () => {
       },
     });
 
-    // No quote persisted on gate failure.
     expect(await store.get("anything")).toBeNull();
   });
 
@@ -321,7 +325,7 @@ describe("issueTradeQuote", () => {
       getExecutableTradeQuote(store, {
         quoteId: quote.quoteId,
         agentId: testAgent().agentId,
-        intentFingerprint: "0".repeat(64),
+        quoteFingerprint: "0".repeat(64),
         now: () => FIXED_NOW,
       }),
     ).rejects.toMatchObject({ code: "quote_mismatch" });
@@ -329,7 +333,7 @@ describe("issueTradeQuote", () => {
     const ok = await getExecutableTradeQuote(store, {
       quoteId: quote.quoteId,
       agentId: testAgent().agentId,
-      intentFingerprint: quote.intentFingerprint,
+      quoteFingerprint: quote.quoteFingerprint,
       now: () => FIXED_NOW,
     });
     expect(ok.quoteId).toBe(quote.quoteId);
@@ -353,7 +357,7 @@ describe("issueTradeQuote", () => {
       getExecutableTradeQuote(store, {
         quoteId: quote.quoteId,
         agentId: testAgent().agentId,
-        intentFingerprint: quote.intentFingerprint,
+        quoteFingerprint: quote.quoteFingerprint,
         now: () => new Date(FIXED_NOW.getTime() + 11_000),
       }),
     ).rejects.toMatchObject({ code: "quote_expired" });
@@ -371,11 +375,17 @@ describe("issueTradeQuote", () => {
     );
     expect(source).not.toMatch(/\bparseIntentHeuristic\s*\(/);
     expect(
-      buildIntentFingerprint({
+      buildQuoteFingerprint({
         action: "trade",
         intent: { toAsset: "eth", destChain: "Arbitrum", sizeUsd: 10 },
         sizeUsd: 10,
         publicationIntent: false,
+        dollarsIn: 10,
+        dollarsOut: 9.9,
+        feeUsd: 0.1,
+        floorUsd: 9.801,
+        sourceChain: "Base",
+        destChain: "Arbitrum",
       }),
     ).toMatch(/^[a-f0-9]{64}$/);
   });

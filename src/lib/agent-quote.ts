@@ -9,8 +9,9 @@ import type { WarmUpRouteResult, WarmUpToken } from "@/lib/ua/warm-up";
 import type { UAClient } from "@/lib/ua/types";
 import {
   assetMatches,
-  isBuyOnlyAsset,
   isProductAsset,
+  productAssetSettlesOn,
+  productTradePairError,
   toUaTokenType,
 } from "@/lib/verbs/assets";
 import { destChainId, isDestChain, tokenAddress } from "@/lib/verbs/chains";
@@ -46,6 +47,15 @@ export const MCP_TRADE_ASSETS = [
 
 export type McpTradeAsset = (typeof MCP_TRADE_ASSETS)[number];
 
+const ALLOWED_INPUT_KEYS = new Set([
+  "toAsset",
+  "fromAsset",
+  "sizeUsd",
+  "fraction",
+  "destChain",
+  "publicationIntent",
+]);
+
 export type StructuredTradeQuoteInput = {
   toAsset: McpTradeAsset;
   fromAsset?: McpTradeAsset;
@@ -59,7 +69,8 @@ export type AgentTradeQuoteRecord = {
   quoteId: string;
   agentId: string;
   action: "trade";
-  intentFingerprint: string;
+  /** Binds intent + quoted economics so execute cannot swap changed terms. */
+  quoteFingerprint: string;
   intent: TradeIntent;
   sizeUsd: number;
   publicationIntent: boolean;
@@ -82,14 +93,13 @@ export type AgentTradeQuoteRecord = {
   gateVersion?: string;
   targetFingerprint?: string;
   gateExpiresAt?: string;
-  eligibleForExecution: boolean;
 };
 
 export type AgentTradeQuoteResponse = {
   ok: true;
   quoteId: string;
   action: "trade";
-  intentFingerprint: string;
+  quoteFingerprint: string;
   issuedAt: string;
   serverTime: string;
   expiresAt: string;
@@ -103,7 +113,6 @@ export type AgentTradeQuoteResponse = {
   receivedSymbol?: string;
   sizeUsd: number;
   publicationIntent: boolean;
-  eligibleForExecution: boolean;
   gateReport?: GateCheck[];
   gateVersion?: string;
   targetFingerprint?: string;
@@ -175,6 +184,7 @@ export type AgentQuoteStore = {
   get(quoteId: string): Promise<AgentTradeQuoteRecord | null>;
 };
 
+/** In-memory quote store for tests and local mock mode (no DATABASE_URL). */
 export class MemoryAgentQuoteStore implements AgentQuoteStore {
   private readonly records = new Map<string, AgentTradeQuoteRecord>();
 
@@ -188,29 +198,10 @@ export class MemoryAgentQuoteStore implements AgentQuoteStore {
     return this.records.get(quoteId) ?? null;
   }
 
-  /** Test helper. */
   clear(): void {
     this.records.clear();
   }
 }
-
-const FORBIDDEN_INPUT_KEYS = [
-  "token",
-  "address",
-  "contract",
-  "contractAddress",
-  "tokenAddress",
-  "tokenRef",
-  "chainId",
-  "side",
-  "asset",
-  "dollarsIn",
-  "publish",
-  "text",
-  "prompt",
-  "instruction",
-  "naturalLanguage",
-] as const;
 
 function isMcpTradeAsset(value: unknown): value is McpTradeAsset {
   return (
@@ -254,30 +245,97 @@ export function computeQuoteExpiresAt(input: {
     input.defaultTtlMs ?? QUOTE_DEFAULT_TTL_MS,
     maxTtlMs,
   );
-  const cap = new Date(input.issuedAt.getTime() + maxTtlMs);
-  const fallback = new Date(input.issuedAt.getTime() + defaultTtlMs);
-  if (!input.providerExpiresAt) return fallback.getTime() < cap.getTime() ? fallback : cap;
-  const provider = input.providerExpiresAt;
-  return provider.getTime() < cap.getTime() ? provider : cap;
+  const capMs = input.issuedAt.getTime() + maxTtlMs;
+  const providerMs =
+    input.providerExpiresAt?.getTime() ??
+    input.issuedAt.getTime() + defaultTtlMs;
+  return new Date(Math.min(providerMs, capMs));
+}
+
+/** Single fingerprint binding structured intent + quoted economics. */
+export function buildQuoteFingerprint(input: {
+  action: "trade";
+  intent: TradeIntent;
+  sizeUsd: number;
+  publicationIntent: boolean;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  floorUsd: number;
+  sourceChain: string;
+  destChain: DestChain;
+}): string {
+  return hashFingerprint({
+    action: input.action,
+    fromAsset: input.intent.fromAsset ?? null,
+    toAsset: input.intent.toAsset,
+    sizeUsd: input.sizeUsd,
+    destChain: input.destChain,
+    publicationIntent: input.publicationIntent,
+    dollarsIn: input.dollarsIn,
+    dollarsOut: input.dollarsOut,
+    feeUsd: input.feeUsd,
+    floorUsd: input.floorUsd,
+    sourceChain: input.sourceChain,
+  });
+}
+
+export function toQuoteResponse(
+  record: AgentTradeQuoteRecord,
+  serverTime: string,
+): AgentTradeQuoteResponse {
+  return {
+    ok: true,
+    quoteId: record.quoteId,
+    action: "trade",
+    quoteFingerprint: record.quoteFingerprint,
+    issuedAt: record.issuedAt,
+    serverTime,
+    expiresAt: record.expiresAt,
+    dollarsIn: record.dollarsIn,
+    dollarsOut: record.dollarsOut,
+    feeUsd: record.feeUsd,
+    floorUsd: record.floorUsd,
+    sourceChain: record.sourceChain,
+    destChain: record.destChain,
+    toAsset: record.toAsset,
+    ...(record.receivedSymbol ? { receivedSymbol: record.receivedSymbol } : {}),
+    sizeUsd: record.sizeUsd,
+    publicationIntent: record.publicationIntent,
+    ...(record.gateReport ? { gateReport: record.gateReport } : {}),
+    ...(record.gateVersion ? { gateVersion: record.gateVersion } : {}),
+    ...(record.targetFingerprint
+      ? { targetFingerprint: record.targetFingerprint }
+      : {}),
+  };
 }
 
 /**
  * Parse and validate structured MCP trade fields.
- * Never calls parseIntentHeuristic / LLM parsers.
+ * Allowlisted keys only — unknown fields are rejected.
  */
 export function parseStructuredTradeQuoteInput(
   body: Record<string, unknown>,
 ): StructuredTradeQuoteInput {
-  const forbidden = FORBIDDEN_INPUT_KEYS.filter((key) => key in body);
-  if (forbidden.length > 0) {
+  const unknownKeys = Object.keys(body).filter(
+    (key) => !ALLOWED_INPUT_KEYS.has(key),
+  );
+  if (unknownKeys.length > 0) {
+    const looksLikeToken = unknownKeys.some((key) =>
+      /token|address|contract|chainId/i.test(key),
+    );
     throw new AgentQuoteError(
-      "arbitrary_token_rejected",
-      "Direct MCP trades accept named product assets only. Contract addresses and TokenRef fields are rejected.",
+      looksLikeToken ? "arbitrary_token_rejected" : "invalid_input",
+      looksLikeToken
+        ? "Direct MCP trades accept named product assets only. Contract addresses and TokenRef fields are rejected."
+        : "Structured trade fields include unsupported keys.",
       {
-        fields: forbidden.map((field) => ({
+        fields: unknownKeys.map((field) => ({
           field,
-          code: "forbidden_field",
-          message: `Remove "${field}". Use a named product asset (cash, eth, usdc, …) instead.`,
+          code: looksLikeToken ? "forbidden_field" : "unknown_field",
+          message: looksLikeToken
+            ? `Remove "${field}". Use a named product asset (cash, eth, usdc, …) instead.`
+            : `Unknown field "${field}". Supported: ${[...ALLOWED_INPUT_KEYS].join(", ")}.`,
         })),
       },
     );
@@ -289,7 +347,7 @@ export function parseStructuredTradeQuoteInput(
     fields.push({
       field: "toAsset",
       code: "required",
-      message: "Provide toAsset as a named product asset (e.g. \"eth\" or \"cash\").",
+      message: 'Provide toAsset as a named product asset (e.g. "eth" or "cash").',
     });
   } else if (!isMcpTradeAsset(body.toAsset)) {
     if (body.toAsset === "token" || isProductAsset(body.toAsset)) {
@@ -324,7 +382,7 @@ export function parseStructuredTradeQuoteInput(
   }
 
   let fromAsset: McpTradeAsset | undefined;
-  if ("fromAsset" in body && body.fromAsset !== undefined) {
+  if (body.fromAsset !== undefined) {
     if (!isMcpTradeAsset(body.fromAsset)) {
       throw new AgentQuoteError(
         "unsupported_asset",
@@ -393,7 +451,7 @@ export function parseStructuredTradeQuoteInput(
   }
 
   let destChain: DestChain | undefined;
-  if ("destChain" in body && body.destChain !== undefined) {
+  if (body.destChain !== undefined) {
     if (!isDestChain(body.destChain)) {
       fields.push({
         field: "destChain",
@@ -406,7 +464,7 @@ export function parseStructuredTradeQuoteInput(
   }
 
   let publicationIntent = false;
-  if ("publicationIntent" in body && body.publicationIntent !== undefined) {
+  if (body.publicationIntent !== undefined) {
     if (typeof body.publicationIntent !== "boolean") {
       fields.push({
         field: "publicationIntent",
@@ -418,7 +476,7 @@ export function parseStructuredTradeQuoteInput(
     }
   }
 
-  if (fields.length > 0) {
+  if (fields.length > 0 || !isMcpTradeAsset(body.toAsset)) {
     throw new AgentQuoteError(
       "invalid_input",
       "Structured trade fields failed validation. Fix the listed fields and retry.",
@@ -427,7 +485,7 @@ export function parseStructuredTradeQuoteInput(
   }
 
   return {
-    toAsset: body.toAsset as McpTradeAsset,
+    toAsset: body.toAsset,
     ...(fromAsset ? { fromAsset } : {}),
     ...(sizeUsd != null ? { sizeUsd } : {}),
     ...(fraction != null ? { fraction } : {}),
@@ -447,36 +505,17 @@ export function validateStructuredTradeForQuote(
   const toAsset = input.toAsset;
   const fromAsset = input.fromAsset;
 
-  if (fromAsset && isBuyOnlyAsset(fromAsset)) {
-    throw new AgentQuoteError(
-      "invalid_input",
-      `${fromAsset.toUpperCase()} can only be bought for now, not sold.`,
-      {
-        fields: [
-          {
-            field: "fromAsset",
-            code: "buy_only",
-            message: `${fromAsset.toUpperCase()} cannot fund a trade.`,
-          },
-        ],
-      },
-    );
-  }
-
-  if (fromAsset && isBuyOnlyAsset(toAsset)) {
-    throw new AgentQuoteError(
-      "invalid_input",
-      `Buy ${toAsset.toUpperCase()} with cash instead — converting another asset into it isn't supported yet.`,
-      {
-        fields: [
-          {
-            field: "fromAsset",
-            code: "invalid_pair",
-            message: `Omit fromAsset or use cash when buying ${toAsset.toUpperCase()}.`,
-          },
-        ],
-      },
-    );
+  const pairError = productTradePairError(fromAsset, toAsset);
+  if (pairError) {
+    throw new AgentQuoteError("invalid_input", pairError, {
+      fields: [
+        {
+          field: "fromAsset",
+          code: "invalid_pair",
+          message: pairError,
+        },
+      ],
+    });
   }
 
   const destChain =
@@ -485,7 +524,7 @@ export function validateStructuredTradeForQuote(
       ? pickSettlementChain(toAsset, balance)
       : DEFAULT_DEST_CHAIN);
 
-  if (!tokenAddress(toUaTokenType(toAsset), destChainId(destChain))) {
+  if (!productAssetSettlesOn(toAsset, destChain)) {
     throw new AgentQuoteError(
       "unsupported_asset",
       "That destination isn't supported on the chosen settlement chain yet.",
@@ -549,42 +588,15 @@ export function validateStructuredTradeForQuote(
     );
   }
 
-  const intent: TradeIntent = {
-    toAsset,
-    destChain,
+  return {
+    intent: {
+      toAsset,
+      destChain,
+      sizeUsd,
+      ...(fromAsset ? { fromAsset } : {}),
+    },
     sizeUsd,
-    ...(fromAsset ? { fromAsset } : {}),
   };
-
-  return { intent, sizeUsd };
-}
-
-export function buildIntentFingerprint(input: {
-  action: "trade";
-  intent: TradeIntent;
-  sizeUsd: number;
-  publicationIntent: boolean;
-}): string {
-  return hashFingerprint({
-    action: input.action,
-    fromAsset: input.intent.fromAsset ?? null,
-    toAsset: input.intent.toAsset,
-    sizeUsd: input.sizeUsd,
-    destChain: input.intent.destChain,
-    publicationIntent: input.publicationIntent,
-  });
-}
-
-export function buildQuoteTermsFingerprint(input: {
-  intentFingerprint: string;
-  dollarsIn: number;
-  dollarsOut: number;
-  feeUsd: number;
-  floorUsd: number;
-  sourceChain: string;
-  destChain: DestChain;
-}): string {
-  return hashFingerprint(input);
 }
 
 function assertQuoteEligibleLifecycle(agent: OwnedAgent): void {
@@ -711,18 +723,11 @@ export async function issueTradeQuote(
   }).toISOString();
 
   const publicationIntent = parsed.publicationIntent === true;
-  const intentFingerprint = buildIntentFingerprint({
-    action: "trade",
-    intent,
-    sizeUsd,
-    publicationIntent,
-  });
 
   let gateReport: GateCheck[] | undefined;
   let gateVersion: string | undefined;
   let targetFingerprint: string | undefined;
   let gateExpiresAt: string | undefined;
-  const eligibleForExecution = true;
 
   if (publicationIntent) {
     const checkRouter =
@@ -759,9 +764,11 @@ export async function issueTradeQuote(
     }
   }
 
-  // Terms fingerprint binds quote economics so execute cannot swap changed terms.
-  const termsFingerprint = buildQuoteTermsFingerprint({
-    intentFingerprint,
+  const quoteFingerprint = buildQuoteFingerprint({
+    action: "trade",
+    intent,
+    sizeUsd,
+    publicationIntent,
     dollarsIn: tradeQuote.dollarsIn,
     dollarsOut: tradeQuote.dollarsOut,
     feeUsd: tradeQuote.feeUsd,
@@ -770,12 +777,11 @@ export async function issueTradeQuote(
     destChain: tradeQuote.destChain,
   });
 
-  const quoteId = options.randomId?.() ?? randomUUID();
   const record: AgentTradeQuoteRecord = {
-    quoteId,
+    quoteId: options.randomId?.() ?? randomUUID(),
     agentId: options.agent.agentId,
     action: "trade",
-    intentFingerprint: termsFingerprint,
+    quoteFingerprint,
     intent,
     sizeUsd,
     publicationIntent,
@@ -795,7 +801,6 @@ export async function issueTradeQuote(
     issuedAt,
     expiresAt,
     used: false,
-    eligibleForExecution,
     ...(gateReport ? { gateReport } : {}),
     ...(gateVersion ? { gateVersion } : {}),
     ...(targetFingerprint ? { targetFingerprint } : {}),
@@ -803,32 +808,7 @@ export async function issueTradeQuote(
   };
 
   await options.store.save(record);
-
-  return {
-    ok: true,
-    quoteId: record.quoteId,
-    action: "trade",
-    intentFingerprint: record.intentFingerprint,
-    issuedAt: record.issuedAt,
-    serverTime: issuedAt,
-    expiresAt: record.expiresAt,
-    dollarsIn: record.dollarsIn,
-    dollarsOut: record.dollarsOut,
-    feeUsd: record.feeUsd,
-    floorUsd: record.floorUsd,
-    sourceChain: record.sourceChain,
-    destChain: record.destChain,
-    toAsset: record.toAsset,
-    ...(record.receivedSymbol ? { receivedSymbol: record.receivedSymbol } : {}),
-    sizeUsd: record.sizeUsd,
-    publicationIntent: record.publicationIntent,
-    eligibleForExecution: record.eligibleForExecution,
-    ...(record.gateReport ? { gateReport: record.gateReport } : {}),
-    ...(record.gateVersion ? { gateVersion: record.gateVersion } : {}),
-    ...(record.targetFingerprint
-      ? { targetFingerprint: record.targetFingerprint }
-      : {}),
-  };
+  return toQuoteResponse(record, issuedAt);
 }
 
 /** Lookup helper for later execute (#55) — enforces expiry and fingerprint. */
@@ -837,7 +817,7 @@ export async function getExecutableTradeQuote(
   input: {
     quoteId: string;
     agentId: string;
-    intentFingerprint: string;
+    quoteFingerprint: string;
     now?: () => Date;
   },
 ): Promise<AgentTradeQuoteRecord> {
@@ -855,16 +835,16 @@ export async function getExecutableTradeQuote(
       `Quote ${record.quoteId} expired at ${record.expiresAt}. Call conviction_quote_trade again for a fresh quoteId.`,
     );
   }
-  if (record.intentFingerprint !== input.intentFingerprint) {
+  if (record.quoteFingerprint !== input.quoteFingerprint) {
     throw new AgentQuoteError(
       "quote_mismatch",
       "The quote fingerprint does not match the stored terms. Request a new quote.",
     );
   }
-  if (!record.eligibleForExecution || record.used) {
+  if (record.used) {
     throw new AgentQuoteError(
       "quote_mismatch",
-      "That quote is not eligible for execution.",
+      "That quote has already been consumed.",
     );
   }
   if (record.publicationIntent && !record.gateReport) {

@@ -3,7 +3,8 @@
 // wrapped variants). Both the intent validator and the trade payload builder
 // read from here so adding an asset or alias is a one-line table edit.
 
-import type { ProductAsset } from "@/lib/verbs/types";
+import type { DestChain, ProductAsset } from "@/lib/verbs/types";
+import { destChainId, tokenAddress } from "@/lib/verbs/chains";
 
 type AssetInfo = {
   /** UA SUPPORTED_TOKEN_TYPE string (or our own key for buy-only tokens). */
@@ -58,6 +59,31 @@ export function toUaTokenType(asset: ProductAsset): string {
 /** True when an asset can only be bought, never sold or converted into. */
 export function isBuyOnlyAsset(asset: ProductAsset): boolean {
   return ASSETS[asset]?.buyOnly === true;
+}
+
+/**
+ * Funds-independent product-asset pair rules shared by the concierge validator
+ * and MCP research quoting. Returns a friendly error, or null when the pair is ok.
+ */
+export function productTradePairError(
+  fromAsset: ProductAsset | undefined,
+  toAsset: ProductAsset,
+): string | null {
+  if (fromAsset && isBuyOnlyAsset(fromAsset)) {
+    return `${fromAsset.toUpperCase()} can only be bought for now, not sold.`;
+  }
+  if (fromAsset && isBuyOnlyAsset(toAsset)) {
+    return `Buy ${toAsset.toUpperCase()} with cash instead — converting another asset into it isn't supported yet.`;
+  }
+  return null;
+}
+
+/** True when the product asset has a known settlement address on destChain. */
+export function productAssetSettlesOn(
+  toAsset: ProductAsset,
+  destChain: DestChain,
+): boolean {
+  return Boolean(tokenAddress(toUaTokenType(toAsset), destChainId(destChain)));
 }
 
 /** Assets accepted by Particle v2's usePrimaryTokens source selector. */

@@ -235,7 +235,7 @@ describe("createLiveServer", () => {
             ok: true,
             quoteId: "00000000-0000-4000-8000-00000000q100",
             action: "trade",
-            intentFingerprint: "a".repeat(64),
+            quoteFingerprint: "a".repeat(64),
             issuedAt: "2026-07-17T12:00:00.000Z",
             serverTime: "2026-07-17T12:00:00.000Z",
             expiresAt: "2026-07-17T12:01:00.000Z",
@@ -248,7 +248,6 @@ describe("createLiveServer", () => {
             toAsset: "eth",
             sizeUsd: 20,
             publicationIntent: false,
-            eligibleForExecution: true,
           },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -299,7 +298,7 @@ describe("createLiveServer", () => {
       dollarsIn: 20,
       floorUsd: 19.701,
       destChain: "Arbitrum",
-      intentFingerprint: "a".repeat(64),
+      quoteFingerprint: "a".repeat(64),
     });
   });
 

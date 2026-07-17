@@ -5,7 +5,12 @@ import {
   type AgentQuoteStore,
   type AgentTradeQuoteRecord,
 } from "@/lib/agent-quote";
-import type { DestChain, GateCheck, ProductAsset, TradeIntent } from "@/lib/verbs/types";
+import type {
+  DestChain,
+  GateCheck,
+  ProductAsset,
+  TradeIntent,
+} from "@/lib/verbs/types";
 
 const memoryStore = new MemoryAgentQuoteStore();
 let neonSchemaReady = false;
@@ -14,7 +19,7 @@ type QuoteRow = {
   quote_id: string;
   agent_id: string;
   action: string;
-  intent_fingerprint: string;
+  quote_fingerprint: string;
   intent: unknown;
   size_usd: string | number;
   publication_intent: boolean;
@@ -32,7 +37,6 @@ type QuoteRow = {
   issued_at: string;
   expires_at: string;
   used: boolean;
-  eligible_for_execution: boolean;
   gate_report: unknown;
   gate_version: string | null;
   target_fingerprint: string | null;
@@ -48,7 +52,7 @@ function recordFromRow(row: QuoteRow): AgentTradeQuoteRecord {
     quoteId: row.quote_id,
     agentId: row.agent_id,
     action: "trade",
-    intentFingerprint: row.intent_fingerprint,
+    quoteFingerprint: row.quote_fingerprint,
     intent: row.intent as TradeIntent,
     sizeUsd: num(row.size_usd),
     publicationIntent: row.publication_intent,
@@ -68,7 +72,6 @@ function recordFromRow(row: QuoteRow): AgentTradeQuoteRecord {
     issuedAt: new Date(row.issued_at).toISOString(),
     expiresAt: new Date(row.expires_at).toISOString(),
     used: row.used,
-    eligibleForExecution: row.eligible_for_execution,
     ...(Array.isArray(row.gate_report)
       ? { gateReport: row.gate_report as GateCheck[] }
       : {}),
@@ -92,7 +95,7 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
         quote_id uuid PRIMARY KEY,
         agent_id uuid NOT NULL,
         action text NOT NULL CHECK (action = 'trade'),
-        intent_fingerprint text NOT NULL,
+        quote_fingerprint text NOT NULL,
         intent jsonb NOT NULL,
         size_usd numeric NOT NULL,
         publication_intent boolean NOT NULL DEFAULT false,
@@ -110,7 +113,6 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
         issued_at timestamptz NOT NULL,
         expires_at timestamptz NOT NULL,
         used boolean NOT NULL DEFAULT false,
-        eligible_for_execution boolean NOT NULL DEFAULT true,
         gate_report jsonb,
         gate_version text,
         target_fingerprint text,
@@ -131,7 +133,7 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
         quote_id,
         agent_id,
         action,
-        intent_fingerprint,
+        quote_fingerprint,
         intent,
         size_usd,
         publication_intent,
@@ -149,7 +151,6 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
         issued_at,
         expires_at,
         used,
-        eligible_for_execution,
         gate_report,
         gate_version,
         target_fingerprint,
@@ -158,7 +159,7 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
         ${record.quoteId}::uuid,
         ${record.agentId}::uuid,
         ${record.action},
-        ${record.intentFingerprint},
+        ${record.quoteFingerprint},
         ${JSON.stringify(record.intent)}::jsonb,
         ${record.sizeUsd},
         ${record.publicationIntent},
@@ -176,7 +177,6 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
         ${record.issuedAt}::timestamptz,
         ${record.expiresAt}::timestamptz,
         ${record.used},
-        ${record.eligibleForExecution},
         ${record.gateReport ? JSON.stringify(record.gateReport) : null}::jsonb,
         ${record.gateVersion ?? null},
         ${record.targetFingerprint ?? null},

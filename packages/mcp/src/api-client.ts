@@ -19,11 +19,34 @@ export type ApiErrorBody = {
   error?: { code?: string; message?: string };
 };
 
+export type ConvictionApiErrorDetails = {
+  activeLeaseId?: string;
+  activeLeaseExpiresAt?: string;
+  leaseAgeMs?: number;
+  fields?: Array<{ field: string; code: string; message: string }>;
+  gateReport?: Array<{
+    id?: string;
+    name: string;
+    passed: boolean;
+    detail?: string;
+    evidenceUrl?: string;
+  }>;
+  preview?: {
+    dollarsIn: number;
+    dollarsOut: number;
+    feeUsd: number;
+    floorUsd: number;
+    sourceChain: string;
+    destChain: string;
+  };
+};
+
 export class ConvictionApiError extends Error {
   constructor(
     public readonly code: string,
     message: string,
     public readonly status: number,
+    public readonly details: ConvictionApiErrorDetails = {},
   ) {
     super(message);
     this.name = "ConvictionApiError";
