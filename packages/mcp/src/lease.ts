@@ -10,6 +10,9 @@ import {
 /** Renew slightly before half the default 120s backend TTL. */
 export const DEFAULT_LEASE_HEARTBEAT_MS = 40_000;
 
+/** Transient renew failures allowed before fail-closed shutdown. */
+export const MAX_TRANSIENT_RENEW_FAILURES = 3;
+
 export type LeaseLostReason =
   | "lease_conflict"
   | "lease_expired"
@@ -19,6 +22,7 @@ export type LeaseLostReason =
 export class LeaseHandle {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lost = false;
+  private consecutiveTransientFailures = 0;
   private onLostCallbacks: Array<(reason: LeaseLostReason, error?: Error) => void> =
     [];
 
@@ -29,6 +33,8 @@ export class LeaseHandle {
       wallet: LocalWallet;
       fetchImpl?: typeof fetch;
       heartbeatMs?: number;
+      maxTransientFailures?: number;
+      now?: () => number;
     },
   ) {}
 
@@ -42,6 +48,13 @@ export class LeaseHandle {
 
   get isLost(): boolean {
     return this.lost;
+  }
+
+  /** True while the local process still believes it holds a non-expired lease. */
+  get isActive(): boolean {
+    if (this.lost) return false;
+    const now = this.options.now?.() ?? Date.now();
+    return new Date(this.lease.expiresAt).getTime() > now;
   }
 
   onLost(callback: (reason: LeaseLostReason, error?: Error) => void): void {
@@ -86,6 +99,7 @@ export class LeaseHandle {
           ? { fetchImpl: this.options.fetchImpl }
           : {}),
       });
+      this.consecutiveTransientFailures = 0;
     } catch (error) {
       if (error instanceof ConvictionApiError) {
         if (error.code === "lease_conflict") {
@@ -97,9 +111,24 @@ export class LeaseHandle {
           return;
         }
       }
-      this.markLost(
-        "renewal_failed",
-        error instanceof Error ? error : new Error(String(error)),
+
+      this.consecutiveTransientFailures += 1;
+      const now = this.options.now?.() ?? Date.now();
+      const expiredLocally =
+        new Date(this.lease.expiresAt).getTime() <= now;
+      const maxFailures =
+        this.options.maxTransientFailures ?? MAX_TRANSIENT_RENEW_FAILURES;
+
+      if (expiredLocally || this.consecutiveTransientFailures >= maxFailures) {
+        this.markLost(
+          "renewal_failed",
+          error instanceof Error ? error : new Error(String(error)),
+        );
+        return;
+      }
+
+      console.error(
+        `Conviction MCP: transient lease renew failure (${this.consecutiveTransientFailures}/${maxFailures}); will retry.`,
       );
     }
   }

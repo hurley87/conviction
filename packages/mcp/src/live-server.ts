@@ -88,7 +88,6 @@ const accountStatusOutputSchema = {
   lifetimeSpendUsd: z.number(),
   remainingBudgetUsd: z.number(),
   fundingReady: z.boolean(),
-  funded: z.boolean(),
 };
 
 export type CreateLiveServerOptions = {
@@ -120,7 +119,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
   );
 
   const requireLease = () => {
-    if (options.lease.isLost) return leaseLostResult();
+    if (!options.lease.isActive) return leaseLostResult();
     return null;
   };
 

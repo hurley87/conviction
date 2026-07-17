@@ -239,6 +239,8 @@ export type StoredAgentLease = {
   leaseId: string;
   agentId: string;
   expiresAt: string;
+  /** Set when the lease is first acquired; preserved across renewals. */
+  acquiredAt: string;
 };
 
 export type AgentProvisioningStore = {
@@ -260,6 +262,7 @@ export type AgentProvisioningStore = {
     agentId: string;
     leaseId: string;
     expiresAt: string;
+    acquiredAt: string;
     now: Date;
     replace?: boolean;
   }): Promise<StoredAgentLease>;
@@ -660,6 +663,14 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
     agentId: string,
     now: Date,
   ): Promise<StoredAgentLease | null> {
+    return this.readActiveLeaseSync(agentId, now);
+  }
+
+  /** Synchronous lease read used to keep acquire check-and-set atomic in-memory. */
+  private readActiveLeaseSync(
+    agentId: string,
+    now: Date,
+  ): StoredAgentLease | null {
     const lease = this.leases.get(agentId);
     if (!lease) return null;
     if (new Date(lease.expiresAt).getTime() <= now.getTime()) {
@@ -673,9 +684,11 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
     agentId: string;
     leaseId: string;
     expiresAt: string;
+    acquiredAt: string;
     now: Date;
     replace?: boolean;
   }): Promise<StoredAgentLease> {
+    // Keep check + set in one synchronous turn so concurrent acquires cannot both win.
     const exists = this.records.some(
       ({ agent }) => agent.agentId === input.agentId,
     );
@@ -686,7 +699,7 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
       );
     }
 
-    const active = await this.getActiveLease(input.agentId, input.now);
+    const active = this.readActiveLeaseSync(input.agentId, input.now);
     if (active && active.leaseId !== input.leaseId && !input.replace) {
       throw leaseConflictError(active, input.now);
     }
@@ -695,6 +708,10 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
       leaseId: input.leaseId,
       agentId: input.agentId,
       expiresAt: input.expiresAt,
+      acquiredAt:
+        active && active.leaseId === input.leaseId
+          ? active.acquiredAt
+          : input.acquiredAt,
     };
     this.leases.set(input.agentId, lease);
     return lease;
@@ -706,7 +723,7 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
     expiresAt: string;
     now: Date;
   }): Promise<StoredAgentLease> {
-    const active = await this.getActiveLease(input.agentId, input.now);
+    const active = this.readActiveLeaseSync(input.agentId, input.now);
     if (!active) {
       throw new AgentLeaseError(
         "lease_expired",
@@ -727,6 +744,7 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
       leaseId: input.leaseId,
       agentId: input.agentId,
       expiresAt: input.expiresAt,
+      acquiredAt: active.acquiredAt,
     };
     this.leases.set(input.agentId, lease);
     return lease;

@@ -1,3 +1,4 @@
+import { parseAgentJsonObject } from "@/lib/agent-api-body";
 import {
   AgentLeaseError,
   leaseErrorStatus,
@@ -23,9 +24,7 @@ export async function POST(request: Request) {
       nonceStore: getAgentNonceStore(),
     });
 
-    const parsed = rawBody.trim()
-      ? (JSON.parse(rawBody) as { leaseId?: unknown })
-      : {};
+    const parsed = parseAgentJsonObject(rawBody);
     const leaseId =
       typeof parsed.leaseId === "string" ? parsed.leaseId.trim() : "";
     if (!leaseId) {

@@ -54,6 +54,10 @@ async function ensureSchema(sql: NonNullable<ReturnType<typeof getSql>>) {
       ADD COLUMN IF NOT EXISTS funding_ready boolean NOT NULL DEFAULT false
   `;
   await sql`
+    ALTER TABLE agents
+      ADD COLUMN IF NOT EXISTS active_lease_acquired_at timestamptz
+  `;
+  await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS agents_handle_unique
       ON agents (lower(handle))
   `;
@@ -389,7 +393,7 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
   ): Promise<StoredAgentLease | null> {
     await ensureSchema(this.sql);
     const rows = await this.sql`
-      SELECT active_lease_id, active_lease_expires_at
+      SELECT active_lease_id, active_lease_expires_at, active_lease_acquired_at
       FROM agents
       WHERE agent_id = ${agentId}
       LIMIT 1
@@ -398,23 +402,34 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
       | {
           active_lease_id: string | null;
           active_lease_expires_at: string | null;
+          active_lease_acquired_at: string | null;
         }
       | undefined;
     if (!row?.active_lease_id || !row.active_lease_expires_at) return null;
     if (new Date(row.active_lease_expires_at).getTime() <= now.getTime()) {
       await this.sql`
         UPDATE agents
-        SET active_lease_id = NULL, active_lease_expires_at = NULL
+        SET
+          active_lease_id = NULL,
+          active_lease_expires_at = NULL,
+          active_lease_acquired_at = NULL
         WHERE agent_id = ${agentId}
           AND active_lease_expires_at IS NOT NULL
           AND active_lease_expires_at <= ${now.toISOString()}::timestamptz
       `;
       return null;
     }
+    const acquiredAt = row.active_lease_acquired_at
+      ? new Date(String(row.active_lease_acquired_at)).toISOString()
+      : new Date(
+          new Date(String(row.active_lease_expires_at)).getTime() -
+            120_000,
+        ).toISOString();
     return {
       leaseId: String(row.active_lease_id),
       agentId,
       expiresAt: new Date(String(row.active_lease_expires_at)).toISOString(),
+      acquiredAt,
     };
   }
 
@@ -422,10 +437,50 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     agentId: string;
     leaseId: string;
     expiresAt: string;
+    acquiredAt: string;
     now: Date;
     replace?: boolean;
   }): Promise<StoredAgentLease> {
     await ensureSchema(this.sql);
+    const nowIso = input.now.toISOString();
+    const replace = input.replace === true;
+
+    // Atomic claim: only one concurrent acquire can satisfy the WHERE clause.
+    const updated = await this.sql`
+      UPDATE agents
+      SET
+        active_lease_id = ${input.leaseId},
+        active_lease_expires_at = ${input.expiresAt}::timestamptz,
+        active_lease_acquired_at = CASE
+          WHEN active_lease_id = ${input.leaseId}
+            AND active_lease_acquired_at IS NOT NULL
+          THEN active_lease_acquired_at
+          ELSE ${input.acquiredAt}::timestamptz
+        END
+      WHERE agent_id = ${input.agentId}
+        AND (
+          ${replace}
+          OR active_lease_id IS NULL
+          OR active_lease_expires_at IS NULL
+          OR active_lease_expires_at <= ${nowIso}::timestamptz
+          OR active_lease_id = ${input.leaseId}
+        )
+      RETURNING active_lease_id, active_lease_expires_at, active_lease_acquired_at
+    `;
+
+    if (updated[0]) {
+      const row = updated[0] as {
+        active_lease_acquired_at: string | null;
+      };
+      return {
+        leaseId: input.leaseId,
+        agentId: input.agentId,
+        expiresAt: input.expiresAt,
+        acquiredAt: row.active_lease_acquired_at
+          ? new Date(String(row.active_lease_acquired_at)).toISOString()
+          : input.acquiredAt,
+      };
+    }
 
     const exists = await this.sql`
       SELECT 1 FROM agents WHERE agent_id = ${input.agentId} LIMIT 1
@@ -438,29 +493,13 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     }
 
     const active = await this.getActiveLease(input.agentId, input.now);
-    if (active && active.leaseId !== input.leaseId && !input.replace) {
+    if (active) {
       throw leaseConflictError(active, input.now);
     }
-
-    const updated = await this.sql`
-      UPDATE agents
-      SET
-        active_lease_id = ${input.leaseId},
-        active_lease_expires_at = ${input.expiresAt}::timestamptz
-      WHERE agent_id = ${input.agentId}
-      RETURNING active_lease_id, active_lease_expires_at
-    `;
-    if (!updated[0]) {
-      throw new AgentLeaseError(
-        "agent_not_found",
-        "No agent matches that identity.",
-      );
-    }
-    return {
-      leaseId: input.leaseId,
-      agentId: input.agentId,
-      expiresAt: input.expiresAt,
-    };
+    throw new AgentLeaseError(
+      "lease_conflict",
+      "Could not acquire the MCP lease. Retry shortly.",
+    );
   }
 
   async renewLease(input: {
@@ -478,13 +517,19 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
         AND active_lease_id = ${input.leaseId}
         AND active_lease_expires_at IS NOT NULL
         AND active_lease_expires_at > ${input.now.toISOString()}::timestamptz
-      RETURNING active_lease_id, active_lease_expires_at
+      RETURNING active_lease_id, active_lease_expires_at, active_lease_acquired_at
     `;
     if (updated[0]) {
+      const row = updated[0] as {
+        active_lease_acquired_at: string | null;
+      };
       return {
         leaseId: input.leaseId,
         agentId: input.agentId,
         expiresAt: input.expiresAt,
+        acquiredAt: row.active_lease_acquired_at
+          ? new Date(String(row.active_lease_acquired_at)).toISOString()
+          : input.now.toISOString(),
       };
     }
 
@@ -512,7 +557,10 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     await ensureSchema(this.sql);
     await this.sql`
       UPDATE agents
-      SET active_lease_id = NULL, active_lease_expires_at = NULL
+      SET
+        active_lease_id = NULL,
+        active_lease_expires_at = NULL,
+        active_lease_acquired_at = NULL
       WHERE agent_id = ${input.agentId}
         AND active_lease_id = ${input.leaseId}
     `;

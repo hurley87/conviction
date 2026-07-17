@@ -1,3 +1,4 @@
+import { parseAgentJsonObject } from "@/lib/agent-api-body";
 import {
   AgentLeaseError,
   acquireAgentLease,
@@ -24,10 +25,18 @@ export async function POST(request: Request) {
       nonceStore: getAgentNonceStore(),
     });
 
-    let replace = false;
-    if (rawBody.trim()) {
-      const parsed = JSON.parse(rawBody) as { replace?: unknown };
-      replace = parsed.replace === true;
+    const parsed = parseAgentJsonObject(rawBody);
+    const replace = parsed.replace === true;
+    if (replace) {
+      // Structured operational signal until a durable audit log lands.
+      console.info(
+        JSON.stringify({
+          type: "mcp_lease_replaced",
+          agentId: verified.agent.agentId,
+          handle: verified.agent.handle,
+          at: new Date().toISOString(),
+        }),
+      );
     }
 
     const lease = await acquireAgentLease(store, verified.agent, { replace });
@@ -78,9 +87,7 @@ export async function DELETE(request: Request) {
       nonceStore: getAgentNonceStore(),
     });
 
-    const parsed = rawBody.trim()
-      ? (JSON.parse(rawBody) as { leaseId?: unknown })
-      : {};
+    const parsed = parseAgentJsonObject(rawBody);
     const leaseId =
       typeof parsed.leaseId === "string" ? parsed.leaseId.trim() : "";
     if (!leaseId) {

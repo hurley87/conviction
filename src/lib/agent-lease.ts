@@ -8,6 +8,7 @@ export type AgentLease = {
   leaseId: string;
   agentId: string;
   expiresAt: string;
+  acquiredAt: string;
 };
 
 export type LeaseErrorCode =
@@ -15,6 +16,7 @@ export type LeaseErrorCode =
   | "lease_expired"
   | "lease_not_found"
   | "agent_not_found"
+  | "lifecycle_blocked"
   | "invalid_request";
 
 export class AgentLeaseError extends Error {
@@ -39,6 +41,7 @@ export type LeaseStore = {
     agentId: string;
     leaseId: string;
     expiresAt: string;
+    acquiredAt: string;
     now: Date;
     replace?: boolean;
   }): Promise<AgentLease>;
@@ -58,6 +61,7 @@ export function leaseErrorStatus(code: LeaseErrorCode): number {
       return 404;
     case "lease_conflict":
     case "lease_expired":
+    case "lifecycle_blocked":
       return 409;
     case "invalid_request":
       return 422;
@@ -65,6 +69,15 @@ export function leaseErrorStatus(code: LeaseErrorCode): number {
       const _exhaustive: never = code;
       return _exhaustive;
     }
+  }
+}
+
+function assertLeaseEligible(agent: OwnedAgent): void {
+  if (agent.status === "retired" || agent.status === "retiring") {
+    throw new AgentLeaseError(
+      "lifecycle_blocked",
+      `Agent @${agent.handle} is ${agent.status} and cannot hold an MCP lease.`,
+    );
   }
 }
 
@@ -83,23 +96,22 @@ export async function acquireAgentLease(
     ttlMs?: number;
   } = {},
 ): Promise<AgentLease> {
+  assertLeaseEligible(agent);
+
   const now = options.now?.() ?? new Date();
   const ttlMs = options.ttlMs ?? MCP_LEASE_TTL_MS;
   const leaseId = options.randomId?.() ?? randomUUID();
+  const acquiredAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
 
-  try {
-    return await store.acquireLease({
-      agentId: agent.agentId,
-      leaseId,
-      expiresAt,
-      now,
-      ...(options.replace ? { replace: true } : {}),
-    });
-  } catch (error) {
-    if (error instanceof AgentLeaseError) throw error;
-    throw error;
-  }
+  return store.acquireLease({
+    agentId: agent.agentId,
+    leaseId,
+    expiresAt,
+    acquiredAt,
+    now,
+    ...(options.replace ? { replace: true } : {}),
+  });
 }
 
 export async function renewAgentLease(
@@ -111,6 +123,8 @@ export async function renewAgentLease(
     ttlMs?: number;
   } = {},
 ): Promise<AgentLease> {
+  assertLeaseEligible(agent);
+
   if (!leaseId.trim()) {
     throw new AgentLeaseError(
       "invalid_request",
@@ -161,7 +175,6 @@ export function buildAgentAccountStatus(agent: OwnedAgent): {
   lifetimeSpendUsd: number;
   remainingBudgetUsd: number;
   fundingReady: boolean;
-  funded: boolean;
 } {
   const remainingBudgetUsd = Math.max(
     0,
@@ -184,8 +197,6 @@ export function buildAgentAccountStatus(agent: OwnedAgent): {
     lifetimeSpendUsd: agent.lifetimeSpendUsd,
     remainingBudgetUsd,
     fundingReady: agent.fundingReady,
-    // Unified balance is not wired in this slice; fundingReady + address are authoritative.
-    funded: false,
   };
 }
 
@@ -196,7 +207,7 @@ export function leaseConflictError(
 ): AgentLeaseError {
   const leaseAgeMs = Math.max(
     0,
-    now.getTime() - (new Date(active.expiresAt).getTime() - MCP_LEASE_TTL_MS),
+    now.getTime() - new Date(active.acquiredAt).getTime(),
   );
   return new AgentLeaseError(
     "lease_conflict",

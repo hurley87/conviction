@@ -22,13 +22,13 @@ export type LiveAgentStatus = {
   lifetimeSpendUsd: number;
   remainingBudgetUsd: number;
   fundingReady: boolean;
-  funded: boolean;
 };
 
 export type LiveLease = {
   leaseId: string;
   agentId: string;
   expiresAt: string;
+  acquiredAt: string;
 };
 
 export type LeaseConflictDetails = {

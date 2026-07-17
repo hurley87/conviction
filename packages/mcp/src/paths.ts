@@ -9,6 +9,19 @@ export type ConvictionPaths = {
   bindingsDir: string;
 };
 
+const PROFILE_NAME_RE = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/i;
+
+/** Reject path traversal and unsafe profile identifiers. */
+export function assertSafeProfileName(profileName: string): string {
+  const trimmed = profileName.trim();
+  if (!PROFILE_NAME_RE.test(trimmed) || trimmed.includes("..")) {
+    throw new Error(
+      "invalid --profile name; use letters, numbers, underscores, and hyphens only",
+    );
+  }
+  return trimmed;
+}
+
 /** Resolve Conviction home paths, honoring CONVICTION_HOME for tests. */
 export function resolveConvictionPaths(home = process.env.CONVICTION_HOME): ConvictionPaths {
   const root = home?.trim()
@@ -23,11 +36,13 @@ export function resolveConvictionPaths(home = process.env.CONVICTION_HOME): Conv
 }
 
 export function profilePath(paths: ConvictionPaths, profileName: string): string {
-  return path.join(paths.profilesDir, `${profileName}.json`);
+  const safe = assertSafeProfileName(profileName);
+  return path.join(paths.profilesDir, `${safe}.json`);
 }
 
 export function keystorePath(paths: ConvictionPaths, profileName: string): string {
-  return path.join(paths.keystoresDir, `${profileName}.json`);
+  const safe = assertSafeProfileName(profileName);
+  return path.join(paths.keystoresDir, `${safe}.json`);
 }
 
 /** Stable path for a provisioning code's local binding (survives successful init). */

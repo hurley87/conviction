@@ -81,6 +81,33 @@ describe("MCP lease lifecycle", () => {
     });
   });
 
+  it("only one of two concurrent acquires wins in memory", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const wallet = Wallet.createRandom();
+    const agent = await activeAgent(store, wallet);
+    let n = 0;
+
+    const results = await Promise.allSettled([
+      acquireAgentLease(store, agent, {
+        now: () => FIXED_NOW,
+        randomId: () => `lease-concurrent-${++n}`,
+      }),
+      acquireAgentLease(store, agent, {
+        now: () => FIXED_NOW,
+        randomId: () => `lease-concurrent-${++n}`,
+      }),
+    ]);
+
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({ code: "lease_conflict" }),
+    });
+  });
+
   it("renews an owned lease and fails after replacement", async () => {
     const store = new MemoryAgentProvisioningStore();
     const wallet = Wallet.createRandom();
@@ -155,9 +182,54 @@ describe("MCP lease lifecycle", () => {
       handle: "lease-scout",
       remainingBudgetUsd: 60,
       actionPolicy: { trade: true, back: false, publish: true },
+      fundingReady: true,
     });
+    expect(status).not.toHaveProperty("funded");
     expect(JSON.stringify(status)).not.toMatch(
       /privateKey|mnemonic|keystore|signature/i,
     );
+  });
+
+  it("rejects lease acquisition for retiring or retired agents", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const wallet = Wallet.createRandom();
+    const agent = await activeAgent(store, wallet);
+    agent.status = "retiring";
+    agent.publicStatus = "paused";
+
+    await expect(
+      acquireAgentLease(store, agent, {
+        now: () => FIXED_NOW,
+        randomId: () => "lease-blocked",
+      }),
+    ).rejects.toMatchObject({ code: "lifecycle_blocked" });
+  });
+
+  it("reports lease age from acquiredAt across renewals", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const wallet = Wallet.createRandom();
+    const agent = await activeAgent(store, wallet);
+
+    const first = await acquireAgentLease(store, agent, {
+      now: () => FIXED_NOW,
+      randomId: () => "lease-one",
+    });
+    expect(first.acquiredAt).toBe(FIXED_NOW.toISOString());
+
+    const later = new Date(FIXED_NOW.getTime() + 45_000);
+    const renewed = await renewAgentLease(store, agent, first.leaseId, {
+      now: () => later,
+    });
+    expect(renewed.acquiredAt).toBe(FIXED_NOW.toISOString());
+
+    await expect(
+      acquireAgentLease(store, agent, {
+        now: () => later,
+        randomId: () => "lease-two",
+      }),
+    ).rejects.toMatchObject({
+      code: "lease_conflict",
+      details: { leaseAgeMs: 45_000 },
+    });
   });
 });

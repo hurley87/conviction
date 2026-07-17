@@ -33,11 +33,13 @@ function testProfile(wallet: Wallet): AgentProfile {
 }
 
 function mockLease(wallet: Wallet): LeaseHandle {
+  const now = Date.now();
   return new LeaseHandle(
     {
       leaseId: "lease-test-1",
       agentId: "00000000-0000-4000-8000-000000000111",
-      expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      expiresAt: new Date(now + 120_000).toISOString(),
+      acquiredAt: new Date(now).toISOString(),
     },
     {
       apiBaseUrl: "http://conviction.test",
@@ -124,7 +126,6 @@ describe("createLiveServer", () => {
             lifetimeSpendUsd: 10,
             remainingBudgetUsd: 90,
             fundingReady: true,
-            funded: false,
           },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
