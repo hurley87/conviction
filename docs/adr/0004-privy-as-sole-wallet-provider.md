@@ -1,4 +1,4 @@
-# Privy is the sole wallet provider; onboarding is Twitter social login only
+# Privy is the sole wallet provider; onboarding supports email OTP and X
 
 > **Status: decided — Privy (2026-06).** We considered Particle's own social
 > login as the single provider, but committed to **Privy**: it is what Particle's
@@ -10,7 +10,7 @@
 > and the verb layer is provider-agnostic. We may still raise it at office hours,
 > but it no longer gates the build.
 
-Onboarding is **Twitter social login only**: one "Sign in with Twitter" tap mints an embedded EOA we 7702-upgrade in place. The embedded EOA's address is the Universal Account address; the embedded wallet signs the 7702 authorization programmatically from the session, so the upgrade is invisible (signed lazily on the first transaction per Particle's reference). The Twitter handle is the user's feed identity (ADR 0009) — identity, wallet, and 7702 from a single tap.
+Onboarding supports **passwordless email OTP and X OAuth**. Either login method mints an embedded EOA we 7702-upgrade in place. The embedded EOA's address is the Universal Account address; the embedded wallet signs the 7702 authorization programmatically from the session, so the upgrade is invisible (signed lazily on the first transaction per Particle's reference). X users retain their provider-derived handle; email-only users choose a unique public username before entering the app (ADR 0009). Email must also be enabled for the deployment in the Privy dashboard.
 
 We **dropped the "connect existing wallet" (MetaMask) path**. The product is consumer-grade and walletless (vs. a pro terminal); a connect-your-wallet path dilutes that and adds a second flow to build and test. A crypto user with funds elsewhere is not locked out — they **deposit** to their new address (issue #3) rather than connecting. There is no bounty loss: minting a fresh embedded EOA and 7702-upgrading it still satisfies "an EOA upgraded in place via 7702." Funding a from-zero account is handled by the fiat onramp (ADR 0015) and deposits.
 

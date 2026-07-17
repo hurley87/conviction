@@ -79,7 +79,7 @@ function BubbleBody({ active }: { active: boolean }) {
           onClick={() => account.login()}
           className={`${PRIMARY_LIGHT} px-6 py-2 text-sm`}
         >
-          Sign in with Twitter
+          Sign in with email or X
         </button>
       </div>
     );

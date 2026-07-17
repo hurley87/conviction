@@ -56,7 +56,7 @@ export function DeckHome({ cards: allCards, signers }: DeckHomeProps) {
           onClick={() => account.login()}
           className={`${PRIMARY_LIGHT} mt-8 px-8 py-3`}
         >
-          Sign in with Twitter
+          Sign in with email or X
         </button>
       </div>
     );

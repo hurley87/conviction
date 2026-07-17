@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { AccountGate } from "@/components/account/account-gate";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { SidebarWallet } from "@/components/sidebar-wallet";
 import { UserMenu } from "@/components/user-menu";
@@ -10,8 +11,6 @@ import {
   ConciergeBubbleProvider,
 } from "@/components/concierge-bubble";
 import { UpgradeBeatHost } from "@/components/upgrade-beat-host";
-import { useAccount } from "@/components/account/account-context";
-import { LandingPage } from "@/components/landing/landing-page";
 
 const ROUTE_META: Record<string, { eyebrow: string; title: string }> = {
   "/": { eyebrow: "Today’s ritual", title: "The daily deck" },
@@ -21,8 +20,7 @@ const ROUTE_META: Record<string, { eyebrow: string; title: string }> = {
   "/settings": { eyebrow: "Your space", title: "Settings" },
 };
 
-export function AppShell({ children }: { children: React.ReactNode }) {
-  const { ready, authenticated } = useAccount();
+function AppShellChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const routeMeta =
     ROUTE_META[
@@ -31,19 +29,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       ) ?? "/"
     ];
 
-  // Logged-out visitors get the marketing landing instead of the app chrome;
-  // hold on a quiet canvas until Privy resolves so the deck never flashes.
-  if (!ready) {
-    return <div className="min-h-screen bg-canvas" />;
-  }
-  if (!authenticated) {
-    return <LandingPage />;
-  }
-
   return (
     <ConciergeBubbleProvider>
       <div className="relative flex min-h-screen overflow-x-clip bg-canvas text-ink">
-        <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden>
+        <div
+          className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
+          aria-hidden
+        >
           <div
             className="absolute -right-52 -top-72 h-[650px] w-[760px] rounded-full opacity-45 blur-[110px]"
             style={{ background: "var(--pt-grad-dawn)" }}
@@ -120,5 +112,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <UpgradeBeatHost />
       </div>
     </ConciergeBubbleProvider>
+  );
+}
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  return (
+    <AccountGate mode="app">
+      <AppShellChrome>{children}</AppShellChrome>
+    </AccountGate>
   );
 }

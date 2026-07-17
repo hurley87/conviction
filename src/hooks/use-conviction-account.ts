@@ -1,7 +1,7 @@
 "use client";
 
-// Orchestrates the live path: Privy auth → owner EOA → UA client → unified
-// balance, and persists the user's Twitter handle (ADR 0009). The EOA is the
+// Orchestrates the live path: Privy auth → verified server profile → owner EOA
+// → UA client → unified balance. The EOA is the
 // Universal Account in 7702 mode (same address); the on-chain 7702 authorization
 // signature is submitted with the first trade (issue #2). Pending Particle
 // confirmation of the delegate-contract details (docs/adr/0000).
@@ -16,9 +16,39 @@ import {
 import { getUAClient } from "@/lib/ua";
 import { useUASnapshot } from "@/hooks/use-ua-snapshot";
 import { FUNDING_TARGET } from "@/lib/funding";
+import type {
+  InitializeUserBody,
+  PatchUserBody,
+} from "@/lib/user-profile-request";
+import type { UserProfile } from "@/lib/users";
+
+async function profileRequest(
+  getAccessToken: () => Promise<string | null>,
+  method: "POST" | "PATCH",
+  body: InitializeUserBody | PatchUserBody,
+) {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Your Privy session has expired. Sign in again.");
+  const response = await fetch("/api/users", {
+    method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const result = (await response.json().catch(() => ({}))) as {
+    profile?: UserProfile;
+    error?: string;
+  };
+  if (!response.ok || !result.profile) {
+    throw new Error(result.error ?? "Your profile could not be loaded.");
+  }
+  return result.profile;
+}
 
 export function useConvictionAccount() {
-  const { ready, authenticated, user, login, logout } = usePrivy();
+  const { ready, authenticated, login, logout, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
   const { fundWallet } = useFundWallet();
 
@@ -26,7 +56,6 @@ export function useConvictionAccount() {
   // browser extensions (MetaMask, etc.). We always want the embedded wallet
   // tied to the social login, not whichever extension happens to be connected.
   const address = getEmbeddedConnectedWallet(wallets)?.address;
-  const handle = user?.twitter?.username ?? null;
 
   // One UA client per owner address — rebuilding it per call would throw away
   // the SDK account cache the Particle client builds lazily.
@@ -36,6 +65,9 @@ export function useConvictionAccount() {
   const [upgraded, setUpgraded] = useState(false);
   const [isFunding, setIsFunding] = useState(false);
   const [fundingError, setFundingError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   const markUpgraded = useCallback(() => {
     setUpgraded(true);
@@ -57,15 +89,59 @@ export function useConvictionAccount() {
     };
   }, [authenticated, address]);
 
-  // On connect: persist the user's Twitter handle (ADR 0009).
+  const retryProfile = useCallback(async () => {
+    if (!authenticated || !address) return;
+    setProfileLoading(true);
+    setProfileError(null);
+    try {
+      const next = await profileRequest(getAccessToken, "POST", { address });
+      setProfile(next);
+    } catch (error) {
+      setProfile(null);
+      setProfileError(
+        error instanceof Error ? error.message : "Your profile could not be loaded.",
+      );
+    } finally {
+      setProfileLoading(false);
+    }
+  }, [address, authenticated, getAccessToken]);
+
   useEffect(() => {
-    if (!authenticated || !address || !handle || !user?.id) return;
-    void fetch("/api/users", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ privyId: user.id, handle, address }),
-    }).catch(() => {});
-  }, [authenticated, address, handle, user?.id]);
+    const timeout = window.setTimeout(() => {
+      if (!authenticated) {
+        setProfile(null);
+        setProfileError(null);
+        setProfileLoading(false);
+        return;
+      }
+      if (!address) {
+        setProfileLoading(true);
+        return;
+      }
+      void retryProfile();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [address, authenticated, retryProfile]);
+
+  const saveHandle = useCallback(
+    async (handle: string) => {
+      const next = await profileRequest(getAccessToken, "PATCH", {
+        action: "saveHandle",
+        handle,
+      });
+      setProfile(next);
+    },
+    [getAccessToken],
+  );
+
+  const completeOnboarding = useCallback(async () => {
+    // Replaying the tour must not rewrite an existing completion timestamp.
+    if (!profile?.onboardingRequired) return;
+    const next = await profileRequest(getAccessToken, "PATCH", {
+      action: "completeOnboarding",
+    });
+    setProfile(next);
+  }, [getAccessToken, profile]);
 
   const upgrade = useCallback(async () => {
     if (!ua) return;
@@ -102,9 +178,18 @@ export function useConvictionAccount() {
   return {
     ready,
     authenticated,
+    profileReady: !authenticated || (!profileLoading && Boolean(profile)),
+    profileError,
+    profileId: profile?.privyId ?? null,
     login,
     logout,
-    handle,
+    retryProfile,
+    handle: profile?.handle ?? null,
+    email: profile?.email ?? null,
+    identitySource: profile?.identitySource ?? null,
+    needsOnboarding: Boolean(profile?.onboardingRequired),
+    saveHandle,
+    completeOnboarding,
     address,
     balance,
     deposits,

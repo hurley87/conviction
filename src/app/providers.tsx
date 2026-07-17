@@ -1,9 +1,7 @@
 "use client";
 
-// Onboarding is Twitter social login only (ADR 0004): one tap mints an embedded
-// EOA we 7702-upgrade in place — no MetaMask/seed-phrase path, to keep the
-// product consumer-grade. When no app id is set, we pass through so the app
-// still runs locally against the mock (ADR 0014).
+// Email OTP and X login both create the same embedded EOA. When no app id is
+// set, pass through so local development keeps using the zero-credential mock.
 
 import { PrivyProvider } from "@privy-io/react-auth";
 import { PRIVY_APP_ID } from "@/lib/env";
@@ -15,7 +13,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={PRIVY_APP_ID}
       config={{
-        loginMethods: ["twitter"],
+        loginMethods: ["email", "twitter"],
         embeddedWallets: {
           ethereum: { createOnLogin: "users-without-wallets" },
         },

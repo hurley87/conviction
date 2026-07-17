@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useState } from "react";
 import { useAccount } from "@/components/account/account-context";
 import { DepositAddress } from "@/components/deposit-address";
@@ -27,7 +28,7 @@ export function SettingsView() {
           onClick={() => account.login()}
           className={`${PRIMARY_LIGHT} mt-6 px-8 py-3`}
         >
-          Sign in with Twitter
+          Sign in with email or X
         </button>
       </div>
     );
@@ -83,7 +84,7 @@ export function SettingsView() {
       </section>
 
       <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
-        <section className="app-card p-6">
+        <section id="add-money" className="app-card scroll-mt-24 p-6">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="pt-eyebrow">Fund your account</p>
@@ -163,6 +164,12 @@ export function SettingsView() {
               Notification controls and appearance settings are on the way.
               Conviction stays calm and focused by default.
             </p>
+            <Link
+              href="/onboarding"
+              className={`${GHOST_LIGHT} mt-5 inline-flex px-5 py-2.5 text-sm`}
+            >
+              Replay the practice tour
+            </Link>
           </section>
         </div>
       </div>

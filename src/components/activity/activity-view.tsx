@@ -162,7 +162,7 @@ export function ActivityView() {
           onClick={() => account.login()}
           className={`${PRIMARY_LIGHT} mt-6 px-8 py-3`}
         >
-          Sign in with Twitter
+          Sign in with email or X
         </button>
       </div>
     );
