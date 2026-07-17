@@ -31,6 +31,7 @@ export type AccountContextValue = {
   retryProfile: () => Promise<void>;
   saveHandle: (handle: string) => Promise<void>;
   completeOnboarding: () => Promise<void>;
+  getAccessToken: () => Promise<string | null>;
   addMoney: () => Promise<void>;
   upgrade: () => Promise<void>;
   /** Optimistic flip after a known in-place upgrade (Settings or first-tx 7702). */

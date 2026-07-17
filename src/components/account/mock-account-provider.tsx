@@ -19,6 +19,10 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
 
   const noop = useCallback(() => {}, []);
   const asyncNoop = useCallback(async () => {}, []);
+  const getAccessToken = useCallback(
+    async () => "mock-local-user",
+    [],
+  );
   const markUpgraded = useCallback(() => {
     setUpgraded(true);
   }, []);
@@ -52,6 +56,7 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
       retryProfile: asyncNoop,
       saveHandle: asyncNoop,
       completeOnboarding: asyncNoop,
+      getAccessToken,
       addMoney: asyncNoop,
       upgrade,
       markUpgraded,
@@ -64,6 +69,7 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
       ua,
       noop,
       asyncNoop,
+      getAccessToken,
       upgrade,
       markUpgraded,
       refresh,
