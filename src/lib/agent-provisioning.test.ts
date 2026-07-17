@@ -1,9 +1,15 @@
+import { Wallet } from "ethers";
 import { describe, expect, it } from "vitest";
 import {
+  buildBackupVerifiedMessage,
+  buildProvisioningProofMessage,
+  completeAgentBackupVerification,
   createPendingAgent,
+  hashProvisioningCode,
   MemoryAgentProvisioningStore,
   ownedAgentFromRow,
   PROVISIONING_HANDOFF_TTL_MS,
+  redeemPendingAgent,
 } from "@/lib/agent-provisioning";
 
 const OWNER = { userId: "did:privy:owner-1", operatorHandle: "operator" };
@@ -138,6 +144,7 @@ describe("ownedAgentFromRow", () => {
         max_trade_usd: "25",
         spend_budget_usd: "100",
         lifetime_spend_usd: "12.5",
+        funding_ready: true,
         created_at: "2026-07-16T20:00:00.000Z",
       }),
     ).toMatchObject({
@@ -145,6 +152,154 @@ describe("ownedAgentFromRow", () => {
       status: "active",
       publicStatus: "active",
       lifetimeSpendUsd: 12.5,
+      fundingReady: true,
     });
+  });
+});
+
+describe("redeemPendingAgent", () => {
+  async function createHandoff(store: MemoryAgentProvisioningStore) {
+    return createPendingAgent(store, OWNER, INPUT, dependencies());
+  }
+
+  it("activates the agent with the local signer and keeps funding locked", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const created = await createHandoff(store);
+    const wallet = Wallet.createRandom();
+    const codeHash = hashProvisioningCode(created.handoff.code);
+    const proofSignature = await wallet.signMessage(
+      buildProvisioningProofMessage(codeHash, wallet.address),
+    );
+
+    const agent = await redeemPendingAgent(
+      store,
+      {
+        code: created.handoff.code,
+        signerAddress: wallet.address,
+        proofSignature,
+      },
+      { now: () => FIXED_NOW },
+    );
+
+    expect(agent).toMatchObject({
+      agentId: created.agent.agentId,
+      address: wallet.address,
+      status: "active",
+      publicStatus: "active",
+      fundingReady: false,
+    });
+    expect(store.records[0]?.handoff.redeemedAt).toBe(FIXED_NOW.toISOString());
+  });
+
+  it("rejects expired, reused, and invalid proofs", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const created = await createHandoff(store);
+    const wallet = Wallet.createRandom();
+    const codeHash = hashProvisioningCode(created.handoff.code);
+    const proofSignature = await wallet.signMessage(
+      buildProvisioningProofMessage(codeHash, wallet.address),
+    );
+
+    await expect(
+      redeemPendingAgent(
+        store,
+        {
+          code: created.handoff.code,
+          signerAddress: wallet.address,
+          proofSignature,
+        },
+        {
+          now: () =>
+            new Date(FIXED_NOW.getTime() + PROVISIONING_HANDOFF_TTL_MS + 1),
+        },
+      ),
+    ).rejects.toMatchObject({ code: "handoff_expired" });
+
+    await expect(
+      redeemPendingAgent(store, {
+        code: created.handoff.code,
+        signerAddress: wallet.address,
+        proofSignature: await Wallet.createRandom().signMessage("wrong"),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_proof" });
+
+    await redeemPendingAgent(
+      store,
+      {
+        code: created.handoff.code,
+        signerAddress: wallet.address,
+        proofSignature,
+      },
+      { now: () => FIXED_NOW },
+    );
+
+    const other = Wallet.createRandom();
+    await expect(
+      redeemPendingAgent(
+        store,
+        {
+          code: created.handoff.code,
+          signerAddress: other.address,
+          proofSignature: await other.signMessage(
+            buildProvisioningProofMessage(codeHash, other.address),
+          ),
+        },
+        { now: () => FIXED_NOW },
+      ),
+    ).rejects.toMatchObject({ code: "handoff_used" });
+  });
+
+  it("returns the same agent for an idempotent redeem of the bound address", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const created = await createHandoff(store);
+    const wallet = Wallet.createRandom();
+    const codeHash = hashProvisioningCode(created.handoff.code);
+    const proofSignature = await wallet.signMessage(
+      buildProvisioningProofMessage(codeHash, wallet.address),
+    );
+    const payload = {
+      code: created.handoff.code,
+      signerAddress: wallet.address,
+      proofSignature,
+    };
+
+    const first = await redeemPendingAgent(store, payload, {
+      now: () => FIXED_NOW,
+    });
+    const second = await redeemPendingAgent(store, payload, {
+      now: () => FIXED_NOW,
+    });
+    expect(second).toEqual(first);
+  });
+});
+
+describe("completeAgentBackupVerification", () => {
+  it("unlocks funding only after a matching backup proof", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const created = await createPendingAgent(store, OWNER, INPUT, dependencies());
+    const wallet = Wallet.createRandom();
+    const codeHash = hashProvisioningCode(created.handoff.code);
+    await redeemPendingAgent(
+      store,
+      {
+        code: created.handoff.code,
+        signerAddress: wallet.address,
+        proofSignature: await wallet.signMessage(
+          buildProvisioningProofMessage(codeHash, wallet.address),
+        ),
+      },
+      { now: () => FIXED_NOW },
+    );
+
+    const agent = await completeAgentBackupVerification(store, {
+      agentId: created.agent.agentId,
+      signerAddress: wallet.address,
+      proofSignature: await wallet.signMessage(
+        buildBackupVerifiedMessage(created.agent.agentId, wallet.address),
+      ),
+    });
+
+    expect(agent.fundingReady).toBe(true);
+    expect(agent.address).toBe(wallet.address);
   });
 });

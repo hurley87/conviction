@@ -1,8 +1,11 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { isAddress } from "ethers";
+import { getAddress, isAddress, verifyMessage } from "ethers";
 import { z } from "zod";
 
 export const PROVISIONING_HANDOFF_TTL_MS = 10 * 60 * 1000;
+
+export const PROVISIONING_PROOF_PREFIX = "Conviction MCP provisioning";
+export const BACKUP_VERIFIED_PROOF_PREFIX = "Conviction MCP backup verified";
 
 export const createAgentSchema = z
   .object({
@@ -76,6 +79,8 @@ export type OwnedAgent = {
   maxTradeUsd: number;
   spendBudgetUsd: number;
   lifetimeSpendUsd: number;
+  /** True only after local backup export + decrypt-verification succeed. */
+  fundingReady: boolean;
   createdAt: string;
 };
 
@@ -85,6 +90,7 @@ export type PendingAgent = OwnedAgent & {
   status: "provisioning";
   publicStatus: "paused";
   lifetimeSpendUsd: 0;
+  fundingReady: false;
 };
 
 function isAgentStatus(value: string): value is AgentStatus {
@@ -129,6 +135,13 @@ export function ownedAgentFromRow(row: Record<string, unknown>): OwnedAgent {
       ? null
       : String(addressValue);
 
+  const fundingReadyRaw = row.funding_ready;
+  const fundingReady =
+    fundingReadyRaw === true ||
+    fundingReadyRaw === "true" ||
+    fundingReadyRaw === "t" ||
+    fundingReadyRaw === 1;
+
   return {
     agentId: String(row.agent_id),
     ownerUserId: String(row.owner_user_id),
@@ -143,8 +156,53 @@ export function ownedAgentFromRow(row: Record<string, unknown>): OwnedAgent {
     maxTradeUsd: Number(row.max_trade_usd),
     spendBudgetUsd: Number(row.spend_budget_usd),
     lifetimeSpendUsd: Number(row.lifetime_spend_usd),
+    fundingReady,
     createdAt: new Date(String(row.created_at)).toISOString(),
   };
+}
+
+/** SHA-256 hex digest of a one-time provisioning code. */
+export function hashProvisioningCode(code: string): string {
+  return createHash("sha256").update(code).digest("hex");
+}
+
+/** Canonical message the local signer must sign to prove possession. */
+export function buildProvisioningProofMessage(
+  codeHash: string,
+  signerAddress: string,
+): string {
+  return [
+    PROVISIONING_PROOF_PREFIX,
+    "v1",
+    `code:${codeHash}`,
+    `signer:${getAddress(signerAddress)}`,
+  ].join("\n");
+}
+
+/** Canonical message proving backup verification for a bound agent. */
+export function buildBackupVerifiedMessage(
+  agentId: string,
+  signerAddress: string,
+): string {
+  return [
+    BACKUP_VERIFIED_PROOF_PREFIX,
+    "v1",
+    `agent:${agentId}`,
+    `signer:${getAddress(signerAddress)}`,
+  ].join("\n");
+}
+
+export function verifyEoaSignature(
+  message: string,
+  signature: string,
+  expectedAddress: string,
+): boolean {
+  try {
+    const recovered = verifyMessage(message, signature);
+    return getAddress(recovered) === getAddress(expectedAddress);
+  } catch {
+    return false;
+  }
 }
 
 export type ProvisioningHandoff = {
@@ -163,6 +221,7 @@ export type StoredHandoff = {
   agentId: string;
   codeHash: string;
   expiresAt: string;
+  redeemedAt: string | null;
 };
 
 export type AgentProvisioningRecord = {
@@ -170,9 +229,24 @@ export type AgentProvisioningRecord = {
   handoff: StoredHandoff;
 };
 
+export type HandoffLookup = {
+  handoff: StoredHandoff;
+  agent: OwnedAgent;
+};
+
 export type AgentProvisioningStore = {
   create(record: AgentProvisioningRecord): Promise<void>;
   findNonRetiredByOwner(ownerUserId: string): Promise<OwnedAgent | null>;
+  findHandoffByCodeHash(codeHash: string): Promise<HandoffLookup | null>;
+  redeemHandoff(input: {
+    codeHash: string;
+    signerAddress: string;
+    now: Date;
+  }): Promise<OwnedAgent>;
+  markFundingReady(input: {
+    agentId: string;
+    signerAddress: string;
+  }): Promise<OwnedAgent>;
 };
 
 export type ProvisioningErrorCode =
@@ -180,7 +254,14 @@ export type ProvisioningErrorCode =
   | "handle_unavailable"
   | "identity_unavailable"
   | "profile_missing"
-  | "invalid_request";
+  | "invalid_request"
+  | "handoff_not_found"
+  | "handoff_expired"
+  | "handoff_used"
+  | "invalid_proof"
+  | "agent_not_pending"
+  | "address_mismatch"
+  | "agent_not_found";
 
 export class AgentProvisioningError extends Error {
   constructor(
@@ -191,6 +272,34 @@ export class AgentProvisioningError extends Error {
     this.name = "AgentProvisioningError";
   }
 }
+
+export const redeemAgentSchema = z.object({
+  code: z.string().trim().min(8, "Provide the full one-time provisioning code."),
+  signerAddress: z
+    .string()
+    .trim()
+    .refine(isAddress, "signerAddress must be a valid EVM address."),
+  proofSignature: z
+    .string()
+    .trim()
+    .min(80, "proofSignature must be a valid EOA signature."),
+});
+
+export type RedeemAgentInput = z.infer<typeof redeemAgentSchema>;
+
+export const completeBackupSchema = z.object({
+  agentId: z.string().uuid("agentId must be a UUID."),
+  signerAddress: z
+    .string()
+    .trim()
+    .refine(isAddress, "signerAddress must be a valid EVM address."),
+  proofSignature: z
+    .string()
+    .trim()
+    .min(80, "proofSignature must be a valid EOA signature."),
+});
+
+export type CompleteBackupInput = z.infer<typeof completeBackupSchema>;
 
 export type ProvisioningOwner = {
   userId: string;
@@ -239,6 +348,7 @@ export async function createPendingAgent(
     maxTradeUsd: parsed.data.maxTradeUsd,
     spendBudgetUsd: parsed.data.spendBudgetUsd,
     lifetimeSpendUsd: 0,
+    fundingReady: false,
     createdAt: now.toISOString(),
   };
 
@@ -247,8 +357,9 @@ export async function createPendingAgent(
     handoff: {
       handoffId: randomId(),
       agentId: agent.agentId,
-      codeHash: createHash("sha256").update(code).digest("hex"),
+      codeHash: hashProvisioningCode(code),
       expiresAt,
+      redeemedAt: null,
     },
   });
 
@@ -260,6 +371,82 @@ export async function createPendingAgent(
       command: `conviction-mcp init --code ${code}`,
     },
   };
+}
+
+/**
+ * Redeem a one-time handoff by binding a locally generated signer address.
+ * Activates the agent but leaves fundingReady false until backup verification.
+ */
+export async function redeemPendingAgent(
+  store: AgentProvisioningStore,
+  untrustedInput: unknown,
+  dependencies: { now?: () => Date } = {},
+): Promise<OwnedAgent> {
+  const parsed = redeemAgentSchema.safeParse(untrustedInput);
+  if (!parsed.success) {
+    throw new AgentProvisioningError(
+      "invalid_request",
+      parsed.error.issues[0]?.message ?? "Check the redeem payload and try again.",
+    );
+  }
+
+  const codeHash = hashProvisioningCode(parsed.data.code);
+  const signerAddress = getAddress(parsed.data.signerAddress);
+  const proofMessage = buildProvisioningProofMessage(codeHash, signerAddress);
+  if (
+    !verifyEoaSignature(
+      proofMessage,
+      parsed.data.proofSignature,
+      signerAddress,
+    )
+  ) {
+    throw new AgentProvisioningError(
+      "invalid_proof",
+      "The proof-of-possession signature does not match the signer address.",
+    );
+  }
+
+  const now = dependencies.now?.() ?? new Date();
+  return store.redeemHandoff({ codeHash, signerAddress, now });
+}
+
+/**
+ * Mark backup verification complete so the agent becomes funding-eligible.
+ */
+export async function completeAgentBackupVerification(
+  store: AgentProvisioningStore,
+  untrustedInput: unknown,
+): Promise<OwnedAgent> {
+  const parsed = completeBackupSchema.safeParse(untrustedInput);
+  if (!parsed.success) {
+    throw new AgentProvisioningError(
+      "invalid_request",
+      parsed.error.issues[0]?.message ?? "Check the backup verification payload.",
+    );
+  }
+
+  const signerAddress = getAddress(parsed.data.signerAddress);
+  const proofMessage = buildBackupVerifiedMessage(
+    parsed.data.agentId,
+    signerAddress,
+  );
+  if (
+    !verifyEoaSignature(
+      proofMessage,
+      parsed.data.proofSignature,
+      signerAddress,
+    )
+  ) {
+    throw new AgentProvisioningError(
+      "invalid_proof",
+      "The backup-verification signature does not match the bound signer.",
+    );
+  }
+
+  return store.markFundingReady({
+    agentId: parsed.data.agentId,
+    signerAddress,
+  });
 }
 
 export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
@@ -319,5 +506,113 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
           agent.ownerUserId === ownerUserId && agent.status !== "retired",
       )?.agent ?? null
     );
+  }
+
+  async findHandoffByCodeHash(codeHash: string): Promise<HandoffLookup | null> {
+    const record = this.records.find(
+      ({ handoff }) => handoff.codeHash === codeHash,
+    );
+    return record
+      ? { handoff: record.handoff, agent: record.agent }
+      : null;
+  }
+
+  async redeemHandoff(input: {
+    codeHash: string;
+    signerAddress: string;
+    now: Date;
+  }): Promise<OwnedAgent> {
+    const lookup = await this.findHandoffByCodeHash(input.codeHash);
+    if (!lookup) {
+      throw new AgentProvisioningError(
+        "handoff_not_found",
+        "That provisioning code was not found. Create a new agent handoff in Agent Access.",
+      );
+    }
+
+    const { handoff, agent } = lookup;
+    const normalized = getAddress(input.signerAddress);
+
+    if (handoff.redeemedAt) {
+      if (
+        agent.address &&
+        getAddress(agent.address) === normalized &&
+        agent.status !== "provisioning"
+      ) {
+        return agent;
+      }
+      throw new AgentProvisioningError(
+        "handoff_used",
+        "That provisioning code was already redeemed. Resume from the existing local profile.",
+      );
+    }
+
+    if (new Date(handoff.expiresAt).getTime() <= input.now.getTime()) {
+      throw new AgentProvisioningError(
+        "handoff_expired",
+        "That provisioning code expired. Create a new agent handoff in Agent Access.",
+      );
+    }
+
+    if (agent.status !== "provisioning") {
+      throw new AgentProvisioningError(
+        "agent_not_pending",
+        "This agent is no longer awaiting local provisioning.",
+      );
+    }
+
+    if (agent.address && getAddress(agent.address) !== normalized) {
+      throw new AgentProvisioningError(
+        "address_mismatch",
+        "A different signer address is already bound to this agent.",
+      );
+    }
+
+    agent.address = normalized;
+    agent.status = "active";
+    agent.publicStatus = "active";
+    agent.fundingReady = false;
+    handoff.redeemedAt = input.now.toISOString();
+    return agent;
+  }
+
+  async markFundingReady(input: {
+    agentId: string;
+    signerAddress: string;
+  }): Promise<OwnedAgent> {
+    const record = this.records.find(
+      ({ agent }) => agent.agentId === input.agentId,
+    );
+    if (!record) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity.",
+      );
+    }
+
+    const { agent } = record;
+    if (!agent.address) {
+      throw new AgentProvisioningError(
+        "agent_not_pending",
+        "Redeem a provisioning handoff before verifying the signer backup.",
+      );
+    }
+
+    if (getAddress(agent.address) !== getAddress(input.signerAddress)) {
+      throw new AgentProvisioningError(
+        "address_mismatch",
+        "The backup proof does not match the bound agent signer.",
+      );
+    }
+
+    if (agent.status === "retired" || agent.status === "retiring") {
+      throw new AgentProvisioningError(
+        "agent_not_pending",
+        "A retired or retiring agent cannot become funding-ready.",
+      );
+    }
+
+    agent.fundingReady = true;
+    return agent;
   }
 }
