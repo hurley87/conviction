@@ -3,10 +3,11 @@ import {
   parseAgentJsonObject,
 } from "@/lib/agent-api-body";
 import {
-  AgentLeaseError,
-  leaseErrorStatus,
-  renewAgentLease,
-} from "@/lib/agent-lease";
+  AgentQuoteError,
+  issueTradeQuote,
+  quoteErrorStatus,
+} from "@/lib/agent-quote";
+import { getAgentQuoteStore } from "@/lib/agent-quote-store";
 import {
   AgentRequestAuthError,
   agentAuthErrorStatus,
@@ -14,6 +15,7 @@ import {
   verifyAgentRequest,
 } from "@/lib/agent-request-auth";
 import { getPublicAgentProvisioningStore } from "@/lib/agent-provisioning-store";
+import { getUAClient } from "@/lib/ua";
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
@@ -22,24 +24,30 @@ export async function POST(request: Request) {
     const verified = await verifyAgentRequest({
       request,
       rawBody,
-      path: "/api/agents/lease/renew",
+      path: "/api/agents/quote/trade",
       store,
       nonceStore: getAgentNonceStore(),
     });
 
-    const parsed = parseAgentJsonObject(rawBody);
-    const leaseId =
-      typeof parsed.leaseId === "string" ? parsed.leaseId.trim() : "";
-    if (!leaseId) {
-      throw new AgentLeaseError(
-        "invalid_request",
-        "leaseId is required to renew an MCP lease.",
-      );
+    let body: Record<string, unknown>;
+    try {
+      body = parseAgentJsonObject(rawBody);
+    } catch (error) {
+      if (error instanceof AgentApiBodyError) {
+        throw new AgentQuoteError("invalid_input", error.message);
+      }
+      throw error;
     }
 
-    const lease = await renewAgentLease(store, verified.agent, leaseId);
+    const quote = await issueTradeQuote({
+      store: getAgentQuoteStore(),
+      ua: getUAClient(verified.agent.address ?? undefined),
+      agent: verified.agent,
+      body,
+    });
+
     return Response.json(
-      { lease },
+      { quote },
       { status: 200, headers: { "cache-control": "no-store" } },
     );
   } catch (error) {
@@ -49,29 +57,27 @@ export async function POST(request: Request) {
         { status: agentAuthErrorStatus(error.code) },
       );
     }
-    if (error instanceof AgentApiBodyError) {
-      return Response.json(
-        { error: { code: error.code, message: error.message } },
-        { status: 422 },
-      );
-    }
-    if (error instanceof AgentLeaseError) {
+    if (error instanceof AgentQuoteError) {
       return Response.json(
         {
           error: {
             code: error.code,
             message: error.message,
-            ...error.details,
+            ...(error.details.fields ? { fields: error.details.fields } : {}),
+            ...(error.details.gateReport
+              ? { gateReport: error.details.gateReport }
+              : {}),
+            ...(error.details.preview ? { preview: error.details.preview } : {}),
           },
         },
-        { status: leaseErrorStatus(error.code) },
+        { status: quoteErrorStatus(error.code) },
       );
     }
     return Response.json(
       {
         error: {
           code: "unavailable",
-          message: "MCP lease renewal is temporarily unavailable.",
+          message: "Trade quoting is temporarily unavailable.",
         },
       },
       { status: 503 },

@@ -12,6 +12,7 @@ import {
   fetchConvictionsPage,
   fetchFeedSummary,
   fetchReceipt,
+  requestTradeQuote,
 } from "./live-api-client.js";
 import {
   accountStatusOutputSchema,
@@ -114,7 +115,8 @@ export type CreateLiveServerOptions = {
 
 /**
  * Live MCP server bound to one provisioned profile and renewable lease.
- * Registers the complete v1 tool contract; read tools are wired for network inspection.
+ * Registers the complete v1 tool contract; network read tools and trade
+ * quoting are wired here (#51 / #53 / #54).
  */
 export function createLiveServer(options: CreateLiveServerOptions): McpServer {
   const server = new McpServer(
@@ -268,21 +270,172 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     },
   );
 
+  const mcpTradeAssetValues = [
+    "cash",
+    "eth",
+    "usdc",
+    "usdt",
+    "btc",
+    "sol",
+    "arb",
+  ] as const;
+  const mcpTradeAsset = z.enum(mcpTradeAssetValues);
+  const mcpTradeQuoteInput = z
+    .object({
+      toAsset: mcpTradeAsset,
+      fromAsset: mcpTradeAsset.optional(),
+      sizeUsd: z.number().positive().optional(),
+      fraction: z.number().gt(0).max(1).optional(),
+      destChain: z.enum(["Arbitrum", "Base"]).optional(),
+      publicationIntent: z.boolean().optional(),
+    })
+    .passthrough();
+  // The MCP SDK only advertises object-shaped Zod schemas. Supply the
+  // relationship that Zod refinements cannot express in generated JSON Schema
+  // while keeping runtime passthrough so forbidden fields receive stable codes.
+  mcpTradeQuoteInput._zod.toJSONSchema = () => ({
+    type: "object",
+    properties: {
+      toAsset: { type: "string", enum: [...mcpTradeAssetValues] },
+      fromAsset: { type: "string", enum: [...mcpTradeAssetValues] },
+      sizeUsd: { type: "number", exclusiveMinimum: 0 },
+      fraction: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+      destChain: { type: "string", enum: ["Arbitrum", "Base"] },
+      publicationIntent: { type: "boolean" },
+    },
+    required: ["toAsset"],
+    oneOf: [
+      {
+        required: ["sizeUsd"],
+        not: { required: ["fraction"] },
+      },
+      {
+        required: ["fraction"],
+        not: { required: ["sizeUsd"] },
+      },
+    ],
+    additionalProperties: false,
+  });
+  const mcpTradeQuoteKeys = new Set([
+    "toAsset",
+    "fromAsset",
+    "sizeUsd",
+    "fraction",
+    "destChain",
+    "publicationIntent",
+  ]);
+
   server.registerTool(
     "conviction_quote_trade",
     {
       title: "Quote a structured trade",
       description:
-        "Validate structured trade fields and return a short-lived quote. Does not accept free-form instructions.",
-      inputSchema: {
-        asset: z.string().min(1),
-        side: z.enum(["buy", "sell"]),
-        dollarsIn: z.number().positive(),
-        publish: z.boolean().optional(),
-      },
+        "Validate structured trade fields and return a short-lived quote with costs, floor, exact expiresAt, and quoteId. Named product assets only — no free-form text, contract addresses, or TokenRef. Available even when trading is disabled or the account is unfunded; moves no funds.",
+      inputSchema: mcpTradeQuoteInput,
       annotations: readOnlyAnnotations,
     },
-    async () => requireLease() ?? notImplementedResult("conviction_quote_trade"),
+    async (args) => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+
+      const unknownKeys = Object.keys(args).filter(
+        (key) => !mcpTradeQuoteKeys.has(key),
+      );
+      if (unknownKeys.length > 0) {
+        const looksLikeToken = unknownKeys.some((key) =>
+          /token|address|contract|chainId/i.test(key),
+        );
+        return toolResult(
+          {
+            ok: false,
+            code: looksLikeToken
+              ? "arbitrary_token_rejected"
+              : "invalid_input",
+            message: looksLikeToken
+              ? "Direct MCP trades accept named product assets only. Contract addresses and TokenRef fields are rejected."
+              : "Structured trade fields include unsupported keys.",
+            fields: unknownKeys.map((field) => ({
+              field,
+              code: looksLikeToken ? "forbidden_field" : "unknown_field",
+              message: looksLikeToken
+                ? `Remove "${field}". Use a named product asset instead.`
+                : `Unknown field "${field}".`,
+            })),
+          },
+          true,
+        );
+      }
+
+      const hasSize = args.sizeUsd !== undefined;
+      const hasFraction = args.fraction !== undefined;
+      if (hasSize === hasFraction) {
+        return toolResult(
+          {
+            ok: false,
+            code: "invalid_input",
+            message:
+              "Provide exactly one of sizeUsd (positive dollars) or fraction (0–1 of balance).",
+            fields: [
+              {
+                field: "sizeUsd|fraction",
+                code: "size_required",
+                message:
+                  "Provide exactly one of sizeUsd or fraction — not both, not neither.",
+              },
+            ],
+          },
+          true,
+        );
+      }
+
+      try {
+        const quote = await requestTradeQuote({
+          apiBaseUrl: options.apiBaseUrl,
+          wallet: options.wallet,
+          input: {
+            toAsset: args.toAsset,
+            ...(args.fromAsset ? { fromAsset: args.fromAsset } : {}),
+            ...(args.sizeUsd !== undefined ? { sizeUsd: args.sizeUsd } : {}),
+            ...(args.fraction !== undefined ? { fraction: args.fraction } : {}),
+            ...(args.destChain ? { destChain: args.destChain } : {}),
+            ...(args.publicationIntent !== undefined
+              ? { publicationIntent: args.publicationIntent }
+              : {}),
+          },
+          ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        });
+        return toolResult(quote);
+      } catch (error) {
+        if (error instanceof ConvictionApiError) {
+          return toolResult(
+            {
+              ok: false,
+              code: error.code,
+              message: error.message,
+              ...(error.details.fields ? { fields: error.details.fields } : {}),
+              ...(error.details.gateReport
+                ? { gateReport: error.details.gateReport }
+                : {}),
+              ...(error.details.preview
+                ? { preview: error.details.preview }
+                : {}),
+            },
+            true,
+          );
+        }
+        return toolResult(
+          {
+            ok: false,
+            code: "unavailable",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Could not quote structured trade.",
+          },
+          true,
+        );
+      }
+    },
   );
 
   server.registerTool(

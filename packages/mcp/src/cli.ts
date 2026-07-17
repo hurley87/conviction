@@ -217,16 +217,12 @@ async function runLiveServe(args: string[]): Promise<void> {
     });
   } catch (error) {
     if (error instanceof ConvictionApiError && error.code === "lease_conflict") {
-      const details = error as ConvictionApiError & {
-        activeLeaseExpiresAt?: string;
-        leaseAgeMs?: number;
-      };
       const age =
-        typeof details.leaseAgeMs === "number"
-          ? `${Math.round(details.leaseAgeMs / 1000)}s old`
+        typeof error.details.leaseAgeMs === "number"
+          ? `${Math.round(error.details.leaseAgeMs / 1000)}s old`
           : "active";
       throw new Error(
-        `MCP lease conflict (${age}${details.activeLeaseExpiresAt ? `, expires ${details.activeLeaseExpiresAt}` : ""}). Wait for expiry or rerun with --replace-lease.`,
+        `MCP lease conflict (${age}${error.details.activeLeaseExpiresAt ? `, expires ${error.details.activeLeaseExpiresAt}` : ""}). Wait for expiry or rerun with --replace-lease.`,
       );
     }
     throw error;

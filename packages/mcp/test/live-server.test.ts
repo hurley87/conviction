@@ -474,6 +474,271 @@ describe("createLiveServer", () => {
     }
   });
 
+  it("quotes a structured trade over a signed request and never accepts free-form fields", async () => {
+    const wallet = Wallet.createRandom();
+    const lease = mockLease(wallet);
+    let sawQuoteRequest = false;
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      expect(url).toBe("http://conviction.test/api/agents/quote/trade");
+      expect(init?.method).toBe("POST");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("x-conviction-agent")).toBe(wallet.address);
+      expect(headers.get("x-conviction-signature")).toBeTruthy();
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+        string,
+        unknown
+      >;
+      expect(body).toEqual({
+        toAsset: "eth",
+        sizeUsd: 20,
+        destChain: "Arbitrum",
+      });
+      expect(body).not.toHaveProperty("token");
+      expect(body).not.toHaveProperty("side");
+      expect(body).not.toHaveProperty("text");
+      sawQuoteRequest = true;
+
+      return new Response(
+        JSON.stringify({
+          quote: {
+            ok: true,
+            quoteId: "00000000-0000-4000-8000-00000000q100",
+            action: "trade",
+            quoteFingerprint: "a".repeat(64),
+            issuedAt: "2026-07-17T12:00:00.000Z",
+            serverTime: "2026-07-17T12:00:00.000Z",
+            expiresAt: "2026-07-17T12:01:00.000Z",
+            dollarsIn: 20,
+            dollarsOut: 19.9,
+            feeUsd: 0.1,
+            floorUsd: 19.701,
+            sourceChain: "Base",
+            destChain: "Arbitrum",
+            toAsset: "eth",
+            sizeUsd: 20,
+            publicationIntent: false,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const server = createLiveServer({
+      profile: testProfile(wallet),
+      wallet,
+      lease,
+      apiBaseUrl: "http://conviction.test",
+      fetchImpl,
+    });
+
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "live-quote-test", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    cleanup.push(async () => {
+      await client.close();
+      await server.close();
+    });
+
+    const listed = await client.listTools();
+    const quoteTool = listed.tools.find(
+      (tool) => tool.name === "conviction_quote_trade",
+    );
+    expect(JSON.stringify(quoteTool?.inputSchema)).not.toMatch(
+      /side|dollarsIn|token|contract|prompt|text/i,
+    );
+    expect(quoteTool?.inputSchema).toMatchObject({
+      required: ["toAsset"],
+      additionalProperties: false,
+      oneOf: [
+        {
+          required: ["sizeUsd"],
+          not: { required: ["fraction"] },
+        },
+        {
+          required: ["fraction"],
+          not: { required: ["sizeUsd"] },
+        },
+      ],
+    });
+
+    const result = await client.callTool({
+      name: "conviction_quote_trade",
+      arguments: {
+        toAsset: "eth",
+        sizeUsd: 20,
+        destChain: "Arbitrum",
+      },
+    });
+
+    expect(sawQuoteRequest).toBe(true);
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      quoteId: "00000000-0000-4000-8000-00000000q100",
+      expiresAt: "2026-07-17T12:01:00.000Z",
+      dollarsIn: 20,
+      floorUsd: 19.701,
+      destChain: "Arbitrum",
+      quoteFingerprint: "a".repeat(64),
+    });
+  });
+
+  it("rejects arbitrary token and contract arguments before quoting", async () => {
+    const wallet = Wallet.createRandom();
+    const lease = mockLease(wallet);
+    let calledBackend = false;
+    const client = await connectLiveServer({
+      wallet,
+      lease,
+      fetchImpl: async () => {
+        calledBackend = true;
+        return new Response("{}", { status: 500 });
+      },
+    });
+
+    for (const forbidden of [
+      {
+        contractAddress: "0x1111111111111111111111111111111111111111",
+      },
+      {
+        token: {
+          chainId: 8453,
+          address: "0x1111111111111111111111111111111111111111",
+        },
+      },
+    ]) {
+      const result = await client.callTool({
+        name: "conviction_quote_trade",
+        arguments: {
+          toAsset: "eth",
+          sizeUsd: 20,
+          ...forbidden,
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        code: "arbitrary_token_rejected",
+      });
+    }
+    expect(calledBackend).toBe(false);
+  });
+
+  it("surfaces gate_failed with report details from the backend", async () => {
+    const wallet = Wallet.createRandom();
+    const lease = mockLease(wallet);
+
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "gate_failed",
+            message: "Publication gate failed: No route through your Universal Account.",
+            gateReport: [
+              {
+                id: "routability",
+                name: "UA routability",
+                passed: false,
+                detail: "No route through your Universal Account",
+              },
+            ],
+            preview: {
+              dollarsIn: 20,
+              dollarsOut: 19.9,
+              feeUsd: 0.1,
+              floorUsd: 19.701,
+              sourceChain: "Base",
+              destChain: "Arbitrum",
+            },
+          },
+        }),
+        { status: 409, headers: { "content-type": "application/json" } },
+      );
+
+    const server = createLiveServer({
+      profile: testProfile(wallet),
+      wallet,
+      lease,
+      apiBaseUrl: "http://conviction.test",
+      fetchImpl,
+    });
+
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "live-quote-gate", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    cleanup.push(async () => {
+      await client.close();
+      await server.close();
+    });
+
+    const result = await client.callTool({
+      name: "conviction_quote_trade",
+      arguments: {
+        toAsset: "usdc",
+        sizeUsd: 20,
+        publicationIntent: true,
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      code: "gate_failed",
+      gateReport: [
+        expect.objectContaining({
+          passed: false,
+          detail: "No route through your Universal Account",
+        }),
+      ],
+      preview: expect.objectContaining({ dollarsIn: 20 }),
+    });
+  });
+
+  it("rejects missing size locally with a stable invalid_input error", async () => {
+    const wallet = Wallet.createRandom();
+    const lease = mockLease(wallet);
+    let calledBackend = false;
+    const server = createLiveServer({
+      profile: testProfile(wallet),
+      wallet,
+      lease,
+      apiBaseUrl: "http://conviction.test",
+      fetchImpl: async () => {
+        calledBackend = true;
+        return new Response("{}", { status: 500 });
+      },
+    });
+
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "live-quote-invalid", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    cleanup.push(async () => {
+      await client.close();
+      await server.close();
+    });
+
+    const result = await client.callTool({
+      name: "conviction_quote_trade",
+      arguments: { toAsset: "eth" },
+    });
+
+    expect(calledBackend).toBe(false);
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      code: "invalid_input",
+    });
+  });
+
   it("keeps happy-path output validation strict after tools/list", async () => {
     const wallet = Wallet.createRandom();
     const lease = mockLease(wallet);

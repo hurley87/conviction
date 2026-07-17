@@ -11,9 +11,10 @@ import type {
 } from "@/lib/verbs/types";
 import {
   assetMatches,
-  isBuyOnlyAsset,
   isTradeFundingAsset,
   productAssetPrimarySymbol,
+  productAssetSettlesOn,
+  productTradePairError,
   toUaTokenType,
 } from "@/lib/verbs/assets";
 import {
@@ -296,23 +297,15 @@ export function validateIntent(
 
     // Buy-only assets (e.g. ARB) aren't UA primary tokens: they can't fund a
     // trade (usePrimaryTokens) or be a convert destination (expectToken.type).
-    if (intent.fromAsset && isBuyOnlyAsset(intent.fromAsset)) {
-      return {
-        ok: false,
-        error: `${intent.fromAsset.toUpperCase()} can only be bought for now, not sold.`,
-      };
-    }
-    if (intent.fromAsset && isBuyOnlyAsset(intent.toAsset)) {
-      return {
-        ok: false,
-        error: `Buy ${intent.toAsset.toUpperCase()} with cash instead — converting another asset into it isn't supported yet.`,
-      };
+    const pairError = productTradePairError(intent.fromAsset, intent.toAsset);
+    if (pairError) {
+      return { ok: false, error: pairError };
     }
 
     // The target must have a known address on the settlement chain. Catches
     // assets like SOL (not an EVM chain) before quoting, with a friendly message
     // instead of a jargon error from the trade builder.
-    if (!tokenAddress(toUaTokenType(intent.toAsset), destChainId(destChain))) {
+    if (!productAssetSettlesOn(intent.toAsset, destChain)) {
       return { ok: false, error: "That destination isn't supported yet." };
     }
 

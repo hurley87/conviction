@@ -11,15 +11,24 @@ describe("parseAgentJsonObject", () => {
     expect(parseAgentJsonObject('{"replace":true}')).toEqual({ replace: true });
   });
 
-  it("rejects invalid JSON and non-objects with invalid_request", () => {
+  it("rejects invalid JSON and non-objects with AgentApiBodyError", () => {
     expect(() => parseAgentJsonObject("{")).toThrowError(
-      expect.objectContaining({ code: "invalid_request" }),
+      expect.objectContaining({
+        name: "AgentApiBodyError",
+        code: "invalid_request",
+      }),
     );
     expect(() => parseAgentJsonObject("[]")).toThrowError(
-      expect.objectContaining({ code: "invalid_request" }),
+      expect.objectContaining({
+        name: "AgentApiBodyError",
+        code: "invalid_request",
+      }),
     );
     expect(() => parseAgentJsonObject('"x"')).toThrowError(
-      expect.objectContaining({ code: "invalid_request" }),
+      expect.objectContaining({
+        name: "AgentApiBodyError",
+        code: "invalid_request",
+      }),
     );
   });
 });
