@@ -1,113 +1,28 @@
+import {
+  AGENT_SUMMARIZE_FEED_PATH,
+  agentConvictionPath,
+  agentConvictionsListPath,
+  agentReceiptPath,
+  type AccountStatusResult,
+  type ConvictionGetResult,
+  type ConvictionListResult,
+  type FeedSummaryResult,
+  type ReceiptGetResult,
+} from "./agent-reads-contract.js";
 import { ConvictionApiError, type ApiErrorBody } from "./api-client.js";
 import type { LocalWallet } from "./keystore.js";
 import { signAgentRequest } from "./signed-request.js";
 
-export type UniversalBalance = {
-  totalUsd: number;
-  sources: Array<{
-    chain: string;
-    asset: string;
-    usd: number;
-  }>;
-};
-
-export type DepositAddresses = {
-  evm: string;
-  solana: string | null;
-};
-
-export type LiveAgentStatus = {
-  ok: true;
-  mode: "live";
-  agentId: string;
-  handle: string;
-  operatorHandle: string;
-  address: string;
-  depositAddress: string;
-  depositAddresses: DepositAddresses;
-  balance: UniversalBalance;
-  status: string;
-  publicStatus: string;
-  actionPolicy: {
-    trade: boolean;
-    back: boolean;
-    publish: boolean;
-  };
-  maxTradeUsd: number;
-  spendBudgetUsd: number;
-  lifetimeSpendUsd: number;
-  remainingBudgetUsd: number;
-  fundingReady: boolean;
-  /** ISO timestamp set by a successful non-value-moving doctor check. */
-  setupVerifiedAt: string | null;
-};
-
-export type CompactConviction = {
-  entryId: string;
-  handle: string;
-  thesis: string;
-  trade: {
-    fromAsset: string;
-    toAsset: string;
-    sizeUsd: number;
-    toChain: string;
-    tokenSymbol?: string;
-  };
-  createdAt: string;
-  backerCount: number;
-  receiptSlug?: string;
-  anatomy: {
-    whyNowCount: number;
-    hasWhatBreaksIt: boolean;
-    gatePassed: number;
-    gateFailed: number;
-  };
-};
-
-export type ConvictionListResult = {
-  ok: true;
-  entries: CompactConviction[];
-  nextCursor: string | null;
-  hasMore: boolean;
-};
-
-export type ConvictionGetResult = {
-  ok: true;
-  entry: Record<string, unknown>;
-  attribution: {
-    backerCount: number;
-    backedBy: string[];
-  };
-};
-
-export type FeedSummaryResult = {
-  ok: true;
-  digest: string;
-  flagged: string[];
-  flaggedEntries: Array<{
-    entryId: string;
-    handle: string;
-    reason: string;
-  }>;
-};
-
-export type ReceiptGetResult = {
-  ok: true;
-  receiptId: string;
-  receipt: {
-    slug: string;
-    summary: string;
-    dollarsIn: number;
-    dollarsOut: number;
-    feeUsd: number;
-    legs: Array<{
-      chain: string;
-      txHash: string;
-      explorerUrl: string;
-    }>;
-  };
-  entryAt: string;
-};
+export type {
+  AccountStatusResult as LiveAgentStatus,
+  ConvictionGetResult,
+  ConvictionListResult,
+  FeedSummaryResult,
+  ReceiptGetResult,
+  CompactConviction,
+  UniversalBalance,
+  DepositAddresses,
+} from "./agent-reads-contract.js";
 
 export type LiveLease = {
   leaseId: string;
@@ -176,35 +91,12 @@ async function signedFetch<T>(options: {
   return payload;
 }
 
-function convictionsListPath(query: {
-  cursor?: string;
-  limit?: number;
-}): string {
-  const params = new URLSearchParams();
-  if (query.limit !== undefined) {
-    params.set("limit", String(query.limit));
-  }
-  if (query.cursor) {
-    params.set("cursor", query.cursor);
-  }
-  const qs = params.toString();
-  return qs ? `/api/agents/convictions?${qs}` : "/api/agents/convictions";
-}
-
-function convictionPath(entryId: string): string {
-  return `/api/agents/convictions/${encodeURIComponent(entryId)}`;
-}
-
-function receiptPath(receiptId: string): string {
-  return `/api/agents/receipts?${new URLSearchParams({ receiptId }).toString()}`;
-}
-
 export async function fetchAgentStatus(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   fetchImpl?: typeof fetch;
-}): Promise<LiveAgentStatus> {
-  const payload = await signedFetch<{ status: LiveAgentStatus }>({
+}): Promise<AccountStatusResult> {
+  const payload = await signedFetch<{ status: AccountStatusResult }>({
     ...options,
     method: "GET",
     path: "/api/agents/status",
@@ -217,8 +109,8 @@ export async function markSetupVerified(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   fetchImpl?: typeof fetch;
-}): Promise<LiveAgentStatus> {
-  const payload = await signedFetch<{ status: LiveAgentStatus }>({
+}): Promise<AccountStatusResult> {
+  const payload = await signedFetch<{ status: AccountStatusResult }>({
     apiBaseUrl: options.apiBaseUrl,
     wallet: options.wallet,
     method: "POST",
@@ -240,7 +132,7 @@ export async function fetchConvictionsPage(options: {
     apiBaseUrl: options.apiBaseUrl,
     wallet: options.wallet,
     method: "GET",
-    path: convictionsListPath({
+    path: agentConvictionsListPath({
       ...(options.limit !== undefined ? { limit: options.limit } : {}),
       ...(options.cursor ? { cursor: options.cursor } : {}),
     }),
@@ -258,7 +150,7 @@ export async function fetchConviction(options: {
     apiBaseUrl: options.apiBaseUrl,
     wallet: options.wallet,
     method: "GET",
-    path: convictionPath(options.entryId),
+    path: agentConvictionPath(options.entryId),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
 }
@@ -271,7 +163,7 @@ export async function fetchFeedSummary(options: {
   return signedFetch<FeedSummaryResult>({
     ...options,
     method: "GET",
-    path: "/api/agents/summarize-feed",
+    path: AGENT_SUMMARIZE_FEED_PATH,
   });
 }
 
@@ -285,7 +177,7 @@ export async function fetchReceipt(options: {
     apiBaseUrl: options.apiBaseUrl,
     wallet: options.wallet,
     method: "GET",
-    path: receiptPath(options.receiptId),
+    path: agentReceiptPath(options.receiptId),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
 }

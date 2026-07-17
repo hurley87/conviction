@@ -2,6 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
+import {
+  accountStatusOutputSchema,
+  getConvictionOutputSchema,
+  getReceiptOutputSchema,
+  listConvictionsOutputSchema,
+  MAX_CONVICTION_PAGE_LIMIT,
+  summarizeFeedOutputSchema,
+} from "./agent-reads-contract.js";
 import { ConvictionApiError } from "./api-client.js";
 import type { LocalWallet } from "./keystore.js";
 import type { LeaseHandle } from "./lease.js";
@@ -96,118 +104,6 @@ function unavailableResult(error: unknown, fallback: string) {
   );
 }
 
-const balanceSchema = z.object({
-  totalUsd: z.number(),
-  sources: z.array(
-    z.object({
-      chain: z.string(),
-      asset: z.string(),
-      usd: z.number(),
-    }),
-  ),
-});
-
-const depositAddressesSchema = z.object({
-  evm: z.string(),
-  solana: z.string().nullable(),
-});
-
-const accountStatusOutputSchema = {
-  ok: z.boolean(),
-  mode: z.literal("live"),
-  agentId: z.string(),
-  handle: z.string(),
-  operatorHandle: z.string(),
-  address: z.string(),
-  depositAddress: z.string(),
-  depositAddresses: depositAddressesSchema,
-  balance: balanceSchema,
-  status: z.string(),
-  publicStatus: z.string(),
-  actionPolicy: z.object({
-    trade: z.boolean(),
-    back: z.boolean(),
-    publish: z.boolean(),
-  }),
-  maxTradeUsd: z.number(),
-  spendBudgetUsd: z.number(),
-  lifetimeSpendUsd: z.number(),
-  remainingBudgetUsd: z.number(),
-  fundingReady: z.boolean(),
-  setupVerifiedAt: z.string().nullable(),
-};
-
-const compactConvictionSchema = z.object({
-  entryId: z.string(),
-  handle: z.string(),
-  thesis: z.string(),
-  trade: z.object({
-    fromAsset: z.string(),
-    toAsset: z.string(),
-    sizeUsd: z.number(),
-    toChain: z.string(),
-    tokenSymbol: z.string().optional(),
-  }),
-  createdAt: z.string(),
-  backerCount: z.number(),
-  receiptSlug: z.string().optional(),
-  anatomy: z.object({
-    whyNowCount: z.number(),
-    hasWhatBreaksIt: z.boolean(),
-    gatePassed: z.number(),
-    gateFailed: z.number(),
-  }),
-});
-
-const listConvictionsOutputSchema = {
-  ok: z.literal(true),
-  entries: z.array(compactConvictionSchema),
-  nextCursor: z.string().nullable(),
-  hasMore: z.boolean(),
-};
-
-const getConvictionOutputSchema = {
-  ok: z.literal(true),
-  entry: z.record(z.string(), z.unknown()),
-  attribution: z.object({
-    backerCount: z.number(),
-    backedBy: z.array(z.string()),
-  }),
-};
-
-const summarizeFeedOutputSchema = {
-  ok: z.literal(true),
-  digest: z.string(),
-  flagged: z.array(z.string()),
-  flaggedEntries: z.array(
-    z.object({
-      entryId: z.string(),
-      handle: z.string(),
-      reason: z.string(),
-    }),
-  ),
-};
-
-const getReceiptOutputSchema = {
-  ok: z.literal(true),
-  receiptId: z.string(),
-  receipt: z.object({
-    slug: z.string(),
-    summary: z.string(),
-    dollarsIn: z.number(),
-    dollarsOut: z.number(),
-    feeUsd: z.number(),
-    legs: z.array(
-      z.object({
-        chain: z.string(),
-        txHash: z.string(),
-        explorerUrl: z.string(),
-      }),
-    ),
-  }),
-  entryAt: z.string(),
-};
-
 export type CreateLiveServerOptions = {
   profile: AgentProfile;
   wallet: LocalWallet;
@@ -277,7 +173,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
         "List current deck or feed convictions with bounded pagination.",
       inputSchema: {
         cursor: z.string().optional(),
-        limit: z.number().int().positive().max(50).optional(),
+        limit: z.number().int().positive().max(MAX_CONVICTION_PAGE_LIMIT).optional(),
       },
       outputSchema: listConvictionsOutputSchema,
       annotations: readOnlyAnnotations,

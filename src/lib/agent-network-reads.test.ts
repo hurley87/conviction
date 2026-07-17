@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { COMPACT_THESIS_MAX_CHARS } from "@conviction/mcp/agent-reads-contract";
 import { loadAgentAccountStatus } from "@/lib/agent-account-status";
 import {
   compactThesis,
-  COMPACT_THESIS_MAX_CHARS,
   decodeConvictionCursor,
   encodeConvictionCursor,
   toCompactConviction,

@@ -11,14 +11,19 @@ import {
   clampConvictionPageLimit,
   decodeConvictionCursor,
   encodeConvictionCursor,
-  toCompactConviction,
-  type ConvictionPage,
 } from "@/lib/agent-network-reads";
 import type {
   ConvictionEntry,
   GateCheck,
   WhyNowEvent,
 } from "@/lib/verbs/types";
+
+/** Keyset page of canonical entries — presentation shaping belongs at the route. */
+export type ConvictionEntryPage = {
+  entries: ConvictionEntry[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
 
 const memoryStore = new Map<string, ConvictionEntry>();
 let memorySeeded = false;
@@ -208,13 +213,13 @@ export async function getConviction(
 }
 
 /**
- * Bounded keyset pagination for MCP list tools.
+ * Bounded keyset pagination over canonical conviction entries.
  * Cursor is opaque; invalid cursors throw with code `invalid_cursor`.
  */
 export async function listConvictionsPage(options: {
   cursor?: string;
   limit?: number;
-}): Promise<ConvictionPage> {
+}): Promise<ConvictionEntryPage> {
   const limit = clampConvictionPageLimit(options.limit);
   let cursor: { createdAt: string; entryId: string } | null = null;
   if (options.cursor) {
@@ -265,7 +270,7 @@ export async function listConvictionsPage(options: {
   const entries = page.slice(0, limit);
   const last = entries[entries.length - 1];
   return {
-    entries: entries.map(toCompactConviction),
+    entries,
     nextCursor: hasMore && last ? encodeConvictionCursor(last) : null,
     hasMore,
   };

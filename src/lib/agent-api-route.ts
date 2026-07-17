@@ -54,3 +54,31 @@ export function invalidRequestResponse(message: string): Response {
     { status: 400 },
   );
 }
+
+/**
+ * Authenticate a signed agent GET, run the handler, and map auth / domain errors.
+ */
+export async function runAgentGetRoute<T>(options: {
+  request: Request;
+  path: string;
+  handler: (agent: OwnedAgent) => Promise<T>;
+  onError?: (error: unknown) => Response | null;
+  fallbackMessage: string;
+}): Promise<Response> {
+  try {
+    const agent = await authenticateAgentGet({
+      request: options.request,
+      path: options.path,
+    });
+    return Response.json(await options.handler(agent), {
+      status: 200,
+      headers: { "cache-control": "no-store" },
+    });
+  } catch (error) {
+    const authResponse = agentAuthErrorResponse(error);
+    if (authResponse) return authResponse;
+    return (
+      options.onError?.(error) ?? unavailableResponse(options.fallbackMessage)
+    );
+  }
+}

@@ -1,9 +1,7 @@
 import {
-  agentAuthErrorResponse,
-  authenticateAgentGet,
   invalidRequestResponse,
   notFoundResponse,
-  unavailableResponse,
+  runAgentGetRoute,
 } from "@/lib/agent-api-route";
 import { agentReceiptPath } from "@/lib/agent-network-reads";
 import { getStoredReceiptRecord } from "@/lib/receipts";
@@ -15,26 +13,34 @@ export async function GET(request: Request) {
     return invalidRequestResponse("receiptId is required.");
   }
 
-  const path = agentReceiptPath(receiptId);
-
-  try {
-    await authenticateAgentGet({ request, path });
-    const record = await getStoredReceiptRecord(receiptId);
-    if (!record) {
-      return notFoundResponse("Receipt not found.");
-    }
-    return Response.json(
-      {
-        ok: true,
+  return runAgentGetRoute({
+    request,
+    path: agentReceiptPath(receiptId),
+    handler: async () => {
+      const record = await getStoredReceiptRecord(receiptId);
+      if (!record) {
+        throw new ReceiptNotFoundError();
+      }
+      return {
+        ok: true as const,
         receiptId,
         receipt: record.receipt,
         entryAt: record.entryAt,
-      },
-      { status: 200, headers: { "cache-control": "no-store" } },
-    );
-  } catch (error) {
-    const authResponse = agentAuthErrorResponse(error);
-    if (authResponse) return authResponse;
-    return unavailableResponse("Receipt lookup is temporarily unavailable.");
+      };
+    },
+    onError: (error) => {
+      if (error instanceof ReceiptNotFoundError) {
+        return notFoundResponse("Receipt not found.");
+      }
+      return null;
+    },
+    fallbackMessage: "Receipt lookup is temporarily unavailable.",
+  });
+}
+
+class ReceiptNotFoundError extends Error {
+  constructor() {
+    super("Receipt not found.");
+    this.name = "ReceiptNotFoundError";
   }
 }

@@ -1,10 +1,11 @@
 import {
-  agentAuthErrorResponse,
-  authenticateAgentGet,
   invalidRequestResponse,
-  unavailableResponse,
+  runAgentGetRoute,
 } from "@/lib/agent-api-route";
-import { agentConvictionsListPath } from "@/lib/agent-network-reads";
+import {
+  agentConvictionsListPath,
+  toCompactConviction,
+} from "@/lib/agent-network-reads";
 import {
   ConvictionReadError,
   listConvictionsPage,
@@ -29,27 +30,27 @@ export async function GET(request: Request) {
     ...(cursor ? { cursor } : {}),
   });
 
-  try {
-    await authenticateAgentGet({ request, path });
-    const page = await listConvictionsPage({
-      ...(limit !== undefined ? { limit } : {}),
-      ...(cursor ? { cursor } : {}),
-    });
-    return Response.json(
-      {
-        ok: true,
-        entries: page.entries,
+  return runAgentGetRoute({
+    request,
+    path,
+    handler: async () => {
+      const page = await listConvictionsPage({
+        ...(limit !== undefined ? { limit } : {}),
+        ...(cursor ? { cursor } : {}),
+      });
+      return {
+        ok: true as const,
+        entries: page.entries.map(toCompactConviction),
         nextCursor: page.nextCursor,
         hasMore: page.hasMore,
-      },
-      { status: 200, headers: { "cache-control": "no-store" } },
-    );
-  } catch (error) {
-    const authResponse = agentAuthErrorResponse(error);
-    if (authResponse) return authResponse;
-    if (error instanceof ConvictionReadError) {
-      return invalidRequestResponse(error.message);
-    }
-    return unavailableResponse("Conviction listing is temporarily unavailable.");
-  }
+      };
+    },
+    onError: (error) => {
+      if (error instanceof ConvictionReadError) {
+        return invalidRequestResponse(error.message);
+      }
+      return null;
+    },
+    fallbackMessage: "Conviction listing is temporarily unavailable.",
+  });
 }

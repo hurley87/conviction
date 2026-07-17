@@ -1,65 +1,26 @@
-// Compact, agent-facing read shapes for MCP network inspection (issue #53).
-// Keeps list/get/summarize/receipt payloads small enough for host context windows.
+// Web-side compaction and cursor codec for agent network reads (issue #53).
+// Wire types and signed paths live in @conviction/mcp/agent-reads-contract.
 
-import type { ConvictionEntry, Receipt } from "@/lib/verbs/types";
+import {
+  COMPACT_THESIS_MAX_CHARS,
+  DEFAULT_CONVICTION_PAGE_LIMIT,
+  MAX_CONVICTION_PAGE_LIMIT,
+  type CompactConviction,
+  type ConvictionAttribution,
+} from "@conviction/mcp/agent-reads-contract";
+import type { ConvictionEntry } from "@/lib/verbs/types";
 
-export const DEFAULT_CONVICTION_PAGE_LIMIT = 20;
-export const MAX_CONVICTION_PAGE_LIMIT = 50;
-export const COMPACT_THESIS_MAX_CHARS = 280;
-
-export type CompactConvictionTrade = {
-  fromAsset: string;
-  toAsset: string;
-  sizeUsd: number;
-  toChain: string;
-  tokenSymbol?: string;
-};
-
-export type CompactConvictionAnatomy = {
-  whyNowCount: number;
-  hasWhatBreaksIt: boolean;
-  gatePassed: number;
-  gateFailed: number;
-};
-
-/** Bounded list row — thesis truncated, anatomy summarized, backer count only. */
-export type CompactConviction = {
-  entryId: string;
-  handle: string;
-  thesis: string;
-  trade: CompactConvictionTrade;
-  createdAt: string;
-  backerCount: number;
-  receiptSlug?: string;
-  anatomy: CompactConvictionAnatomy;
-};
-
-export type ConvictionAttribution = {
-  backerCount: number;
-  backedBy: string[];
-};
-
-export type ConvictionPage = {
-  entries: CompactConviction[];
-  nextCursor: string | null;
-  hasMore: boolean;
-};
-
-export type FeedSummaryResult = {
-  digest: string;
-  flagged: string[];
-  flaggedEntries: Array<{
-    entryId: string;
-    handle: string;
-    reason: string;
-  }>;
-};
-
-export type ReceiptResult = {
-  receiptId: string;
-  receipt: Receipt;
-  entryAt: string;
-};
+export {
+  AGENT_SUMMARIZE_FEED_PATH,
+  COMPACT_THESIS_MAX_CHARS,
+  DEFAULT_CONVICTION_PAGE_LIMIT,
+  MAX_CONVICTION_PAGE_LIMIT,
+  agentConvictionPath,
+  agentConvictionsListPath,
+  agentReceiptPath,
+  type CompactConviction,
+  type ConvictionAttribution,
+} from "@conviction/mcp/agent-reads-contract";
 
 /** Truncate thesis for list rows without cutting mid-surrogate when possible. */
 export function compactThesis(
@@ -71,23 +32,22 @@ export function compactThesis(
   return `${trimmed.slice(0, maxChars - 1).trimEnd()}…`;
 }
 
+/** List rows are compacted; get returns the full canonical ConvictionEntry. */
 export function toCompactConviction(entry: ConvictionEntry): CompactConviction {
   const gateReport = entry.gateReport ?? [];
-  const trade: CompactConvictionTrade = {
-    fromAsset: entry.trade.fromAsset,
-    toAsset: entry.trade.toAsset,
-    sizeUsd: entry.trade.sizeUsd,
-    toChain: entry.trade.toChain,
-    ...(entry.trade.token?.symbol
-      ? { tokenSymbol: entry.trade.token.symbol }
-      : {}),
-  };
-
   return {
     entryId: entry.entryId,
     handle: entry.handle,
     thesis: compactThesis(entry.thesis),
-    trade,
+    trade: {
+      fromAsset: entry.trade.fromAsset,
+      toAsset: entry.trade.toAsset,
+      sizeUsd: entry.trade.sizeUsd,
+      toChain: entry.trade.toChain,
+      ...(entry.trade.token?.symbol
+        ? { tokenSymbol: entry.trade.token.symbol }
+        : {}),
+    },
     createdAt: entry.createdAt,
     backerCount: entry.backedBy.length,
     ...(entry.receiptSlug ? { receiptSlug: entry.receiptSlug } : {}),
@@ -146,30 +106,3 @@ export function clampConvictionPageLimit(limit: number | undefined): number {
   if (whole < 1) return DEFAULT_CONVICTION_PAGE_LIMIT;
   return Math.min(whole, MAX_CONVICTION_PAGE_LIMIT);
 }
-
-/** Canonical signed path for paginated conviction listing. */
-export function agentConvictionsListPath(query: {
-  limit?: number;
-  cursor?: string;
-}): string {
-  const params = new URLSearchParams();
-  if (query.limit !== undefined) {
-    params.set("limit", String(query.limit));
-  }
-  if (query.cursor) {
-    params.set("cursor", query.cursor);
-  }
-  const qs = params.toString();
-  return qs ? `/api/agents/convictions?${qs}` : "/api/agents/convictions";
-}
-
-export function agentConvictionPath(entryId: string): string {
-  return `/api/agents/convictions/${encodeURIComponent(entryId)}`;
-}
-
-export function agentReceiptPath(receiptId: string): string {
-  const params = new URLSearchParams({ receiptId });
-  return `/api/agents/receipts?${params.toString()}`;
-}
-
-export const AGENT_SUMMARIZE_FEED_PATH = "/api/agents/summarize-feed";

@@ -1,8 +1,6 @@
 import {
-  agentAuthErrorResponse,
-  authenticateAgentGet,
   notFoundResponse,
-  unavailableResponse,
+  runAgentGetRoute,
 } from "@/lib/agent-api-route";
 import {
   agentConvictionPath,
@@ -21,25 +19,33 @@ export async function GET(request: Request, context: RouteContext) {
     return notFoundResponse("Conviction not found.");
   }
 
-  const path = agentConvictionPath(entryId);
-
-  try {
-    await authenticateAgentGet({ request, path });
-    const entry = await getConviction(entryId);
-    if (!entry) {
-      return notFoundResponse("Conviction not found.");
-    }
-    return Response.json(
-      {
-        ok: true,
+  return runAgentGetRoute({
+    request,
+    path: agentConvictionPath(entryId),
+    handler: async () => {
+      const entry = await getConviction(entryId);
+      if (!entry) {
+        throw new ConvictionNotFoundError();
+      }
+      return {
+        ok: true as const,
         entry,
         attribution: toConvictionAttribution(entry),
-      },
-      { status: 200, headers: { "cache-control": "no-store" } },
-    );
-  } catch (error) {
-    const authResponse = agentAuthErrorResponse(error);
-    if (authResponse) return authResponse;
-    return unavailableResponse("Conviction lookup is temporarily unavailable.");
+      };
+    },
+    onError: (error) => {
+      if (error instanceof ConvictionNotFoundError) {
+        return notFoundResponse("Conviction not found.");
+      }
+      return null;
+    },
+    fallbackMessage: "Conviction lookup is temporarily unavailable.",
+  });
+}
+
+class ConvictionNotFoundError extends Error {
+  constructor() {
+    super("Conviction not found.");
+    this.name = "ConvictionNotFoundError";
   }
 }
