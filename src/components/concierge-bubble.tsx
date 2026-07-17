@@ -214,7 +214,7 @@ export function ConciergeBubble() {
           aria-hidden={!open}
           inert={!open}
           tabIndex={-1}
-          className={`absolute inset-y-0 right-0 flex h-dvh w-full flex-col overflow-hidden border-l border-line bg-surface/98 shadow-[0_0_80px_rgba(42,26,46,0.22)] backdrop-blur-2xl transition-transform duration-300 ease-out motion-reduce:transition-none sm:w-[420px] ${
+          className={`absolute inset-y-0 right-0 flex h-dvh w-full flex-col overflow-hidden border-l border-line bg-surface/98 shadow-[0_0_80px_rgba(42,26,46,0.22)] backdrop-blur-2xl transition-transform duration-300 ease-out motion-reduce:transition-none sm:w-[min(640px,calc(100vw-3rem))] ${
             open ? "translate-x-0" : "translate-x-full"
           }`}
         >

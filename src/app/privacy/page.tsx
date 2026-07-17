@@ -21,6 +21,10 @@ export default function PrivacyPage() {
           <li>Public wallet addresses and public blockchain activity.</li>
           <li>Content you post, save, or interact with.</li>
           <li>
+            Your private chat transcript, linked to your signed-in account so
+            it can be restored across sessions and devices.
+          </li>
+          <li>
             Basic device, browser, and usage information used to keep the app
             working.
           </li>
@@ -71,6 +75,11 @@ export default function PrivacyPage() {
           service, meet legal obligations, resolve disputes, and prevent abuse.
           Public blockchain data may remain available permanently.
         </p>
+        <p>
+          Your account-linked chat transcript is kept until you use Clear chat
+          to permanently delete it. Chat storage includes message text, but not
+          quotes, signatures, voice drafts, or executable transaction state.
+        </p>
       </ContentSection>
 
       <ContentSection title="Your choices">
@@ -78,6 +87,11 @@ export default function PrivacyPage() {
           You can stop using Conviction at any time. You may also ask us about
           the personal information we hold or request that we correct or delete
           it, where the law gives you that right.
+        </p>
+        <p>
+          You can permanently delete your stored chat transcript at any time
+          with Clear chat in the chat drawer. This does not delete public
+          blockchain records or completed Activity entries.
         </p>
       </ContentSection>
 
