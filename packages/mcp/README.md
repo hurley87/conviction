@@ -6,6 +6,7 @@ surfaces:
 
 - deterministic mock mode for host integration without credentials
 - `init` to redeem a one-time Agent Access handoff into a local encrypted profile
+- `serve --profile` for one authenticated live MCP session with a renewable lease
 
 ## Provision a local profile
 
@@ -43,6 +44,20 @@ From this repository, use:
 ```sh
 npm run mcp:mock
 ```
+
+## Start a live authenticated session
+
+After `init` writes a local profile:
+
+```sh
+conviction-mcp serve --profile <name> --api-base https://your-conviction-host
+```
+
+Startup acquires one renewable MCP lease for that agent. A second concurrent
+process is rejected with the active lease age and expiry. Use `--replace-lease`
+only when intentionally displacing the other process. Live mode authenticates
+backend requests with the local signer and never exposes signing methods as MCP
+tools. Headless unlock uses `CONVICTION_KEYSTORE_PASSWORD`.
 
 ## Connect Codex
 

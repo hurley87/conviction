@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { getAddress, isAddress, verifyMessage } from "ethers";
 import { z } from "zod";
+import { AgentLeaseError, leaseConflictError } from "@/lib/agent-lease";
 
 export const PROVISIONING_HANDOFF_TTL_MS = 10 * 60 * 1000;
 
@@ -234,9 +235,16 @@ export type HandoffLookup = {
   agent: OwnedAgent;
 };
 
+export type StoredAgentLease = {
+  leaseId: string;
+  agentId: string;
+  expiresAt: string;
+};
+
 export type AgentProvisioningStore = {
   create(record: AgentProvisioningRecord): Promise<void>;
   findNonRetiredByOwner(ownerUserId: string): Promise<OwnedAgent | null>;
+  findBySignerAddress(signerAddress: string): Promise<OwnedAgent | null>;
   findHandoffByCodeHash(codeHash: string): Promise<HandoffLookup | null>;
   redeemHandoff(input: {
     codeHash: string;
@@ -247,6 +255,21 @@ export type AgentProvisioningStore = {
     agentId: string;
     signerAddress: string;
   }): Promise<OwnedAgent>;
+  getActiveLease(agentId: string, now: Date): Promise<StoredAgentLease | null>;
+  acquireLease(input: {
+    agentId: string;
+    leaseId: string;
+    expiresAt: string;
+    now: Date;
+    replace?: boolean;
+  }): Promise<StoredAgentLease>;
+  renewLease(input: {
+    agentId: string;
+    leaseId: string;
+    expiresAt: string;
+    now: Date;
+  }): Promise<StoredAgentLease>;
+  releaseLease(input: { agentId: string; leaseId: string }): Promise<void>;
 };
 
 export type ProvisioningErrorCode =
@@ -451,6 +474,8 @@ export async function completeAgentBackupVerification(
 
 export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
   readonly records: AgentProvisioningRecord[] = [];
+  /** Active leases keyed by agentId. */
+  readonly leases = new Map<string, StoredAgentLease>();
   private readonly humanHandles: Set<string>;
 
   constructor(humanHandles = new Set<string>()) {
@@ -504,6 +529,16 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
       this.records.find(
         ({ agent }) =>
           agent.ownerUserId === ownerUserId && agent.status !== "retired",
+      )?.agent ?? null
+    );
+  }
+
+  async findBySignerAddress(signerAddress: string): Promise<OwnedAgent | null> {
+    const normalized = getAddress(signerAddress);
+    return (
+      this.records.find(
+        ({ agent }) =>
+          agent.address !== null && getAddress(agent.address) === normalized,
       )?.agent ?? null
     );
   }
@@ -619,5 +654,91 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
 
     agent.fundingReady = true;
     return agent;
+  }
+
+  async getActiveLease(
+    agentId: string,
+    now: Date,
+  ): Promise<StoredAgentLease | null> {
+    const lease = this.leases.get(agentId);
+    if (!lease) return null;
+    if (new Date(lease.expiresAt).getTime() <= now.getTime()) {
+      this.leases.delete(agentId);
+      return null;
+    }
+    return lease;
+  }
+
+  async acquireLease(input: {
+    agentId: string;
+    leaseId: string;
+    expiresAt: string;
+    now: Date;
+    replace?: boolean;
+  }): Promise<StoredAgentLease> {
+    const exists = this.records.some(
+      ({ agent }) => agent.agentId === input.agentId,
+    );
+    if (!exists) {
+      throw new AgentLeaseError(
+        "agent_not_found",
+        "No agent matches that identity.",
+      );
+    }
+
+    const active = await this.getActiveLease(input.agentId, input.now);
+    if (active && active.leaseId !== input.leaseId && !input.replace) {
+      throw leaseConflictError(active, input.now);
+    }
+
+    const lease: StoredAgentLease = {
+      leaseId: input.leaseId,
+      agentId: input.agentId,
+      expiresAt: input.expiresAt,
+    };
+    this.leases.set(input.agentId, lease);
+    return lease;
+  }
+
+  async renewLease(input: {
+    agentId: string;
+    leaseId: string;
+    expiresAt: string;
+    now: Date;
+  }): Promise<StoredAgentLease> {
+    const active = await this.getActiveLease(input.agentId, input.now);
+    if (!active) {
+      throw new AgentLeaseError(
+        "lease_expired",
+        "The MCP lease expired. Restart the server to acquire a new lease.",
+      );
+    }
+    if (active.leaseId !== input.leaseId) {
+      throw new AgentLeaseError(
+        "lease_conflict",
+        "This MCP lease was replaced by another process.",
+        {
+          activeLeaseId: active.leaseId,
+          activeLeaseExpiresAt: active.expiresAt,
+        },
+      );
+    }
+    const lease: StoredAgentLease = {
+      leaseId: input.leaseId,
+      agentId: input.agentId,
+      expiresAt: input.expiresAt,
+    };
+    this.leases.set(input.agentId, lease);
+    return lease;
+  }
+
+  async releaseLease(input: {
+    agentId: string;
+    leaseId: string;
+  }): Promise<void> {
+    const current = this.leases.get(input.agentId);
+    if (current && current.leaseId === input.leaseId) {
+      this.leases.delete(input.agentId);
+    }
   }
 }
