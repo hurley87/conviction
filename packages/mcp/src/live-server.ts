@@ -2,14 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import {
-  accountStatusOutputSchema,
-  getConvictionOutputSchema,
-  getReceiptOutputSchema,
-  listConvictionsOutputSchema,
-  MAX_CONVICTION_PAGE_LIMIT,
-  summarizeFeedOutputSchema,
-} from "./agent-reads-contract.js";
+import { MAX_CONVICTION_PAGE_LIMIT } from "./agent-reads-contract.js";
 import { ConvictionApiError } from "./api-client.js";
 import type { LocalWallet } from "./keystore.js";
 import type { LeaseHandle } from "./lease.js";
@@ -21,6 +14,13 @@ import {
   fetchReceipt,
   requestTradeQuote,
 } from "./live-api-client.js";
+import {
+  accountStatusOutputSchema,
+  getConvictionOutputSchema,
+  getReceiptOutputSchema,
+  listConvictionsOutputSchema,
+  summarizeFeedOutputSchema,
+} from "./mcp-output-schema.js";
 import type { AgentProfile } from "./profile.js";
 import { toolResult } from "./tool-result.js";
 

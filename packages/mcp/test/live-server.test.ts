@@ -345,30 +345,133 @@ describe("createLiveServer", () => {
     ]);
   });
 
-  it("surfaces stable backend error codes from read tools", async () => {
+  it("delivers structured read-tool errors after tools/list enables output validation", async () => {
     const wallet = Wallet.createRandom();
     const lease = mockLease(wallet);
+    const readToolNames = [
+      "conviction_account_status",
+      "conviction_list_convictions",
+      "conviction_get_conviction",
+      "conviction_summarize_feed",
+      "conviction_get_receipt",
+    ] as const;
+
     const client = await connectLiveServer({
       wallet,
       lease,
-      fetchImpl: async () =>
-        new Response(
+      fetchImpl: async (input) => {
+        const url = new URL(String(input));
+        const path = `${url.pathname}${url.search}`;
+
+        if (path.startsWith("/api/agents/convictions/")) {
+          return new Response(
+            JSON.stringify({
+              error: { code: "not_found", message: "Conviction not found." },
+            }),
+            { status: 404, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        if (path.startsWith("/api/agents/receipts")) {
+          return new Response(
+            JSON.stringify({
+              error: { code: "not_found", message: "Receipt not found." },
+            }),
+            { status: 404, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        if (path.startsWith("/api/agents/convictions")) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: "invalid_request",
+                message: "Invalid pagination cursor.",
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        return new Response(
           JSON.stringify({
-            error: { code: "not_found", message: "Conviction not found." },
+            error: { code: "unavailable", message: "Upstream timeout." },
           }),
-          { status: 404, headers: { "content-type": "application/json" } },
-        ),
+          { status: 503, headers: { "content-type": "application/json" } },
+        );
+      },
     });
 
-    const result = await client.callTool({
+    const listed = await client.listTools();
+    for (const name of readToolNames) {
+      const tool = listed.tools.find((entry) => entry.name === name);
+      expect(tool?.outputSchema).toMatchObject({
+        type: "object",
+        oneOf: expect.any(Array),
+      });
+    }
+
+    const missingConviction = await client.callTool({
       name: "conviction_get_conviction",
       arguments: { entryId: "missing" },
     });
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
+    expect(missingConviction.isError).toBe(true);
+    expect(missingConviction.structuredContent).toMatchObject({
       ok: false,
       code: "not_found",
+      message: "Conviction not found.",
     });
+
+    const missingReceipt = await client.callTool({
+      name: "conviction_get_receipt",
+      arguments: { receiptId: "missing" },
+    });
+    expect(missingReceipt.isError).toBe(true);
+    expect(missingReceipt.structuredContent).toMatchObject({
+      ok: false,
+      code: "not_found",
+      message: "Receipt not found.",
+    });
+
+    const badCursor = await client.callTool({
+      name: "conviction_list_convictions",
+      arguments: { cursor: "not-a-cursor" },
+    });
+    expect(badCursor.isError).toBe(true);
+    expect(badCursor.structuredContent).toMatchObject({
+      ok: false,
+      code: "invalid_request",
+      message: "Invalid pagination cursor.",
+    });
+
+    const unavailable = await client.callTool({
+      name: "conviction_account_status",
+      arguments: {},
+    });
+    expect(unavailable.isError).toBe(true);
+    expect(unavailable.structuredContent).toMatchObject({
+      ok: false,
+      code: "unavailable",
+      message: "Upstream timeout.",
+    });
+
+    lease.markLost("replaced");
+    for (const name of readToolNames) {
+      const result = await client.callTool({
+        name,
+        arguments:
+          name === "conviction_get_conviction"
+            ? { entryId: "x" }
+            : name === "conviction_get_receipt"
+              ? { receiptId: "x" }
+              : {},
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        code: "lease_lost",
+      });
+    }
   });
 
   it("quotes a structured trade over a signed request and never accepts free-form fields", async () => {
@@ -636,38 +739,30 @@ describe("createLiveServer", () => {
     });
   });
 
-  it("stops tool handling cleanly after lease loss", async () => {
+  it("keeps happy-path output validation strict after tools/list", async () => {
     const wallet = Wallet.createRandom();
     const lease = mockLease(wallet);
     const client = await connectLiveServer({
       wallet,
       lease,
-      fetchImpl: async () => new Response("{}", { status: 500 }),
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ status: sampleStatus(wallet.address) }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     });
 
-    lease.markLost("replaced");
-
-    for (const name of [
-      "conviction_account_status",
-      "conviction_list_convictions",
-      "conviction_get_conviction",
-      "conviction_summarize_feed",
-      "conviction_get_receipt",
-    ] as const) {
-      const result = await client.callTool({
-        name,
-        arguments:
-          name === "conviction_get_conviction"
-            ? { entryId: "x" }
-            : name === "conviction_get_receipt"
-              ? { receiptId: "x" }
-              : {},
-      });
-      expect(result.isError).toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        ok: false,
-        code: "lease_lost",
-      });
-    }
+    await client.listTools();
+    const result = await client.callTool({
+      name: "conviction_account_status",
+      arguments: {},
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      mode: "live",
+      handle: "signal-scout",
+      remainingBudgetUsd: 90,
+    });
   });
 });
