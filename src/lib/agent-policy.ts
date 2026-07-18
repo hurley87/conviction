@@ -18,7 +18,7 @@ import type {
   ExecutionPermitRecord,
 } from "@/lib/agent-permit";
 
-type PermitInvalidator = {
+export type PermitInvalidator = {
   permitStore: AgentPermitStore;
   spendLedger: AgentSpendLedger;
 };
