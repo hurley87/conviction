@@ -1,6 +1,8 @@
+import { privatePausedReason } from "@/lib/agent-policy";
 import {
   AgentProvisioningError,
   createPendingAgent,
+  type OwnedAgent,
 } from "@/lib/agent-provisioning";
 import { getProvisioningContext } from "@/lib/agent-provisioning-store";
 import {
@@ -33,12 +35,26 @@ function errorResponse(error: unknown) {
   );
 }
 
+function agentPayload(agent: OwnedAgent) {
+  const remainingBudgetUsd = Math.max(
+    0,
+    agent.spendBudgetUsd - agent.lifetimeSpendUsd,
+  );
+  return {
+    ...agent,
+    remainingBudgetUsd,
+    privatePausedReason: privatePausedReason(agent),
+  };
+}
+
 export async function GET(request: Request) {
   try {
     const auth = await authenticateRequest(request);
     const { store } = await getProvisioningContext(auth.userId, auth.mock);
     const agent = await store.findNonRetiredByOwner(auth.userId);
-    return Response.json({ agent });
+    return Response.json({
+      agent: agent ? agentPayload(agent) : null,
+    });
   } catch (error) {
     return errorResponse(error);
   }
@@ -53,10 +69,16 @@ export async function POST(request: Request) {
       auth.mock,
     );
     const result = await createPendingAgent(store, owner, body);
-    return Response.json(result, {
-      status: 201,
-      headers: { "cache-control": "no-store" },
-    });
+    return Response.json(
+      {
+        ...result,
+        agent: agentPayload(result.agent),
+      },
+      {
+        status: 201,
+        headers: { "cache-control": "no-store" },
+      },
+    );
   } catch (error) {
     return errorResponse(error);
   }

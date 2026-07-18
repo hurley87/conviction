@@ -587,6 +587,138 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     expect(spendLedger.reservedUsd(agent.agentId)).toBe(0);
   });
 
+  it("rejects submit and releases the permit when reloadAgent reports disabled", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
+    const permitStore = new MemoryAgentPermitStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const receipts = new MemoryAgentReceiptPersist();
+    const spendLedger = new MemorySpendLedger();
+
+    const permit = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-submit-disabled",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+      randomId: () => "66666666-6666-4666-8666-666666666666",
+    });
+    expect(permit.ok).toBe(true);
+    if (!permit.ok || !("permitId" in permit)) {
+      throw new Error("expected permit");
+    }
+
+    const rootHashSignature = await signPermitRoot(
+      wallet,
+      permit.rawTransaction,
+    );
+    const result = await submitSignedTradeExecution({
+      agent,
+      input: {
+        permitId: permit.permitId,
+        idempotencyKey: "idem-submit-disabled",
+        leaseId: "lease-1",
+        rootHashSignature,
+      },
+      permitStore,
+      idempotencyStore,
+      receipts,
+      quoteStore,
+      spendLedger,
+      activeLeaseId: "lease-1",
+      now: () => FIXED_NOW,
+      reloadAgent: async () =>
+        testAgent(wallet, {
+          agentId: agent.agentId,
+          status: "disabled",
+          publicStatus: "paused",
+        }),
+      send: async () => {
+        throw new Error("send must not run after lifecycle block");
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "lifecycle_blocked",
+    });
+    expect((await permitStore.get(permit.permitId))?.status).toBe("released");
+    expect(spendLedger.reservedUsd(agent.agentId)).toBe(0);
+    expect(
+      await idempotencyStore.get(agent.agentId, "idem-submit-disabled"),
+    ).toBeNull();
+  });
+
+  it("rejects submit when reloadAgent reports trade action disabled", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
+    const permitStore = new MemoryAgentPermitStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const receipts = new MemoryAgentReceiptPersist();
+    const spendLedger = new MemorySpendLedger();
+
+    const permit = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-submit-action-off",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+      randomId: () => "77777777-7777-4777-8777-777777777777",
+    });
+    expect(permit.ok).toBe(true);
+    if (!permit.ok || !("permitId" in permit)) {
+      throw new Error("expected permit");
+    }
+
+    const rootHashSignature = await signPermitRoot(
+      wallet,
+      permit.rawTransaction,
+    );
+    const result = await submitSignedTradeExecution({
+      agent,
+      input: {
+        permitId: permit.permitId,
+        idempotencyKey: "idem-submit-action-off",
+        leaseId: "lease-1",
+        rootHashSignature,
+      },
+      permitStore,
+      idempotencyStore,
+      receipts,
+      quoteStore,
+      spendLedger,
+      activeLeaseId: "lease-1",
+      now: () => FIXED_NOW,
+      reloadAgent: async () =>
+        testAgent(wallet, {
+          agentId: agent.agentId,
+          actionPolicy: { trade: false, back: true, publish: true },
+        }),
+      send: async () => {
+        throw new Error("send must not run after action_disabled");
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "action_disabled",
+      action: "trade",
+    });
+    expect((await permitStore.get(permit.permitId))?.status).toBe("released");
+  });
+
   it("fails closed when Particle is missing unless mock submit is allowed", async () => {
     const previous = {
       projectId: process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID,

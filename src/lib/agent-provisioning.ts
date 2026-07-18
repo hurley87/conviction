@@ -276,6 +276,21 @@ export type AgentProvisioningStore = {
     agentId: string;
     dollarsIn: number;
   }): Promise<OwnedAgent>;
+  /**
+   * Persist operator policy / lifecycle controls.
+   * Ownership is enforced by matching ownerUserId + agentId.
+   * When status is disabled, disabledAt null means "keep existing disabled_at".
+   */
+  updatePolicy(input: {
+    agentId: string;
+    ownerUserId: string;
+    maxTradeUsd: number;
+    spendBudgetUsd: number;
+    actionPolicy: CreateAgentInput["actionPolicy"];
+    status: AgentStatus;
+    publicStatus: AgentPublicStatus;
+    disabledAt: string | null;
+  }): Promise<OwnedAgent>;
   getActiveLease(agentId: string, now: Date): Promise<StoredAgentLease | null>;
   acquireLease(input: {
     agentId: string;
@@ -501,6 +516,8 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
   readonly records: AgentProvisioningRecord[] = [];
   /** Active leases keyed by agentId. */
   readonly leases = new Map<string, StoredAgentLease>();
+  /** disabled_at timestamps keyed by agentId (operator disablement marker). */
+  readonly disabledAtByAgentId = new Map<string, string>();
   private readonly humanHandles: Set<string>;
 
   constructor(humanHandles = new Set<string>()) {
@@ -734,6 +751,64 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
       );
     }
     record.agent.lifetimeSpendUsd += input.dollarsIn;
+    if (
+      record.agent.status === "active" &&
+      record.agent.spendBudgetUsd <= record.agent.lifetimeSpendUsd
+    ) {
+      record.agent.status = "capped";
+      record.agent.publicStatus = "paused";
+    }
+    return record.agent;
+  }
+
+  async updatePolicy(input: {
+    agentId: string;
+    ownerUserId: string;
+    maxTradeUsd: number;
+    spendBudgetUsd: number;
+    actionPolicy: CreateAgentInput["actionPolicy"];
+    status: AgentStatus;
+    publicStatus: AgentPublicStatus;
+    disabledAt: string | null;
+  }): Promise<OwnedAgent> {
+    const record = this.records.find(
+      ({ agent }) =>
+        agent.agentId === input.agentId &&
+        agent.ownerUserId === input.ownerUserId &&
+        agent.status !== "retired",
+    );
+    if (!record) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity for this account.",
+      );
+    }
+    if (
+      record.agent.status === "retiring" ||
+      record.agent.status === "retired"
+    ) {
+      throw new AgentProvisioningError(
+        "lifecycle_blocked",
+        `Agent @${record.agent.handle} is ${record.agent.status} and cannot change operator policy.`,
+      );
+    }
+
+    record.agent.maxTradeUsd = input.maxTradeUsd;
+    record.agent.spendBudgetUsd = input.spendBudgetUsd;
+    record.agent.actionPolicy = { ...input.actionPolicy };
+    record.agent.status = input.status;
+    record.agent.publicStatus = input.publicStatus;
+
+    if (input.status === "disabled") {
+      const existing = this.disabledAtByAgentId.get(input.agentId);
+      this.disabledAtByAgentId.set(
+        input.agentId,
+        input.disabledAt ?? existing ?? new Date().toISOString(),
+      );
+    } else {
+      this.disabledAtByAgentId.delete(input.agentId);
+    }
+
     return record.agent;
   }
 

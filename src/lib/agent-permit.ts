@@ -198,6 +198,8 @@ export type AgentPermitStore = {
     agentId: string,
     idempotencyKey: string,
   ): Promise<ExecutionPermitRecord | null>;
+  /** Outstanding issued permits for an agent (used to invalidate on policy pause). */
+  listIssuedByAgent(agentId: string): Promise<ExecutionPermitRecord[]>;
   /**
    * Atomically transition issued → consumed|pending|released.
    * Returns true only when this caller performed the transition.
@@ -258,6 +260,16 @@ export class MemoryAgentPermitStore implements AgentPermitStore {
     );
     if (!permitId) return null;
     return this.get(permitId);
+  }
+
+  async listIssuedByAgent(agentId: string): Promise<ExecutionPermitRecord[]> {
+    const out: ExecutionPermitRecord[] = [];
+    for (const record of this.records.values()) {
+      if (record.agentId === agentId && record.status === "issued") {
+        out.push(structuredClone(record));
+      }
+    }
+    return out;
   }
 
   async casStatus(
@@ -655,6 +667,11 @@ export async function submitSignedTradeExecution(options: {
   activeLeaseId: string | null;
   spendLedger?: AgentSpendLedger;
   onSpend?: (dollarsIn: number) => void | Promise<void>;
+  /**
+   * Reload backend-authoritative agent policy immediately before claiming the
+   * permit so disable/cap/action changes take effect even for outstanding permits.
+   */
+  reloadAgent?: () => Promise<OwnedAgent>;
   now?: () => Date;
   randomId?: () => string;
 }): Promise<AgentExecuteResult> {
@@ -818,6 +835,49 @@ export async function submitSignedTradeExecution(options: {
         quoteId: permit.quoteId,
       };
     }
+
+    // ADR 0021 / 0022: re-check authoritative policy before claiming. Idempotent
+    // successes above already returned; outstanding issued permits must not
+    // outlive disablement, cap, or action disable.
+    let agentForPolicy = options.agent;
+    if (options.reloadAgent) {
+      try {
+        agentForPolicy = await options.reloadAgent();
+      } catch (error) {
+        if (error instanceof AgentExecuteError) {
+          return {
+            ...error.toBody(),
+            quoteId: permit.quoteId,
+          };
+        }
+        throw error;
+      }
+    }
+    try {
+      assertExecuteLifecycle(agentForPolicy);
+      assertTradeEnabled(agentForPolicy);
+    } catch (error) {
+      if (error instanceof AgentExecuteError) {
+        const released = await options.permitStore.casStatus(
+          permitId,
+          "issued",
+          "released",
+        );
+        if (released) {
+          await options.spendLedger?.release(
+            options.agent.agentId,
+            permit.dollarsIn,
+          );
+        }
+        // Non-sticky: operator may re-enable and the host must obtain a new permit.
+        return {
+          ...error.toBody(),
+          quoteId: permit.quoteId,
+        };
+      }
+      throw error;
+    }
+
     if (new Date(permit.expiresAt).getTime() <= now.getTime()) {
       const released = await options.permitStore.casStatus(
         permitId,

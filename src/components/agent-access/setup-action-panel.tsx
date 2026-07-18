@@ -17,10 +17,18 @@ type AgentStatus =
   | "retired";
 
 export type SetupAgent = {
+  agentId: string;
   handle: string;
   operatorHandle: string;
   address: string | null;
   status: AgentStatus;
+  publicStatus: "active" | "paused" | "retired";
+  actionPolicy: { trade: boolean; back: boolean; publish: boolean };
+  maxTradeUsd: number;
+  spendBudgetUsd: number;
+  lifetimeSpendUsd: number;
+  remainingBudgetUsd: number;
+  privatePausedReason: string | null;
   fundingReady: boolean;
   setupVerifiedAt: string | null;
 };

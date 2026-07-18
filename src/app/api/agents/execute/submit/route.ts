@@ -2,6 +2,7 @@ import {
   AgentApiBodyError,
   parseAgentJsonObject,
 } from "@/lib/agent-api-body";
+import { getAgentAuditStore } from "@/lib/agent-audit";
 import {
   AgentExecuteError,
   type AgentExecuteErrorBody,
@@ -17,6 +18,7 @@ import {
   getAgentReceiptPersist,
   getAgentSpendLedger,
 } from "@/lib/agent-permit-store";
+import { commitAgentSpend } from "@/lib/agent-policy";
 import {
   AgentRequestAuthError,
   agentAuthErrorStatus,
@@ -75,6 +77,8 @@ export async function POST(request: Request) {
       now,
     );
 
+    const permitStore = getAgentPermitStore();
+    const spendLedger = getAgentSpendLedger();
     const result = await submitSignedTradeExecution({
       agent: verified.agent,
       input: {
@@ -88,19 +92,40 @@ export async function POST(request: Request) {
             : "",
         ...(authorizations ? { authorizations } : {}),
       },
-      permitStore: getAgentPermitStore(),
+      permitStore,
       idempotencyStore: getAgentExecuteIdempotencyStore(),
       receipts: getAgentReceiptPersist(),
       quoteStore: getAgentQuoteStore(),
       tradeReceipts: getAgentTradeReceiptStore(),
       send: createSignedTradeSender(verified.agent.address),
       activeLeaseId: activeLease?.leaseId ?? null,
-      spendLedger: getAgentSpendLedger(),
+      spendLedger,
       now: () => now,
+      reloadAgent: async () => {
+        const fresh = await store.findBySignerAddress(
+          verified.agent.address!,
+        );
+        if (!fresh) {
+          throw new AgentExecuteError(
+            "unavailable",
+            "Agent identity is no longer available.",
+          );
+        }
+        return fresh;
+      },
       onSpend: async (dollarsIn) => {
-        await store.addLifetimeSpend({
+        const beforeSpend = await store.findBySignerAddress(
+          verified.agent.address!,
+        );
+        await commitAgentSpend({
+          store,
+          auditStore: getAgentAuditStore(),
+          permitStore,
+          spendLedger,
           agentId: verified.agent.agentId,
           dollarsIn,
+          previousStatus: beforeSpend?.status ?? verified.agent.status,
+          now,
         });
       },
     });

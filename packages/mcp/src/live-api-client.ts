@@ -133,6 +133,53 @@ export async function markSetupVerified(options: {
   return payload.status;
 }
 
+export type LifecycleMutationResult = {
+  agent: {
+    agentId: string;
+    handle: string;
+    status: string;
+    publicStatus: string;
+    actionPolicy: { trade: boolean; back: boolean; publish: boolean };
+    maxTradeUsd: number;
+    spendBudgetUsd: number;
+    lifetimeSpendUsd: number;
+  };
+  releasedPermitCount: number;
+  privatePausedReason: string | null;
+};
+
+/** Operator CLI pause — not an MCP tool. */
+export async function disableAgentLifecycle(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  fetchImpl?: typeof fetch;
+}): Promise<LifecycleMutationResult> {
+  return signedFetch<LifecycleMutationResult>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/lifecycle/disable",
+    body: {},
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+}
+
+/** Operator CLI re-enable — not an MCP tool. */
+export async function enableAgentLifecycle(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  fetchImpl?: typeof fetch;
+}): Promise<LifecycleMutationResult> {
+  return signedFetch<LifecycleMutationResult>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/lifecycle/enable",
+    body: {},
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+}
+
 export async function fetchConvictionsPage(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
