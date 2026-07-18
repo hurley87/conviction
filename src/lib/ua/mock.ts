@@ -57,6 +57,11 @@ export type MockSeed = {
   simulateStaleWithdrawal?: boolean;
   /** When true, quote/execute withdrawal omit rootHash (error path). */
   omitWithdrawalRootHash?: boolean;
+  /**
+   * When true, successful trades/withdrawals mutate the seeded sources so
+   * retirement recovery can re-inventory after each leg (tests / mock path).
+   */
+  mutateSourcesOnExecute?: boolean;
 };
 
 const DEFAULT_SOURCES: UniversalBalance["sources"] = [
@@ -81,19 +86,95 @@ export type MockWithdrawalRecord = {
 export class MockUAClient implements UAClient {
   private upgraded = false;
   private lastQuote: TradeQuote | null = null;
+  private mutableSources: UniversalBalance["sources"] | null;
   /** Exposed for unit tests (ADR 0014 differentiator). */
   readonly tradeRecords: MockTradeRecord[] = [];
   /** Exposed for withdrawal unit tests. */
   readonly withdrawalRecords: MockWithdrawalRecord[] = [];
 
-  constructor(private readonly seed: MockSeed = {}) {}
+  constructor(private readonly seed: MockSeed = {}) {
+    this.mutableSources = seed.mutateSourcesOnExecute
+      ? structuredClone(seed.sources ?? DEFAULT_SOURCES)
+      : null;
+  }
 
   async getUniversalBalance(): Promise<UniversalBalance> {
-    const sources = this.seed.sources ?? DEFAULT_SOURCES;
+    const sources = this.mutableSources ?? this.seed.sources ?? DEFAULT_SOURCES;
     return {
       totalUsd: sumSources(sources),
-      sources,
+      sources: structuredClone(sources),
     };
+  }
+
+  private applyTradeMutation(params: {
+    fromAsset?: string;
+    toAsset: string;
+    sizeUsd: number;
+    dollarsOut: number;
+  }): void {
+    if (!this.mutableSources) return;
+    const fromSymbol = (params.fromAsset ?? "usdc").toUpperCase();
+    let remaining = params.sizeUsd;
+    this.mutableSources = this.mutableSources
+      .map((source) => {
+        if (remaining <= 0) return source;
+        const symbol = source.asset.toUpperCase();
+        const matches =
+          symbol === fromSymbol ||
+          (fromSymbol === "ETH" && (symbol === "ETH" || symbol === "WETH")) ||
+          (fromSymbol === "USDC" && symbol === "USDC") ||
+          (fromSymbol === "USDT" && symbol === "USDT") ||
+          (fromSymbol === "SOL" && symbol === "SOL") ||
+          (fromSymbol === "CASH" && (symbol === "USDC" || symbol === "USDT"));
+        if (!matches) return source;
+        const debit = Math.min(source.usd, remaining);
+        remaining -= debit;
+        return { ...source, usd: Math.max(0, source.usd - debit) };
+      })
+      .filter((source) => source.usd > 1e-9);
+
+    if (params.toAsset === "cash" || params.toAsset === "usdc") {
+      const existing = this.mutableSources.find(
+        (source) =>
+          source.chain === "Arbitrum" &&
+          source.asset.toUpperCase() === "USDC",
+      );
+      if (existing) {
+        existing.usd += params.dollarsOut;
+      } else {
+        this.mutableSources.push({
+          chain: "Arbitrum",
+          asset: "USDC",
+          usd: params.dollarsOut,
+        });
+      }
+    }
+  }
+
+  private applyWithdrawalMutation(params: {
+    asset: string;
+    amount: string;
+    estimatedDebitUsd: number;
+  }): void {
+    if (!this.mutableSources) return;
+    const symbol = params.asset.toUpperCase();
+    let remaining =
+      symbol === "ETH" ? params.estimatedDebitUsd : Number(params.amount);
+    if (!(remaining > 0)) remaining = params.estimatedDebitUsd;
+    this.mutableSources = this.mutableSources
+      .map((source) => {
+        if (remaining <= 0) return source;
+        if (source.asset.toUpperCase() !== symbol) return source;
+        // Prefer Arbitrum USDC for retirement canonical cash.
+        if (symbol === "USDC" && source.chain !== "Arbitrum") return source;
+        const debit =
+          symbol === "ETH"
+            ? Math.min(source.usd, remaining)
+            : Math.min(source.usd, remaining);
+        remaining -= debit;
+        return { ...source, usd: Math.max(0, source.usd - debit) };
+      })
+      .filter((source) => source.usd > 1e-9);
   }
 
   async getDepositAddresses(): Promise<DepositAddresses> {
@@ -211,6 +292,13 @@ export class MockUAClient implements UAClient {
       raw.userOps,
     );
 
+    this.applyTradeMutation({
+      fromAsset: intent.fromAsset,
+      toAsset: intent.toAsset,
+      sizeUsd,
+      dollarsOut: freshQuote.dollarsOut,
+    });
+
     return {
       transactionId: txId,
       summary: narrateResult(
@@ -321,6 +409,12 @@ export class MockUAClient implements UAClient {
     if (signed7702Auth) {
       this.upgraded = true;
     }
+
+    this.applyWithdrawalMutation({
+      asset: request.asset,
+      amount: request.amount,
+      estimatedDebitUsd: freshQuote.estimatedDebitUsd,
+    });
 
     return {
       transactionId: txId,

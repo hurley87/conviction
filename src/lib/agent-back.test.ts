@@ -49,6 +49,9 @@ const AGENT: OwnedAgent = {
   fundingReady: true,
   setupVerifiedAt: "2026-07-01T00:00:00.000Z",
   createdAt: "2026-07-01T00:00:00.000Z",
+  disabledAt: null,
+  retirementStartedAt: null,
+  retiredAt: null,
 };
 
 const ENTRY: ConvictionEntry = {

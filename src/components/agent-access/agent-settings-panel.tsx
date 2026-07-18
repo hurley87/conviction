@@ -172,6 +172,105 @@ export function AgentSettingsPanel({
     }
   }
 
+  async function retireAgent() {
+    if (agent.status === "retired") return;
+    const confirmed = window.confirm(
+      `Retire @${agent.handle} permanently?\n\nThis blocks all MCP writes immediately and recovers supported funds to the stored return address using the original local signer. Conviction cannot reconstruct or replace that signer. A retired agent cannot be re-enabled.`,
+    );
+    if (!confirmed) return;
+
+    setLifecycleBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await authenticatedFetch("/api/agents/retire", {
+        method: "POST",
+        body: JSON.stringify({ agentId: agent.agentId }),
+      });
+      const payload = (await response.json()) as {
+        agent?: SettingsAgent;
+        privatePausedReason?: string | null;
+        recoveryRequired?: boolean;
+        signerNote?: string | null;
+      } & ApiError;
+      if (!response.ok || !payload.agent) {
+        throw new Error(payload.error?.message ?? "Could not retire the agent.");
+      }
+      const next: SettingsAgent = {
+        ...payload.agent,
+        remainingBudgetUsd: Math.max(
+          0,
+          payload.agent.spendBudgetUsd - payload.agent.lifetimeSpendUsd,
+        ),
+        privatePausedReason: payload.privatePausedReason ?? null,
+      };
+      onUpdated(next);
+      if (payload.recoveryRequired) {
+        setNotice(
+          payload.signerNote ??
+            "Retirement started. Normal writes are blocked. Finish fund recovery with conviction-mcp retire --profile <name> using the original local signer.",
+        );
+      } else {
+        setNotice(
+          "Agent retired. The operator one-agent slot is released. Profile history remains readable.",
+        );
+      }
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Could not retire the agent.",
+      );
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
+
+  async function retryRetirement() {
+    if (agent.status !== "retiring") return;
+    setLifecycleBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await authenticatedFetch("/api/agents/retirement/retry", {
+        method: "POST",
+        body: JSON.stringify({ agentId: agent.agentId }),
+      });
+      const payload = (await response.json()) as {
+        agent?: SettingsAgent;
+        privatePausedReason?: string | null;
+        recoveryRequired?: boolean;
+        signerNote?: string | null;
+      } & ApiError;
+      if (!response.ok || !payload.agent) {
+        throw new Error(
+          payload.error?.message ?? "Could not retry retirement reconciliation.",
+        );
+      }
+      const next: SettingsAgent = {
+        ...payload.agent,
+        remainingBudgetUsd: Math.max(
+          0,
+          payload.agent.spendBudgetUsd - payload.agent.lifetimeSpendUsd,
+        ),
+        privatePausedReason: payload.privatePausedReason ?? null,
+      };
+      onUpdated(next);
+      setNotice(
+        payload.recoveryRequired
+          ? (payload.signerNote ??
+              "Still needs attention. Run conviction-mcp retire with the original local signer for value-moving recovery.")
+          : "Retirement completed. The operator one-agent slot is released.",
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not retry retirement reconciliation.",
+      );
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
+
   return (
     <section className="app-card p-7 sm:p-9">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -347,6 +446,43 @@ export function AgentSettingsPanel({
             className="rounded-[15px] border border-danger/30 bg-red-50 px-6 py-3 text-sm font-extrabold text-danger transition hover:border-danger disabled:cursor-not-allowed disabled:opacity-55"
           >
             {lifecycleBusy ? "Disabling…" : "Disable agent"}
+          </button>
+        )}
+      </div>
+
+      <div className="mt-8 flex flex-col gap-3 border-t border-line pt-6 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-extrabold text-ink">Retire agent</p>
+          <p className="mt-1 max-w-xl text-xs leading-5 text-ink-3">
+            Permanent closure. Starts retiring immediately (writes blocked),
+            recovers supported holdings to Arbitrum USDC at the stored return
+            address, then releases the one-agent slot. History stays readable.
+            Fund recovery requires the original local signer — Conviction cannot
+            reconstruct it. CLI:{" "}
+            <code className="rounded bg-ink/5 px-1.5 py-0.5 text-[11px]">
+              conviction-mcp retire --profile {"<name>"}
+            </code>
+          </p>
+        </div>
+        {agent.status === "retiring" ? (
+          <button
+            type="button"
+            disabled={lifecycleBusy}
+            onClick={() => void retryRetirement()}
+            className="rounded-[15px] border border-warning/40 bg-[#fff8e8] px-6 py-3 text-sm font-extrabold text-ink transition hover:border-warning disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {lifecycleBusy ? "Retrying…" : "Retry reconciliation"}
+          </button>
+        ) : agent.status === "retired" ? (
+          <p className="text-sm font-extrabold text-ink-3">Permanently retired</p>
+        ) : (
+          <button
+            type="button"
+            disabled={!canMutate || lifecycleBusy}
+            onClick={() => void retireAgent()}
+            className="rounded-[15px] border border-danger/40 bg-red-50 px-6 py-3 text-sm font-extrabold text-danger transition hover:border-danger disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {lifecycleBusy ? "Retiring…" : "Retire agent"}
           </button>
         )}
       </div>

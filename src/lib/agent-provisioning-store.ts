@@ -553,6 +553,110 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     );
   }
 
+  async beginRetirement(input: {
+    agentId: string;
+    ownerUserId: string;
+    retirementStartedAt: string;
+  }): Promise<OwnedAgent> {
+    await ensureSchema(this.sql);
+
+    const updated = await this.sql`
+      UPDATE agents
+      SET
+        status = 'retiring',
+        public_status = 'paused',
+        retirement_started_at = COALESCE(
+          retirement_started_at,
+          ${input.retirementStartedAt}::timestamptz
+        )
+      WHERE agent_id = ${input.agentId}::uuid
+        AND owner_user_id = ${input.ownerUserId}
+        AND status NOT IN ('retired', 'retiring')
+      RETURNING *
+    `;
+
+    if (updated[0]) {
+      return ownedAgentFromRow(updated[0] as Record<string, unknown>);
+    }
+
+    const rows = await this.sql`
+      SELECT * FROM agents
+      WHERE agent_id = ${input.agentId}::uuid
+        AND owner_user_id = ${input.ownerUserId}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity for this account.",
+      );
+    }
+    const agent = ownedAgentFromRow(row);
+    if (agent.status === "retired") {
+      throw new AgentProvisioningError(
+        "lifecycle_blocked",
+        `Agent @${agent.handle} is already retired.`,
+      );
+    }
+    if (agent.status === "retiring") {
+      return agent;
+    }
+    throw new AgentProvisioningError(
+      "identity_unavailable",
+      "Could not begin retirement. Try again.",
+    );
+  }
+
+  async completeRetirement(input: {
+    agentId: string;
+    ownerUserId: string;
+    retiredAt: string;
+  }): Promise<OwnedAgent> {
+    await ensureSchema(this.sql);
+
+    const updated = await this.sql`
+      UPDATE agents
+      SET
+        status = 'retired',
+        public_status = 'retired',
+        retired_at = COALESCE(
+          retired_at,
+          ${input.retiredAt}::timestamptz
+        )
+      WHERE agent_id = ${input.agentId}::uuid
+        AND owner_user_id = ${input.ownerUserId}
+        AND status = 'retiring'
+      RETURNING *
+    `;
+
+    if (updated[0]) {
+      return ownedAgentFromRow(updated[0] as Record<string, unknown>);
+    }
+
+    const rows = await this.sql`
+      SELECT * FROM agents
+      WHERE agent_id = ${input.agentId}::uuid
+        AND owner_user_id = ${input.ownerUserId}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity for this account.",
+      );
+    }
+    const agent = ownedAgentFromRow(row);
+    if (agent.status === "retired") {
+      return agent;
+    }
+    throw new AgentProvisioningError(
+      "lifecycle_blocked",
+      `Agent @${agent.handle} must be retiring before completion.`,
+    );
+  }
+
   async getActiveLease(
     agentId: string,
     now: Date,

@@ -8,8 +8,10 @@ import { loadWalletFromKeystore } from "./keystore.js";
 import { acquireLeaseHandle } from "./lease.js";
 import {
   formatLifecycleOutput,
+  formatRetireOutput,
   runDisable,
   runEnable,
+  runRetire,
 } from "./lifecycle.js";
 import { createLiveServer } from "./live-server.js";
 import { createMockServer } from "./mock-server.js";
@@ -38,6 +40,7 @@ Usage:
   conviction-mcp status --profile <name> [options]
   conviction-mcp disable --profile <name> [options]
   conviction-mcp enable --profile <name> [options]
+  conviction-mcp retire --profile <name> [options]
   conviction-mcp help
 
 Commands:
@@ -48,6 +51,7 @@ Commands:
   status                     Show backend-authoritative account status
   disable                    Pause the agent (blocks write permits; reversible)
   enable                     Re-enable a disabled agent without reprovisioning
+  retire                     Permanently retire and recover canonical cash (original local signer)
   help                       Show this help
 
 Serve --mock options:
@@ -67,11 +71,12 @@ Init options:
   --profile <name>               Local profile name (defaults to agent handle)
   --home <dir>                   Override ~/.conviction (also CONVICTION_HOME)
 
-Doctor / status / disable / enable options:
+Doctor / status / disable / enable / retire options:
   --profile <name>           Local profile name (required)
   --api-base <url>           Conviction API base URL
   --home <dir>               Override ~/.conviction (also CONVICTION_HOME)
   --report <path>            (doctor) Write a redacted local support bundle
+  --idempotency-key <value>  (retire) Durable idempotency key for retries
 
 Environment:
   CONVICTION_BACKUP_PASSPHRASE   Recovery passphrase for the exported backup
@@ -215,6 +220,20 @@ async function runEnableCommand(args: string[]): Promise<void> {
   console.log(formatLifecycleOutput("enable", result));
 }
 
+async function runRetireCommand(args: string[]): Promise<void> {
+  const profileName = requireFlag(args, "--profile", "--profile");
+  const apiBaseUrl = resolveApiBase(args);
+  const home = readFlag(args, "--home")?.trim();
+  const idempotencyKey = readFlag(args, "--idempotency-key")?.trim();
+  const result = await runRetire({
+    profileName,
+    apiBaseUrl,
+    ...(home ? { home } : {}),
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+  });
+  console.log(formatRetireOutput(result));
+}
+
 async function runLiveServe(args: string[]): Promise<void> {
   const profileName = requireFlag(args, "--profile", "--profile");
   const apiBaseUrl = resolveApiBase(args);
@@ -341,6 +360,11 @@ export async function runCli(args: string[]): Promise<void> {
 
   if (args[0] === "enable") {
     await runEnableCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === "retire") {
+    await runRetireCommand(args.slice(1));
     return;
   }
 
