@@ -42,6 +42,8 @@ export const MOCK_TOOLS = [
   "conviction_execute_trade",
   "conviction_get_receipt",
   "conviction_publish_conviction",
+  "conviction_quote_back",
+  "conviction_back_conviction",
 ] as const;
 
 export type CreateMockServerOptions = MockTradeEngineOptions & {
@@ -70,7 +72,7 @@ export async function createMockServer(
     },
     {
       instructions:
-        "Deterministic mock mode only. Quote with conviction_quote_trade, execute with conviction_execute_trade, then optionally publish with conviction_publish_conviction using the receiptId. It uses no account credentials, signer, signing material, Particle, network services, or real funds.",
+        "Deterministic mock mode only. Quote with conviction_quote_trade, execute with conviction_execute_trade, then optionally publish with conviction_publish_conviction using the receiptId. Back with conviction_quote_back then conviction_back_conviction. It uses no account credentials, signer, signing material, Particle, network services, or real funds.",
     },
   );
 
@@ -207,6 +209,46 @@ export async function createMockServer(
         whyNow,
         whatBreaksIt,
       });
+      return toolResult(result, !result.ok);
+    },
+  );
+
+  const mcpBackQuoteInput = z
+    .object({
+      entryId: z.string().min(1),
+      dollarsIn: z.number().positive(),
+    })
+    .passthrough();
+
+  server.registerTool(
+    "conviction_quote_back",
+    {
+      title: "Quote backing a mock conviction",
+      description:
+        "Size and quote backing an existing mock conviction. Derives the target from the canonical entry. Moves no funds.",
+      inputSchema: mcpBackQuoteInput,
+      annotations: mockReadOnlyAnnotations,
+    },
+    async (args) => {
+      const result = await engine.quoteBack(args as Record<string, unknown>);
+      return toolResult(result, !result.ok);
+    },
+  );
+
+  server.registerTool(
+    "conviction_back_conviction",
+    {
+      title: "Back a mock conviction",
+      description:
+        "Execute a recent mock back quote and create durable attribution. Never requotes or re-executes.",
+      inputSchema: {
+        quoteId: z.string().min(1),
+        idempotencyKey: z.string().min(1),
+      },
+      annotations: idempotentWriteAnnotations,
+    },
+    async ({ quoteId, idempotencyKey }) => {
+      const result = await engine.backConviction({ quoteId, idempotencyKey });
       return toolResult(result, !result.ok);
     },
   );

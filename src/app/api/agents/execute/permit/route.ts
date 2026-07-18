@@ -51,6 +51,10 @@ export async function POST(request: Request) {
     const idempotencyKey =
       typeof body.idempotencyKey === "string" ? body.idempotencyKey : "";
     const leaseId = typeof body.leaseId === "string" ? body.leaseId : "";
+    const expectedAction =
+      body.expectedAction === "trade" || body.expectedAction === "back"
+        ? body.expectedAction
+        : undefined;
 
     const now = new Date();
     const activeLease = await store.getActiveLease(
@@ -70,6 +74,7 @@ export async function POST(request: Request) {
       idempotencyStore: getAgentExecuteIdempotencyStore(),
       balance: status.balance,
       spendLedger: getAgentSpendLedger(),
+      ...(expectedAction ? { expectedAction } : {}),
       now: () => now,
     });
 

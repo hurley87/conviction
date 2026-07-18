@@ -15,8 +15,16 @@ import {
   type AgentReceiptPersist,
 } from "@/lib/agent-execute";
 import {
+  commitBackExecution,
+  loadBackQuoteForExecute,
+  type AgentBackRecordStore,
+  type BackAttributionApplier,
+  type BackWorkflowStarter,
+} from "@/lib/agent-back";
+import {
   AgentQuoteError,
   loadTradeQuoteForExecute,
+  type AgentQuoteAction,
   type AgentQuoteStore,
   type AgentTradeQuoteRecord,
 } from "@/lib/agent-quote";
@@ -85,7 +93,7 @@ export type ExecutionPermitRecord = {
   quoteId: string;
   quoteFingerprint: string;
   idempotencyKey: string;
-  action: "trade";
+  action: AgentQuoteAction;
   dollarsIn: number;
   floorUsd: number;
   intent: TradeIntent;
@@ -95,6 +103,8 @@ export type ExecutionPermitRecord = {
   issuedAt: string;
   expiresAt: string;
   status: ExecutionPermitStatus;
+  /** Bound conviction for back permits. */
+  entryId?: string;
 };
 
 export type IssuePermitSuccess = {
@@ -308,6 +318,31 @@ function assertTradeEnabled(agent: OwnedAgent): void {
   );
 }
 
+function assertBackEnabled(agent: OwnedAgent): void {
+  if (agent.actionPolicy.back) return;
+  throw new AgentExecuteError(
+    "action_disabled",
+    "Back is disabled for this agent. Only the operator can enable it through Agent Settings or the operator CLI.",
+    { action: "back" },
+  );
+}
+
+function assertActionEnabled(
+  agent: OwnedAgent,
+  action: AgentQuoteAction,
+): void {
+  if (action === "trade") {
+    assertTradeEnabled(agent);
+    return;
+  }
+  if (action === "back") {
+    assertBackEnabled(agent);
+    return;
+  }
+  const _exhaustive: never = action;
+  void _exhaustive;
+}
+
 function assertBalance(
   quote: AgentTradeQuoteRecord,
   balance: UniversalBalance,
@@ -399,6 +434,7 @@ async function withLock<T>(
 /**
  * Atomically validate policy/lease/quote/budget, claim the quote, reserve
  * spend, and issue a single-use execution permit (ADR 0020). Never signs.
+ * Supports trade and back quotes; action policy follows the stored quote.
  */
 export async function issueTradeExecutionPermit(options: {
   agent: OwnedAgent;
@@ -411,6 +447,8 @@ export async function issueTradeExecutionPermit(options: {
   idempotencyStore: AgentIdempotencyStore;
   balance: UniversalBalance;
   spendLedger?: AgentSpendLedger;
+  /** When set, only quotes with this action may receive a permit. */
+  expectedAction?: AgentQuoteAction;
   now?: () => Date;
   randomId?: () => string;
 }): Promise<IssuePermitResult | AgentExecuteSuccess> {
@@ -477,7 +515,10 @@ export async function issueTradeExecutionPermit(options: {
 
     try {
       assertExecuteLifecycle(options.agent);
-      assertTradeEnabled(options.agent);
+      // ADR 0048: when the caller declares the action, policy precedes quote lookup.
+      if (options.expectedAction) {
+        assertActionEnabled(options.agent, options.expectedAction);
+      }
 
       return await withLock(
         permitQuoteLocks,
@@ -489,11 +530,57 @@ export async function issueTradeExecutionPermit(options: {
           );
           if (again) return again;
 
-          const quote = await loadTradeQuoteForExecute(options.quoteStore, {
-            quoteId: parsed.quoteId,
-            agentId: options.agent.agentId,
-            ...(options.now ? { now: options.now } : {}),
-          });
+          const preview = await options.quoteStore.get(parsed.quoteId);
+          if (!preview || preview.agentId !== options.agent.agentId) {
+            return maybePersist(
+              options.idempotencyStore,
+              options.agent.agentId,
+              parsed.idempotencyKey,
+              {
+                ok: false,
+                code: "quote_not_found",
+                message: "No quote matches that quoteId for this agent.",
+                quoteId: parsed.quoteId,
+              },
+            );
+          }
+
+          if (
+            options.expectedAction &&
+            preview.action !== options.expectedAction
+          ) {
+            return maybePersist(
+              options.idempotencyStore,
+              options.agent.agentId,
+              parsed.idempotencyKey,
+              {
+                ok: false,
+                code: "quote_mismatch",
+                message:
+                  options.expectedAction === "back"
+                    ? "That quoteId is not a back quote. Call conviction_quote_back first."
+                    : "That quoteId is not a trade quote. Call conviction_quote_trade first.",
+                quoteId: parsed.quoteId,
+              },
+            );
+          }
+
+          if (!options.expectedAction) {
+            assertActionEnabled(options.agent, preview.action);
+          }
+
+          const quote =
+            preview.action === "back"
+              ? await loadBackQuoteForExecute(options.quoteStore, {
+                  quoteId: parsed.quoteId,
+                  agentId: options.agent.agentId,
+                  ...(options.now ? { now: options.now } : {}),
+                })
+              : await loadTradeQuoteForExecute(options.quoteStore, {
+                  quoteId: parsed.quoteId,
+                  agentId: options.agent.agentId,
+                  ...(options.now ? { now: options.now } : {}),
+                });
 
           assertBalance(quote, options.balance);
 
@@ -565,7 +652,7 @@ export async function issueTradeExecutionPermit(options: {
             quoteId: quote.quoteId,
             quoteFingerprint: quote.quoteFingerprint,
             idempotencyKey: parsed.idempotencyKey,
-            action: "trade",
+            action: quote.action,
             dollarsIn: quote.dollarsIn,
             floorUsd: quote.floorUsd,
             intent: quote.intent,
@@ -575,6 +662,7 @@ export async function issueTradeExecutionPermit(options: {
             issuedAt: now.toISOString(),
             expiresAt: new Date(permitExpiry).toISOString(),
             status: "issued",
+            ...(quote.entryId ? { entryId: quote.entryId } : {}),
           };
           try {
             await options.permitStore.save(record);
@@ -651,6 +739,10 @@ export async function submitSignedTradeExecution(options: {
   receipts: AgentReceiptPersist;
   quoteStore: AgentQuoteStore;
   tradeReceipts?: AgentTradeReceiptStore;
+  /** Required for back permits — durable receipt + attribution (ADR 0028). */
+  backStore?: AgentBackRecordStore;
+  startBackWorkflow?: BackWorkflowStarter;
+  attributeBack?: BackAttributionApplier;
   send: SignedTradeSender;
   activeLeaseId: string | null;
   spendLedger?: AgentSpendLedger;
@@ -724,7 +816,11 @@ export async function submitSignedTradeExecution(options: {
       // Heal a missing publishable trade receipt after a prior secondary-save failure.
       if (prior.ok && options.tradeReceipts) {
         const permit = await options.permitStore.get(permitId);
-        if (permit && permit.agentId === options.agent.agentId) {
+        if (
+          permit &&
+          permit.agentId === options.agent.agentId &&
+          permit.action === "trade"
+        ) {
           try {
             await ensurePublishableTradeReceipt({
               agentId: options.agent.agentId,
@@ -737,6 +833,39 @@ export async function submitSignedTradeExecution(options: {
           } catch {
             // Keep returning the durable execute success; publish may still fail
             // until reconciliation succeeds.
+          }
+        }
+      }
+      // Heal a missing back record after secondary-save failure (ADR 0028).
+      if (
+        prior.ok &&
+        options.backStore &&
+        options.startBackWorkflow &&
+        !prior.backRecordId
+      ) {
+        const permit = await options.permitStore.get(permitId);
+        if (
+          permit &&
+          permit.agentId === options.agent.agentId &&
+          permit.action === "back" &&
+          permit.entryId
+        ) {
+          try {
+            return await commitBackExecution({
+              agent: options.agent,
+              execute: prior,
+              entryId: permit.entryId,
+              backStore: options.backStore,
+              idempotencyStore: options.idempotencyStore,
+              startWorkflow: options.startBackWorkflow,
+              ...(options.attributeBack
+                ? { attributeNow: options.attributeBack }
+                : {}),
+              ...(options.now ? { now: options.now } : {}),
+              ...(options.randomId ? { randomId: options.randomId } : {}),
+            });
+          } catch {
+            // Keep returning durable execute success.
           }
         }
       }
@@ -947,6 +1076,8 @@ export async function submitSignedTradeExecution(options: {
       dollarsOut: sendResult.receipt.dollarsOut,
       feeUsd: sendResult.receipt.feeUsd,
       idempotencyKey,
+      action: permit.action,
+      ...(permit.entryId ? { entryId: permit.entryId } : {}),
     };
 
     // Persist success before secondary accounting so a concurrent loser cannot
@@ -960,7 +1091,11 @@ export async function submitSignedTradeExecution(options: {
     try {
       await options.onSpend?.(permit.dollarsIn);
       await options.receipts.save(sendResult.receipt);
-      if (options.tradeReceipts) {
+      await options.spendLedger?.commit(
+        options.agent.agentId,
+        permit.dollarsIn,
+      );
+      if (permit.action === "trade" && options.tradeReceipts) {
         await ensurePublishableTradeReceipt({
           agentId: options.agent.agentId,
           permit,
@@ -970,10 +1105,27 @@ export async function submitSignedTradeExecution(options: {
           tradeReceipts: options.tradeReceipts,
         });
       }
-      await options.spendLedger?.commit(
-        options.agent.agentId,
-        permit.dollarsIn,
-      );
+      if (
+        permit.action === "back" &&
+        permit.entryId &&
+        options.backStore &&
+        options.startBackWorkflow
+      ) {
+        // Receipt + back record before attribution (ADR 0028).
+        return await commitBackExecution({
+          agent: options.agent,
+          execute: success,
+          entryId: permit.entryId,
+          backStore: options.backStore,
+          idempotencyStore: options.idempotencyStore,
+          startWorkflow: options.startBackWorkflow,
+          ...(options.attributeBack
+            ? { attributeNow: options.attributeBack }
+            : {}),
+          ...(options.now ? { now: options.now } : {}),
+          ...(options.randomId ? { randomId: options.randomId } : {}),
+        });
+      }
     } catch {
       // On-chain send already succeeded. Keep durable success; mark pending for
       // reconciliation of receipt / lifetime spend / reservation release.

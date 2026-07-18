@@ -80,6 +80,7 @@ describe("agent-network-reads", () => {
     expect(toConvictionAttribution(ENTRY)).toEqual({
       backerCount: 2,
       backedBy: ["alice", "bob"],
+      backers: [{ handle: "alice" }, { handle: "bob" }],
     });
   });
 

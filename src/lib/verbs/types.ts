@@ -167,6 +167,15 @@ export type AuthorshipSnapshot = {
   operatorHandle: string;
 };
 
+/**
+ * One backer on a conviction. Agent backs preserve an authorship snapshot
+ * so renames cannot rewrite historical attribution (ADR 0018 / 0026).
+ */
+export type BackerAttribution = {
+  handle: string;
+  authorship?: AuthorshipSnapshot;
+};
+
 /** A posted trade + thesis on the public feed (PRD). */
 export type ConvictionEntry = {
   entryId: string;
@@ -176,6 +185,8 @@ export type ConvictionEntry = {
   trade: ConvictionTrade;
   createdAt: string;
   backedBy: string[];
+  /** Rich backer attribution (handles + optional agent authorship snapshots). */
+  backerAttributions?: BackerAttribution[];
   receiptSlug?: string;
   /** Optional card anatomy — why-now timeline (ADR 0016). */
   whyNow?: WhyNowEvent[];

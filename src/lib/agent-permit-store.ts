@@ -39,6 +39,7 @@ type PermitRow = {
   issued_at: string;
   expires_at: string;
   status: string;
+  entry_id: string | null;
 };
 
 function num(value: string | number): number {
@@ -46,6 +47,7 @@ function num(value: string | number): number {
 }
 
 function recordFromRow(row: PermitRow): ExecutionPermitRecord {
+  const action = row.action === "back" ? "back" : "trade";
   return {
     permitId: row.permit_id,
     agentId: row.agent_id,
@@ -53,7 +55,7 @@ function recordFromRow(row: PermitRow): ExecutionPermitRecord {
     quoteId: row.quote_id,
     quoteFingerprint: row.quote_fingerprint,
     idempotencyKey: row.idempotency_key,
-    action: "trade",
+    action,
     dollarsIn: num(row.dollars_in),
     floorUsd: num(row.floor_usd),
     intent: row.intent as TradeIntent,
@@ -63,6 +65,7 @@ function recordFromRow(row: PermitRow): ExecutionPermitRecord {
     issuedAt: new Date(row.issued_at).toISOString(),
     expiresAt: new Date(row.expires_at).toISOString(),
     status: row.status as ExecutionPermitStatus,
+    ...(row.entry_id ? { entryId: row.entry_id } : {}),
   };
 }
 
@@ -78,7 +81,7 @@ async function ensurePermitSchema(
       quote_id uuid NOT NULL,
       quote_fingerprint text NOT NULL,
       idempotency_key text NOT NULL,
-      action text NOT NULL CHECK (action = 'trade'),
+      action text NOT NULL CHECK (action IN ('trade', 'back')),
       dollars_in numeric NOT NULL,
       floor_usd numeric NOT NULL,
       intent jsonb NOT NULL,
@@ -89,8 +92,22 @@ async function ensurePermitSchema(
       expires_at timestamptz NOT NULL,
       status text NOT NULL CHECK (
         status IN ('issued', 'consumed', 'released', 'pending')
-      )
+      ),
+      entry_id text
     )
+  `;
+  await sql`
+    ALTER TABLE agent_execution_permits
+      ADD COLUMN IF NOT EXISTS entry_id text
+  `;
+  await sql`
+    ALTER TABLE agent_execution_permits
+      DROP CONSTRAINT IF EXISTS agent_execution_permits_action_check
+  `;
+  await sql`
+    ALTER TABLE agent_execution_permits
+      ADD CONSTRAINT agent_execution_permits_action_check
+      CHECK (action IN ('trade', 'back'))
   `;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS agent_execution_permits_idempotency
@@ -123,7 +140,7 @@ class NeonAgentPermitStore implements AgentPermitStore {
       INSERT INTO agent_execution_permits (
         permit_id, agent_id, lease_id, quote_id, quote_fingerprint,
         idempotency_key, action, dollars_in, floor_usd, intent, size_usd,
-        agreed_quote, raw_transaction, issued_at, expires_at, status
+        agreed_quote, raw_transaction, issued_at, expires_at, status, entry_id
       ) VALUES (
         ${record.permitId}::uuid,
         ${record.agentId}::uuid,
@@ -140,7 +157,8 @@ class NeonAgentPermitStore implements AgentPermitStore {
         ${JSON.stringify(record.rawTransaction ?? null)}::jsonb,
         ${record.issuedAt}::timestamptz,
         ${record.expiresAt}::timestamptz,
-        ${record.status}
+        ${record.status},
+        ${record.entryId ?? null}
       )
     `;
   }

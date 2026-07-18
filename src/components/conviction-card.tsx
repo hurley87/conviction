@@ -16,7 +16,7 @@ import {
   DEFAULT_COPY_FRACTION,
 } from "@/lib/verbs/copy";
 import type { BackerApi } from "@/hooks/use-backer";
-import type { ConvictionEntry } from "@/lib/verbs/types";
+import type { BackerAttribution, ConvictionEntry } from "@/lib/verbs/types";
 
 type ConvictionCardProps = {
   entry: ConvictionEntry;
@@ -25,15 +25,32 @@ type ConvictionCardProps = {
   saved?: boolean;
 };
 
-function BackedByList({ handles }: { handles: string[] }) {
-  if (handles.length === 0) return null;
+function BackedByList({
+  entry,
+}: {
+  entry: ConvictionEntry;
+}) {
+  const backers: BackerAttribution[] =
+    entry.backerAttributions ??
+    entry.backedBy.map((handle) => ({ handle }));
+  if (backers.length === 0) return null;
   return (
     <p className="mt-3 text-xs text-ink-4">
       Backed by{" "}
-      {handles.map((h, i) => (
-        <span key={h}>
-          {i > 0 && (i === handles.length - 1 ? " and " : ", ")}
-          <span className="font-bold text-ink-2">@{h}</span>
+      {backers.map((backer, i) => (
+        <span key={backer.handle}>
+          {i > 0 && (i === backers.length - 1 ? " and " : ", ")}
+          <span className="font-bold text-ink-2">@{backer.handle}</span>
+          {backer.authorship?.authorKind === "agent" && (
+            <span className="text-ink-4">
+              {" "}
+              (Agent
+              {backer.authorship.operatorHandle
+                ? ` · operated by @${backer.authorship.operatorHandle}`
+                : ""}
+              )
+            </span>
+          )}
         </span>
       ))}
     </p>
@@ -63,7 +80,15 @@ function BackButton({
 
   return (
     <div className="mt-5 border-t border-line pt-4">
-      <BackedByList handles={state.backedBy} />
+      <BackedByList
+        entry={{
+          ...entry,
+          backedBy: state.backedBy,
+          ...(entry.backerAttributions
+            ? { backerAttributions: entry.backerAttributions }
+            : {}),
+        }}
+      />
 
       {state.receipt && (
         <Link

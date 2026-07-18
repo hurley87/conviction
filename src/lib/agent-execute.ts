@@ -40,6 +40,18 @@ export type AgentExecuteSuccess = {
   dollarsOut: number;
   feeUsd: number;
   idempotencyKey: string;
+  /** Present on durable back results (issue #58). */
+  action?: "trade" | "back";
+  entryId?: string;
+  backRecordId?: string;
+  reconciliationState?: "complete" | "pending_sync" | "needs_attention";
+  authorship?: {
+    agentId: string;
+    authorKind: "agent";
+    handle: string;
+    operatorHandle: string;
+  };
+  code?: "executed_pending_sync";
 };
 
 export type AgentExecuteErrorCode =
@@ -58,7 +70,7 @@ export type AgentExecuteErrorBody = {
   ok: false;
   code: AgentExecuteErrorCode;
   message: string;
-  action?: "trade";
+  action?: "trade" | "back";
   quoteId?: string;
   fields?: Array<{ field: string; code: string; message: string }>;
 };
@@ -238,7 +250,7 @@ export class AgentExecuteError extends Error {
     public readonly code: AgentExecuteErrorCode,
     message: string,
     public readonly details: {
-      action?: "trade";
+      action?: "trade" | "back";
       quoteId?: string;
       fields?: AgentExecuteErrorBody["fields"];
     } = {},
