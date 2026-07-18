@@ -65,10 +65,12 @@ export type StructuredTradeQuoteInput = {
   publicationIntent?: boolean;
 };
 
+export type AgentQuoteAction = "trade" | "back";
+
 export type AgentTradeQuoteRecord = {
   quoteId: string;
   agentId: string;
-  action: "trade";
+  action: AgentQuoteAction;
   /** Binds intent + quoted economics so execute cannot swap changed terms. */
   quoteFingerprint: string;
   intent: TradeIntent;
@@ -93,12 +95,14 @@ export type AgentTradeQuoteRecord = {
   gateVersion?: string;
   targetFingerprint?: string;
   gateExpiresAt?: string;
+  /** Canonical conviction bound into back quotes (ADR 0031). */
+  entryId?: string;
 };
 
 export type AgentTradeQuoteResponse = {
   ok: true;
   quoteId: string;
-  action: "trade";
+  action: AgentQuoteAction;
   quoteFingerprint: string;
   issuedAt: string;
   serverTime: string;
@@ -276,7 +280,7 @@ export function computeQuoteExpiresAt(input: {
 
 /** Single fingerprint binding structured intent + quoted economics. */
 export function buildQuoteFingerprint(input: {
-  action: "trade";
+  action: AgentQuoteAction;
   intent: TradeIntent;
   sizeUsd: number;
   publicationIntent: boolean;
@@ -286,11 +290,22 @@ export function buildQuoteFingerprint(input: {
   floorUsd: number;
   sourceChain: string;
   destChain: DestChain;
+  entryId?: string;
+  targetFingerprint?: string;
 }): string {
   return hashFingerprint({
     action: input.action,
     fromAsset: input.intent.fromAsset ?? null,
     toAsset: input.intent.toAsset,
+    ...(input.intent.token
+      ? {
+          token: {
+            chainId: input.intent.token.chainId,
+            address: input.intent.token.address.toLowerCase(),
+            symbol: input.intent.token.symbol,
+          },
+        }
+      : {}),
     sizeUsd: input.sizeUsd,
     destChain: input.destChain,
     publicationIntent: input.publicationIntent,
@@ -299,6 +314,10 @@ export function buildQuoteFingerprint(input: {
     feeUsd: input.feeUsd,
     floorUsd: input.floorUsd,
     sourceChain: input.sourceChain,
+    ...(input.entryId ? { entryId: input.entryId } : {}),
+    ...(input.targetFingerprint
+      ? { targetFingerprint: input.targetFingerprint }
+      : {}),
   });
 }
 
@@ -309,7 +328,7 @@ export function toQuoteResponse(
   return {
     ok: true,
     quoteId: record.quoteId,
-    action: "trade",
+    action: record.action,
     quoteFingerprint: record.quoteFingerprint,
     issuedAt: record.issuedAt,
     serverTime,
@@ -848,6 +867,12 @@ export async function getExecutableTradeQuote(
     throw new AgentQuoteError(
       "quote_not_found",
       "No trade quote matches that quoteId for this agent.",
+    );
+  }
+  if (record.action !== "trade") {
+    throw new AgentQuoteError(
+      "quote_mismatch",
+      "That quoteId is not a trade quote. Call conviction_quote_trade first.",
     );
   }
   const now = input.now?.() ?? new Date();

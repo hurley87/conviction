@@ -8,7 +8,7 @@ import {
   type CompactConviction,
   type ConvictionAttribution,
 } from "@conviction/mcp/agent-reads-contract";
-import type { ConvictionEntry } from "@/lib/verbs/types";
+import type { BackerAttribution, ConvictionEntry } from "@/lib/verbs/types";
 
 export {
   AGENT_SUMMARIZE_FEED_PATH,
@@ -64,9 +64,22 @@ export function toCompactConviction(entry: ConvictionEntry): CompactConviction {
 export function toConvictionAttribution(
   entry: ConvictionEntry,
 ): ConvictionAttribution {
+  const attributions: BackerAttribution[] =
+    entry.backerAttributions ??
+    entry.backedBy.map((handle) => ({ handle }));
   return {
     backerCount: entry.backedBy.length,
     backedBy: [...entry.backedBy],
+    backers: attributions.map((row) => ({
+      handle: row.handle,
+      ...(row.authorship
+        ? {
+            authorKind: row.authorship.authorKind,
+            operatorHandle: row.authorship.operatorHandle,
+            agentId: row.authorship.agentId,
+          }
+        : {}),
+    })),
   };
 }
 

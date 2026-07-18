@@ -104,7 +104,7 @@ export type MockExecuteError = {
   mode: "mock";
   code: MockExecuteErrorCode;
   message: string;
-  action?: "trade";
+  action?: "trade" | "back";
   quoteId?: string;
   fields?: Array<{ field: string; code: string; message: string }>;
 };
@@ -161,6 +161,16 @@ export type MockPublishableReceipt = {
   publishedEntryId?: string;
 };
 
+export type MockBackerAttribution = {
+  handle: string;
+  authorship?: {
+    agentId: string;
+    authorKind: "agent";
+    handle: string;
+    operatorHandle: string;
+  };
+};
+
 export type MockConvictionEntry = {
   entryId: string;
   handle: string;
@@ -174,6 +184,7 @@ export type MockConvictionEntry = {
   };
   createdAt: string;
   backedBy: string[];
+  backerAttributions?: MockBackerAttribution[];
   receiptSlug: string;
   whyNow: Array<{ at: string; event: string }>;
   whatBreaksIt: string;
@@ -217,15 +228,104 @@ export type MockPublishError = {
 
 export type MockPublishResult = MockPublishSuccess | MockPublishError;
 
+export type MockBackQuoteRecord = {
+  quoteId: string;
+  agentId: string;
+  action: "back";
+  entryId: string;
+  quoteFingerprint: string;
+  toAsset: McpTradeAsset;
+  sizeUsd: number;
+  destChain: DestChain;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  floorUsd: number;
+  sourceChain: string;
+  targetFingerprint: string;
+  issuedAt: string;
+  expiresAt: string;
+  used: boolean;
+};
+
+export type MockBackSuccess = MockExecuteSuccess & {
+  action: "back";
+  entryId: string;
+  backRecordId: string;
+  reconciliationState: "complete" | "pending_sync";
+  authorship: {
+    agentId: string;
+    authorKind: "agent";
+    handle: string;
+    operatorHandle: string;
+  };
+  code?: "executed_pending_sync";
+};
+
+export type MockBackResult = MockBackSuccess | MockExecuteError;
+
+export type MockBackRecord = {
+  backRecordId: string;
+  entryId: string;
+  receiptId: string;
+  reconciliationState: "complete" | "pending_sync";
+  authorship: MockBackSuccess["authorship"];
+};
+
 type DurableState = {
   policy: MockAgentPolicy;
   quotes: Record<string, MockTradeQuoteRecord>;
+  backQuotes: Record<string, MockBackQuoteRecord>;
+  backRecords: Record<string, MockBackRecord>;
+  backIdempotency: Record<string, MockBackResult>;
   idempotency: Record<string, MockExecuteResult>;
   receipts: Record<string, { receipt: MockReceipt; entryAt: string }>;
   tradeReceipts: Record<string, MockPublishableReceipt>;
   convictions: Record<string, MockConvictionEntry>;
   /** Active spend reservations (not yet committed to lifetimeSpendUsd). */
   reservedSpendUsd: number;
+};
+
+/** Seed conviction agents can back in mock mode. */
+export const MOCK_BACKABLE_ENTRY: MockConvictionEntry = {
+  entryId: "mock-conviction-eth-arb",
+  handle: "desk",
+  thesis: "ETH remains the settlement asset for the EVM spine.",
+  trade: {
+    fromAsset: "cash",
+    fromChain: "Arbitrum",
+    toAsset: "eth",
+    toChain: "Arbitrum",
+    sizeUsd: 25,
+  },
+  createdAt: "2026-07-01T00:00:00.000Z",
+  backedBy: [],
+  receiptSlug: "mock-desk-eth",
+  whyNow: [{ at: "2026-07-01T00:00:00.000Z", event: "Spine liquidity deepens." }],
+  whatBreaksIt: "A sustained ETH structural break.",
+  gateReport: [
+    {
+      id: "liquidity",
+      name: "Liquidity depth",
+      passed: true,
+    },
+    {
+      id: "contract",
+      name: "Contract verification",
+      passed: true,
+    },
+    {
+      id: "routability",
+      name: "UA routability",
+      passed: true,
+    },
+  ],
+  authorship: {
+    agentId: "00000000-0000-4000-8000-000000000001",
+    authorKind: "agent",
+    handle: "desk",
+    operatorHandle: "conviction",
+  },
 };
 
 function destExplorerUrl(destChain: DestChain, txHash: string): string {
@@ -338,10 +438,15 @@ export class MockTradeEngine {
     this.state = {
       policy: { ...DEFAULT_POLICY, ...options.policy },
       quotes: {},
+      backQuotes: {},
+      backRecords: {},
+      backIdempotency: {},
       idempotency: {},
       receipts: {},
       tradeReceipts: {},
-      convictions: {},
+      convictions: {
+        [MOCK_BACKABLE_ENTRY.entryId]: structuredClone(MOCK_BACKABLE_ENTRY),
+      },
       reservedSpendUsd: 0,
     };
   }
@@ -356,6 +461,12 @@ export class MockTradeEngine {
 
   getPolicy(): MockAgentPolicy {
     return { ...this.state.policy };
+  }
+
+  /** Test helper — inspect a conviction after mock back attribution. */
+  getConvictionForTests(entryId: string): MockConvictionEntry | null {
+    const entry = this.state.convictions[entryId];
+    return entry ? structuredClone(entry) : null;
   }
 
   setPolicy(patch: Partial<MockAgentPolicy>): void {
@@ -698,6 +809,418 @@ export class MockTradeEngine {
       receiptId,
       entry: structuredClone(entry),
     };
+  }
+
+  async quoteBack(input: Record<string, unknown>): Promise<
+    | {
+        ok: true;
+        mode: "mock";
+        quoteId: string;
+        action: "back";
+        quoteFingerprint: string;
+        issuedAt: string;
+        serverTime: string;
+        expiresAt: string;
+        dollarsIn: number;
+        dollarsOut: number;
+        feeUsd: number;
+        floorUsd: number;
+        sourceChain: string;
+        destChain: DestChain;
+        toAsset: McpTradeAsset;
+        sizeUsd: number;
+        publicationIntent: false;
+        entryId: string;
+        targetFingerprint: string;
+      }
+    | MockExecuteError
+  > {
+    const entryId =
+      typeof input.entryId === "string" ? input.entryId.trim() : "";
+    if (!entryId) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "invalid_input",
+        message: "Provide the entryId of the canonical conviction to back.",
+        fields: [
+          {
+            field: "entryId",
+            code: "required",
+            message: "Provide the entryId of the canonical conviction to back.",
+          },
+        ],
+      };
+    }
+
+    const forbidden = Object.keys(input).filter(
+      (key) => !["entryId", "dollarsIn", "fraction"].includes(key),
+    );
+    if (forbidden.length > 0) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "arbitrary_token_rejected",
+        message:
+          "Back quotes derive the target from the canonical conviction. Token addresses and destination overrides are rejected.",
+        fields: forbidden.map((field) => ({
+          field,
+          code: "forbidden_field",
+          message: `Remove "${field}". The approved target comes from the published conviction.`,
+        })),
+      };
+    }
+
+    const hasDollars = input.dollarsIn !== undefined;
+    const hasFraction = input.fraction !== undefined;
+    if (hasDollars === hasFraction) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "invalid_input",
+        message:
+          "Provide exactly one of dollarsIn (positive dollars) or fraction (0–1 of balance).",
+        fields: [
+          {
+            field: "dollarsIn|fraction",
+            code: "size_required",
+            message:
+              "Provide exactly one of dollarsIn or fraction — not both, not neither.",
+          },
+        ],
+      };
+    }
+
+    let requestedUsd: number;
+    if (hasDollars) {
+      if (
+        typeof input.dollarsIn !== "number" ||
+        !Number.isFinite(input.dollarsIn) ||
+        input.dollarsIn <= 0
+      ) {
+        return {
+          ok: false,
+          mode: "mock",
+          code: "invalid_input",
+          message: "Provide a positive dollarsIn.",
+          fields: [
+            {
+              field: "dollarsIn",
+              code: "invalid_value",
+              message: "dollarsIn must be a finite positive number.",
+            },
+          ],
+        };
+      }
+      requestedUsd = input.dollarsIn;
+    } else {
+      if (
+        typeof input.fraction !== "number" ||
+        !Number.isFinite(input.fraction) ||
+        input.fraction <= 0 ||
+        input.fraction > 1
+      ) {
+        return {
+          ok: false,
+          mode: "mock",
+          code: "invalid_input",
+          message: "fraction must be greater than 0 and at most 1.",
+          fields: [
+            {
+              field: "fraction",
+              code: "invalid_value",
+              message: "fraction must be greater than 0 and at most 1.",
+            },
+          ],
+        };
+      }
+      requestedUsd = Number(
+        (this.state.policy.balanceUsd * input.fraction).toFixed(6),
+      );
+      if (!(requestedUsd > 0)) {
+        return {
+          ok: false,
+          mode: "mock",
+          code: "invalid_input",
+          message:
+            "Account balance is empty — provide dollarsIn instead of fraction.",
+          fields: [
+            {
+              field: "dollarsIn",
+              code: "size_required",
+              message:
+                "Account balance is empty — provide dollarsIn instead of fraction.",
+            },
+          ],
+        };
+      }
+    }
+
+    const entry = this.state.convictions[entryId];
+    if (!entry) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "invalid_input",
+        message: "No canonical conviction matches that entryId.",
+        fields: [
+          {
+            field: "entryId",
+            code: "conviction_not_found",
+            message: "Provide an entryId from the mock conviction network.",
+          },
+        ],
+      };
+    }
+
+    const toAsset = isMcpTradeAsset(entry.trade.toAsset)
+      ? entry.trade.toAsset
+      : "eth";
+    const sizeUsd = Math.min(requestedUsd, 25);
+    const economics = quoteEconomics(sizeUsd, false);
+    const issuedAt = this.now();
+    const quoteId = this.randomId();
+    const targetFingerprint = hashFingerprint({
+      entryId,
+      toAsset,
+      destChain: entry.trade.toChain,
+    });
+    const quoteFingerprint = hashFingerprint({
+      action: "back",
+      entryId,
+      toAsset,
+      sizeUsd,
+      destChain: entry.trade.toChain,
+      targetFingerprint,
+      ...economics,
+      sourceChain: "Base",
+    });
+    const record: MockBackQuoteRecord = {
+      quoteId,
+      agentId: this.state.policy.agentId,
+      action: "back",
+      entryId,
+      quoteFingerprint,
+      toAsset,
+      sizeUsd,
+      destChain: entry.trade.toChain,
+      dollarsIn: economics.dollarsIn,
+      dollarsOut: economics.dollarsOut,
+      feeUsd: economics.feeUsd,
+      floorUsd: economics.floorUsd,
+      sourceChain: "Base",
+      targetFingerprint,
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + MOCK_QUOTE_TTL_MS).toISOString(),
+      used: false,
+    };
+    this.state.backQuotes[quoteId] = record;
+    await this.persist();
+    return {
+      ok: true,
+      mode: "mock",
+      quoteId: record.quoteId,
+      action: "back",
+      quoteFingerprint: record.quoteFingerprint,
+      issuedAt: record.issuedAt,
+      serverTime: issuedAt.toISOString(),
+      expiresAt: record.expiresAt,
+      dollarsIn: record.dollarsIn,
+      dollarsOut: record.dollarsOut,
+      feeUsd: record.feeUsd,
+      floorUsd: record.floorUsd,
+      sourceChain: record.sourceChain,
+      destChain: record.destChain,
+      toAsset: record.toAsset,
+      sizeUsd: record.sizeUsd,
+      publicationIntent: false,
+      entryId: record.entryId,
+      targetFingerprint: record.targetFingerprint,
+    };
+  }
+
+  async backConviction(input: {
+    quoteId: string;
+    idempotencyKey: string;
+  }): Promise<MockBackResult> {
+    const quoteId =
+      typeof input.quoteId === "string" ? input.quoteId.trim() : "";
+    const idempotencyKey =
+      typeof input.idempotencyKey === "string"
+        ? input.idempotencyKey.trim()
+        : "";
+    if (!quoteId || !idempotencyKey) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "invalid_input",
+        message: "Provide quoteId and idempotencyKey.",
+      };
+    }
+
+    const prior = this.state.backIdempotency[idempotencyKey];
+    if (prior) return structuredClone(prior);
+
+    const policy = this.state.policy;
+    if (policy.status !== "active") {
+      const blocked: MockBackResult = {
+        ok: false,
+        mode: "mock",
+        code: "lifecycle_blocked",
+        message: `Agent @${policy.handle} is ${policy.status} and cannot back convictions.`,
+      };
+      this.state.backIdempotency[idempotencyKey] = blocked;
+      await this.persist();
+      return structuredClone(blocked);
+    }
+    if (!policy.actionPolicy.back) {
+      const disabled: MockBackResult = {
+        ok: false,
+        mode: "mock",
+        code: "action_disabled",
+        message:
+          "Back is disabled for this agent. Only the operator can enable it through Agent Settings or the operator CLI.",
+        action: "back",
+      };
+      this.state.backIdempotency[idempotencyKey] = disabled;
+      await this.persist();
+      return structuredClone(disabled);
+    }
+
+    const quote = this.state.backQuotes[quoteId];
+    if (!quote || quote.agentId !== policy.agentId) {
+      const missing: MockBackResult = {
+        ok: false,
+        mode: "mock",
+        code: "quote_not_found",
+        message: "No back quote matches that quoteId for this agent.",
+        quoteId,
+      };
+      this.state.backIdempotency[idempotencyKey] = missing;
+      await this.persist();
+      return structuredClone(missing);
+    }
+    if (quote.used) {
+      const used: MockBackResult = {
+        ok: false,
+        mode: "mock",
+        code: "quote_mismatch",
+        message: "That quote has already been consumed.",
+        quoteId,
+      };
+      this.state.backIdempotency[idempotencyKey] = used;
+      await this.persist();
+      return structuredClone(used);
+    }
+    if (new Date(quote.expiresAt).getTime() <= this.now().getTime()) {
+      const expired: MockBackResult = {
+        ok: false,
+        mode: "mock",
+        code: "quote_expired",
+        message: `Quote ${quote.quoteId} expired at ${quote.expiresAt}. Call conviction_quote_back again.`,
+        quoteId,
+      };
+      this.state.backIdempotency[idempotencyKey] = expired;
+      await this.persist();
+      return structuredClone(expired);
+    }
+
+    quote.used = true;
+    this.providerAttempts += 1;
+    const receiptId = this.randomId();
+    const backRecordId = this.randomId();
+    const receipt: MockReceipt = {
+      slug: receiptId,
+      summary: `Backed — $${quote.dollarsIn.toFixed(2)} copied into ${quote.toAsset.toUpperCase()}.`,
+      dollarsIn: quote.dollarsIn,
+      dollarsOut: quote.dollarsOut,
+      feeUsd: quote.feeUsd,
+      legs: [
+        {
+          chain: "Base",
+          txHash: `0xmockbacksrc${receiptId.replace(/-/g, "").slice(0, 12)}`,
+          explorerUrl: "https://basescan.org/tx/0xmock",
+        },
+        {
+          chain: quote.destChain,
+          txHash: `0xmockbackdst${receiptId.replace(/-/g, "").slice(0, 12)}`,
+          explorerUrl: destExplorerUrl(quote.destChain, "0xmock"),
+        },
+      ],
+    };
+    this.state.receipts[receiptId] = {
+      receipt,
+      entryAt: this.now().toISOString(),
+    };
+    this.state.policy.lifetimeSpendUsd += quote.dollarsIn;
+    this.state.policy.balanceUsd = Math.max(
+      0,
+      this.state.policy.balanceUsd - quote.dollarsIn,
+    );
+
+    const authorship = {
+      agentId: policy.agentId,
+      authorKind: "agent" as const,
+      handle: policy.handle,
+      operatorHandle: "mock-operator",
+    };
+
+    // Durable back record before attribution (ADR 0028).
+    this.state.backRecords[backRecordId] = {
+      backRecordId,
+      entryId: quote.entryId,
+      receiptId,
+      reconciliationState: "pending_sync",
+      authorship,
+    };
+
+    const conviction = this.state.convictions[quote.entryId];
+    if (conviction) {
+      if (!conviction.backedBy.includes(policy.handle)) {
+        conviction.backedBy = [...conviction.backedBy, policy.handle];
+      }
+      const existing = conviction.backerAttributions ?? [];
+      const idx = existing.findIndex((row) => row.handle === policy.handle);
+      const attribution: MockBackerAttribution = {
+        handle: policy.handle,
+        authorship,
+      };
+      if (idx < 0) {
+        conviction.backerAttributions = [...existing, attribution];
+      } else if (!existing[idx]?.authorship) {
+        const next = [...existing];
+        next[idx] = attribution;
+        conviction.backerAttributions = next;
+      }
+      this.state.backRecords[backRecordId]!.reconciliationState = "complete";
+    }
+
+    const success: MockBackSuccess = {
+      ok: true,
+      mode: "mock",
+      receiptId,
+      quoteId: quote.quoteId,
+      quoteFingerprint: quote.quoteFingerprint,
+      transactionId: `mock-back-${receiptId}`,
+      summary: receipt.summary,
+      receipt,
+      dollarsIn: quote.dollarsIn,
+      dollarsOut: quote.dollarsOut,
+      feeUsd: quote.feeUsd,
+      idempotencyKey,
+      action: "back",
+      entryId: quote.entryId,
+      backRecordId,
+      reconciliationState:
+        this.state.backRecords[backRecordId]!.reconciliationState,
+      authorship,
+      ...(this.state.backRecords[backRecordId]!.reconciliationState !== "complete"
+        ? { code: "executed_pending_sync" as const }
+        : {}),
+    };
+    this.state.backIdempotency[idempotencyKey] = success;
+    await this.persist();
+    return structuredClone(success);
   }
 
   async getReceipt(receiptId: string): Promise<MockReceiptGetResult> {
@@ -1134,10 +1657,16 @@ export class MockTradeEngine {
         this.state = {
           policy: { ...DEFAULT_POLICY, ...parsed.policy },
           quotes: parsed.quotes ?? {},
+          backQuotes: parsed.backQuotes ?? {},
+          backRecords: parsed.backRecords ?? {},
+          backIdempotency: parsed.backIdempotency ?? {},
           idempotency: parsed.idempotency ?? {},
           receipts: parsed.receipts ?? {},
           tradeReceipts: parsed.tradeReceipts ?? {},
-          convictions: parsed.convictions ?? {},
+          convictions: {
+            [MOCK_BACKABLE_ENTRY.entryId]: structuredClone(MOCK_BACKABLE_ENTRY),
+            ...(parsed.convictions ?? {}),
+          },
           // Reservations are process-local; never revive them across restart.
           reservedSpendUsd: 0,
         };

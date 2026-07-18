@@ -41,6 +41,7 @@ type QuoteRow = {
   gate_version: string | null;
   target_fingerprint: string | null;
   gate_expires_at: string | null;
+  entry_id: string | null;
 };
 
 function num(value: string | number): number {
@@ -48,10 +49,11 @@ function num(value: string | number): number {
 }
 
 function recordFromRow(row: QuoteRow): AgentTradeQuoteRecord {
+  const action = row.action === "back" ? "back" : "trade";
   return {
     quoteId: row.quote_id,
     agentId: row.agent_id,
-    action: "trade",
+    action,
     quoteFingerprint: row.quote_fingerprint,
     intent: row.intent as TradeIntent,
     sizeUsd: num(row.size_usd),
@@ -82,6 +84,7 @@ function recordFromRow(row: QuoteRow): AgentTradeQuoteRecord {
     ...(row.gate_expires_at
       ? { gateExpiresAt: new Date(row.gate_expires_at).toISOString() }
       : {}),
+    ...(row.entry_id ? { entryId: row.entry_id } : {}),
   };
 }
 
@@ -94,7 +97,7 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
       CREATE TABLE IF NOT EXISTS agent_trade_quotes (
         quote_id uuid PRIMARY KEY,
         agent_id uuid NOT NULL,
-        action text NOT NULL CHECK (action = 'trade'),
+        action text NOT NULL CHECK (action IN ('trade', 'back')),
         quote_fingerprint text NOT NULL,
         intent jsonb NOT NULL,
         size_usd numeric NOT NULL,
@@ -116,8 +119,23 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
         gate_report jsonb,
         gate_version text,
         target_fingerprint text,
-        gate_expires_at timestamptz
+        gate_expires_at timestamptz,
+        entry_id text
       )
+    `;
+    // Heal pre-#58 databases that only allowed action = 'trade'.
+    await this.sql`
+      ALTER TABLE agent_trade_quotes
+        ADD COLUMN IF NOT EXISTS entry_id text
+    `;
+    await this.sql`
+      ALTER TABLE agent_trade_quotes
+        DROP CONSTRAINT IF EXISTS agent_trade_quotes_action_check
+    `;
+    await this.sql`
+      ALTER TABLE agent_trade_quotes
+        ADD CONSTRAINT agent_trade_quotes_action_check
+        CHECK (action IN ('trade', 'back'))
     `;
     await this.sql`
       CREATE INDEX IF NOT EXISTS agent_trade_quotes_agent_id
@@ -154,7 +172,8 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
         gate_report,
         gate_version,
         target_fingerprint,
-        gate_expires_at
+        gate_expires_at,
+        entry_id
       ) VALUES (
         ${record.quoteId}::uuid,
         ${record.agentId}::uuid,
@@ -180,7 +199,8 @@ class NeonAgentQuoteStore implements AgentQuoteStore {
         ${record.gateReport ? JSON.stringify(record.gateReport) : null}::jsonb,
         ${record.gateVersion ?? null},
         ${record.targetFingerprint ?? null},
-        ${record.gateExpiresAt ?? null}::timestamptz
+        ${record.gateExpiresAt ?? null}::timestamptz,
+        ${record.entryId ?? null}
       )
     `;
     return record;

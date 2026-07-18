@@ -387,13 +387,24 @@ export type LiveExecuteSuccess = {
   dollarsOut: number;
   feeUsd: number;
   idempotencyKey: string;
+  action?: "trade" | "back";
+  entryId?: string;
+  backRecordId?: string;
+  reconciliationState?: "complete" | "pending_sync" | "needs_attention";
+  authorship?: {
+    agentId: string;
+    authorKind: "agent";
+    handle: string;
+    operatorHandle: string;
+  };
+  code?: "executed_pending_sync";
 };
 
 export type LiveExecuteError = {
   ok: false;
   code: string;
   message: string;
-  action?: "trade";
+  action?: "trade" | "back";
   quoteId?: string;
   fields?: Array<{ field: string; code: string; message: string }>;
 };
@@ -410,6 +421,8 @@ export async function requestExecutionPermit(options: {
   quoteId: string;
   idempotencyKey: string;
   leaseId: string;
+  /** When set, only this quote action may receive a permit. */
+  expectedAction?: "trade" | "back";
   fetchImpl?: typeof fetch;
 }): Promise<LiveExecutionPermit | LiveExecuteResult> {
   const payload = await signedFetch<{
@@ -425,6 +438,9 @@ export async function requestExecutionPermit(options: {
       quoteId: options.quoteId,
       idempotencyKey: options.idempotencyKey,
       leaseId: options.leaseId,
+      ...(options.expectedAction
+        ? { expectedAction: options.expectedAction }
+        : {}),
     },
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
@@ -532,4 +548,52 @@ export async function publishConviction(options: {
     "Publish response was empty.",
     503,
   );
+}
+
+export type StructuredBackQuoteRequest = {
+  entryId: string;
+  dollarsIn?: number;
+  fraction?: number;
+  /** Extra keys are forwarded so the backend can reject forbidden overrides. */
+  [key: string]: unknown;
+};
+
+export type LiveBackQuote = {
+  ok: true;
+  quoteId: string;
+  action: "back";
+  quoteFingerprint: string;
+  issuedAt: string;
+  serverTime: string;
+  expiresAt: string;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  floorUsd: number;
+  sourceChain: string;
+  destChain: string;
+  toAsset: string;
+  receivedSymbol?: string;
+  sizeUsd: number;
+  publicationIntent: boolean;
+  entryId: string;
+  targetFingerprint: string;
+};
+
+/** Request a short-lived back quote derived from a canonical conviction. */
+export async function requestBackQuote(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  input: StructuredBackQuoteRequest;
+  fetchImpl?: typeof fetch;
+}): Promise<LiveBackQuote> {
+  const payload = await signedFetch<{ quote: LiveBackQuote }>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/quote/back",
+    body: options.input,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+  return payload.quote;
 }

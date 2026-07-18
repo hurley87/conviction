@@ -4,6 +4,11 @@ import {
 } from "@/lib/agent-api-body";
 import { getAgentAuditStore } from "@/lib/agent-audit";
 import {
+  createBackWorkflowStarter,
+  createConvictionBackAttributionApplier,
+} from "@/lib/agent-back-attribution";
+import { getAgentBackRecordStore } from "@/lib/agent-back-store";
+import {
   AgentExecuteError,
   type AgentExecuteErrorBody,
 } from "@/lib/agent-execute";
@@ -97,6 +102,9 @@ export async function POST(request: Request) {
       receipts: getAgentReceiptPersist(),
       quoteStore: getAgentQuoteStore(),
       tradeReceipts: getAgentTradeReceiptStore(),
+      backStore: getAgentBackRecordStore(),
+      startBackWorkflow: createBackWorkflowStarter(),
+      attributeBack: createConvictionBackAttributionApplier(),
       send: createSignedTradeSender(verified.agent.address),
       activeLeaseId: activeLease?.leaseId ?? null,
       spendLedger,

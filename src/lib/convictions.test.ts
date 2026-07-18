@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { SEED_CONVICTION } from "@/lib/conviction-seed";
 import { DECK_SEED_CARDS } from "@/lib/deck-seed";
 import {
+  addBacker,
   getConviction,
   listConvictions,
   listConvictionsPage,
@@ -176,5 +177,37 @@ describe("convictions memory store", () => {
     expect(found?.whatBreaksIt).toBe(entry.whatBreaksIt);
     expect(found?.gateReport).toEqual(entry.gateReport);
     expect(found?.createdAt).toBe("2026-07-15T10:05:00.000Z");
+  });
+
+  it("upgrades handle-only backer attribution when authorship arrives", async () => {
+    const entry = buildConviction({
+      handle: "desk",
+      thesis: "Attribution upgrade.",
+      trade: {
+        fromAsset: "cash",
+        fromChain: "Arbitrum",
+        toAsset: "eth",
+        toChain: "Arbitrum",
+        sizeUsd: 10,
+      },
+    });
+    await saveConviction(entry);
+
+    await addBacker(entry.entryId, "signal-scout");
+    const before = await getConviction(entry.entryId);
+    expect(before?.backerAttributions).toEqual([{ handle: "signal-scout" }]);
+
+    const authorship = {
+      agentId: "00000000-0000-4000-8000-000000000058",
+      authorKind: "agent" as const,
+      handle: "signal-scout",
+      operatorHandle: "alice",
+    };
+    await addBacker(entry.entryId, "signal-scout", authorship);
+    const after = await getConviction(entry.entryId);
+    expect(after?.backedBy).toEqual(["signal-scout"]);
+    expect(after?.backerAttributions).toEqual([
+      { handle: "signal-scout", authorship },
+    ]);
   });
 });

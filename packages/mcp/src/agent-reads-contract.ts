@@ -108,9 +108,18 @@ export const compactConvictionSchema = z.object({
   }),
 });
 
+export const backerAttributionSchema = z.object({
+  handle: z.string(),
+  authorKind: z.literal("agent").optional(),
+  operatorHandle: z.string().optional(),
+  agentId: z.string().optional(),
+});
+
 export const convictionAttributionSchema = z.object({
   backerCount: z.number(),
   backedBy: z.array(z.string()),
+  /** Rich attribution with agent disclosure + authorship snapshot (issue #58). */
+  backers: z.array(backerAttributionSchema).optional(),
 });
 
 const tokenRefSchema = z.object({

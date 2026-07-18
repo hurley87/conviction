@@ -51,6 +51,7 @@ export async function executeLiveTrade(options: {
   leaseId: string;
   quoteId: string;
   idempotencyKey: string;
+  expectedAction?: "trade" | "back";
   fetchImpl?: typeof fetch;
 }): Promise<LiveExecuteToolResult> {
   const quoteId = options.quoteId.trim();
@@ -98,6 +99,9 @@ export async function executeLiveTrade(options: {
       quoteId,
       idempotencyKey,
       leaseId: options.leaseId,
+      ...(options.expectedAction
+        ? { expectedAction: options.expectedAction }
+        : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     });
   } catch (error) {

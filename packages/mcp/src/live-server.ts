@@ -13,6 +13,7 @@ import {
   fetchFeedSummary,
   fetchReceipt,
   publishConviction,
+  requestBackQuote,
   requestTradeQuote,
 } from "./live-api-client.js";
 import { executeLiveTrade } from "./live-execute.js";
@@ -68,17 +69,6 @@ function leaseLostResult() {
   );
 }
 
-function notImplementedResult(tool: string) {
-  return toolResult(
-    {
-      ok: false,
-      code: "not_implemented",
-      message: `${tool} is registered in the v1 contract but not implemented in this slice.`,
-    },
-    true,
-  );
-}
-
 function unavailableResult(error: unknown, fallback: string) {
   if (error instanceof ConvictionApiError) {
     return toolResult(
@@ -125,6 +115,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
         "Quote before execute for all value-moving actions.",
         "The model never chooses identity, destination addresses, or signing material.",
         "Use conviction_account_status, conviction_list_convictions, conviction_get_conviction, conviction_summarize_feed, and conviction_get_receipt to inspect the network.",
+        "Back with conviction_quote_back then conviction_back_conviction; targets come only from canonical convictions.",
       ].join(" "),
     },
   );
@@ -454,6 +445,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
         leaseId: options.lease.leaseId,
         quoteId,
         idempotencyKey,
+        expectedAction: "trade",
         ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
       });
     },
@@ -501,19 +493,45 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     },
   );
 
+  const liveBackQuoteInput = z
+    .object({
+      entryId: z.string().min(1),
+      dollarsIn: z.number().positive().optional(),
+      fraction: z.number().gt(0).lte(1).optional(),
+    })
+    .passthrough();
+
   server.registerTool(
     "conviction_quote_back",
     {
       title: "Quote backing a conviction",
       description:
-        "Size and quote backing an existing conviction. Moves no funds.",
-      inputSchema: {
-        entryId: z.string().min(1),
-        dollarsIn: z.number().positive(),
-      },
+        "Size and quote backing an existing conviction. Derives the approved target from the canonical conviction. Moves no funds.",
+      inputSchema: liveBackQuoteInput,
       annotations: readOnlyAnnotations,
     },
-    async () => requireLease() ?? notImplementedResult("conviction_quote_back"),
+    async (args) => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+      try {
+        const quote = await requestBackQuote({
+          ...apiOptions(),
+          input: args as {
+            entryId: string;
+            dollarsIn?: number;
+            fraction?: number;
+          },
+        });
+        return toolResult(quote);
+      } catch (error) {
+        return unavailableResult(
+          error,
+          error instanceof Error
+            ? error.message
+            : "Could not quote backing that conviction.",
+        );
+      }
+    },
   );
 
   server.registerTool(
@@ -521,14 +539,26 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     {
       title: "Back a conviction",
       description:
-        "Execute a recent back quote and create durable attribution.",
+        "Execute a recent back quote and create durable attribution. Never requotes or re-executes a successful back.",
       inputSchema: {
         quoteId: z.string().min(1),
         idempotencyKey: z.string().min(1),
       },
       annotations: idempotentWriteAnnotations,
     },
-    async () => requireLease() ?? notImplementedResult("conviction_back_conviction"),
+    async ({ quoteId, idempotencyKey }) => {
+      const blocked = requireLease();
+      if (blocked) return blocked;
+      return executeLiveTrade({
+        apiBaseUrl: options.apiBaseUrl,
+        wallet: options.wallet,
+        leaseId: options.lease.leaseId,
+        quoteId,
+        idempotencyKey,
+        expectedAction: "back",
+        ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      });
+    },
   );
 
   return server;
