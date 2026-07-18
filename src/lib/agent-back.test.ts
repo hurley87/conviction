@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Wallet, getBytes } from "ethers";
 
 import {
+  MAX_BACK_ATTRIBUTION_ATTEMPTS,
   MemoryAgentBackRecordStore,
   buildBackTargetFingerprint,
   commitBackExecution,
@@ -9,10 +11,14 @@ import {
   loadBackQuoteForExecute,
   parseBackQuoteInput,
   reconcileBackAttribution,
+  runBackAttributionRetries,
   type BackAttributionApplier,
 } from "@/lib/agent-back";
+import { createBackWorkflowStarter } from "@/lib/agent-back-attribution";
 import {
   MemoryAgentIdempotencyStore,
+  MemoryAgentReceiptPersist,
+  MemorySpendLedger,
   type AgentExecuteSuccess,
 } from "@/lib/agent-execute";
 import {
@@ -22,7 +28,8 @@ import {
 } from "@/lib/agent-permit";
 import { MemoryAgentQuoteStore } from "@/lib/agent-quote";
 import type { OwnedAgent } from "@/lib/agent-provisioning";
-import { MockUAClient, mockTradeSigners } from "@/lib/ua/mock";
+import { MockUAClient } from "@/lib/ua/mock";
+import type { RawTransaction } from "@/lib/ua/trade";
 import type { ConvictionEntry, Receipt } from "@/lib/verbs/types";
 
 const AGENT: OwnedAgent = {
@@ -476,17 +483,145 @@ describe("back permit + durable attribution", () => {
     expect(other.reconciliationState).toBe("complete");
   });
 
-  it("cannot create duplicate transactions for concurrent back submits", async () => {
+  it("escalates retryable attribution failures to needs_attention", async () => {
+    const backStore = new MemoryAgentBackRecordStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const pending = await commitBackExecution({
+      agent: AGENT,
+      execute: {
+        ok: true,
+        receiptId: "rcpt_escalate",
+        quoteId: "q-escalate",
+        quoteFingerprint: "fp-escalate",
+        transactionId: "tx-escalate",
+        summary: "Backed",
+        receipt: receipt("rcpt_escalate"),
+        dollarsIn: 10,
+        dollarsOut: 9.95,
+        feeUsd: 0.05,
+        idempotencyKey: "idem-escalate",
+        action: "back",
+        entryId: ENTRY.entryId,
+      },
+      entryId: ENTRY.entryId,
+      backStore,
+      idempotencyStore,
+      attributeNow: {
+        async apply() {
+          return { ok: false, retryable: true, message: "feed down" };
+        },
+      },
+      startWorkflow: {
+        async start() {
+          return { runId: "run_skip" };
+        },
+      },
+      randomId: () => "00000000-0000-4000-8000-0000000000e1",
+    });
+
+    let applies = 0;
+    const final = await runBackAttributionRetries({
+      backRecordId: pending.backRecordId,
+      backStore,
+      maxAttempts: MAX_BACK_ATTRIBUTION_ATTEMPTS,
+      delayMs: 0,
+      attribute: {
+        async apply() {
+          applies += 1;
+          return { ok: false, retryable: true, message: "still down" };
+        },
+      },
+    });
+
+    expect(applies).toBe(MAX_BACK_ATTRIBUTION_ATTEMPTS);
+    expect(final.reconciliationState).toBe("needs_attention");
+    expect(final.attemptCount).toBe(MAX_BACK_ATTRIBUTION_ATTEMPTS);
+    expect(final.lastError).toBe("still down");
+  });
+
+  it("does not mask workflow start failures with fake runIds", async () => {
+    const backStore = new MemoryAgentBackRecordStore();
+    const previous = process.env.CONVICTION_WORKFLOW_WORLD;
+    const previousNodeEnv = process.env.NODE_ENV;
+    delete process.env.CONVICTION_WORKFLOW_WORLD;
+    process.env.NODE_ENV = "development";
+
+    try {
+      // Construct after clearing local-world env so start() hits the Workflow path.
+      const starter = createBackWorkflowStarter({
+        local: false,
+        attribute: {
+          async apply() {
+            return { ok: true };
+          },
+        },
+      });
+      await expect(starter.start("missing-back-record")).rejects.toThrow();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.CONVICTION_WORKFLOW_WORLD;
+      } else {
+        process.env.CONVICTION_WORKFLOW_WORLD = previous;
+      }
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+
+    // commitBackExecution keeps pending_sync + lastError when start throws.
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const result = await commitBackExecution({
+      agent: AGENT,
+      execute: {
+        ok: true,
+        receiptId: "rcpt_wf_fail",
+        quoteId: "q-wf",
+        quoteFingerprint: "fp-wf",
+        transactionId: "tx-wf",
+        summary: "Backed",
+        receipt: receipt("rcpt_wf_fail"),
+        dollarsIn: 10,
+        dollarsOut: 9.95,
+        feeUsd: 0.05,
+        idempotencyKey: "idem-wf-fail",
+        action: "back",
+        entryId: ENTRY.entryId,
+      },
+      entryId: ENTRY.entryId,
+      backStore,
+      idempotencyStore,
+      startWorkflow: {
+        async start() {
+          throw new Error("workflow world unavailable");
+        },
+      },
+      randomId: () => "00000000-0000-4000-8000-0000000000e2",
+    });
+
+    expect(result.code).toBe("executed_pending_sync");
+    expect(result.reconciliationState).toBe("pending_sync");
+    const durable = await backStore.get(result.backRecordId);
+    expect(durable?.workflowRunId).toBeNull();
+    expect(durable?.lastError).toMatch(/workflow world unavailable/i);
+  });
+
+  it("cannot create duplicate txs or back records for concurrent submits", async () => {
+    const wallet = Wallet.createRandom();
+    const agent: OwnedAgent = {
+      ...AGENT,
+      address: wallet.address,
+    };
     const quoteStore = new MemoryAgentQuoteStore();
     const permitStore = new MemoryAgentPermitStore();
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const backStore = new MemoryAgentBackRecordStore();
+    const receipts = new MemoryAgentReceiptPersist();
+    const spendLedger = new MemorySpendLedger();
     const ua = new MockUAClient();
+    const now = () => new Date("2026-07-18T12:00:00.000Z");
 
     const quote = await issueBackQuote({
       store: quoteStore,
       ua,
-      agent: AGENT,
+      agent,
       body: { entryId: ENTRY.entryId, dollarsIn: 10 },
       convictions: {
         async get(id) {
@@ -494,11 +629,24 @@ describe("back permit + durable attribution", () => {
         },
       },
       balance: BALANCE,
+      now,
       randomId: () => "00000000-0000-4000-8000-0000000000b8",
     });
 
+    const stored = await quoteStore.get(quote.quoteId);
+    if (!stored) throw new Error("missing quote");
+    const raw = (stored.rawTransaction ?? {}) as Record<string, unknown>;
+    await quoteStore.save({
+      ...stored,
+      rawTransaction: {
+        ...raw,
+        rootHash:
+          "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      },
+    });
+
     const permit = await issueTradeExecutionPermit({
-      agent: AGENT,
+      agent,
       quoteId: quote.quoteId,
       idempotencyKey: "idem-concurrent",
       leaseId: "lease-1",
@@ -507,101 +655,75 @@ describe("back permit + durable attribution", () => {
       permitStore,
       idempotencyStore,
       balance: BALANCE,
+      spendLedger,
       expectedAction: "back",
+      now,
       randomId: () => "00000000-0000-4000-8000-0000000000p1",
     });
     expect(permit.ok && "permitId" in permit).toBe(true);
     if (!permit.ok || !("permitId" in permit)) return;
 
-    let sends = 0;
-    const send = async () => {
-      sends += 1;
-      const rcpt = receipt(`rcpt_concurrent_${sends}`);
-      return {
-        transactionId: `tx_${sends}`,
-        receipt: rcpt,
-        summary: rcpt.summary,
-      };
-    };
-
-    const rootHashSignature = await mockTradeSigners.signRootHash(
-      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    const permitRaw = permit.rawTransaction as RawTransaction;
+    const rootHashSignature = await wallet.signMessage(
+      getBytes(permitRaw.rootHash),
     );
 
-    // Patch agent address to match mock signer recovery if needed — use a
-    // custom send path that does not rely on signature recovery by mocking
-    // verify through a pre-claimed permit submit with a valid signature from
-    // the agent's configured address. For this test we use a send-only race
-    // after forging a matching signature is hard; instead assert commitBack
-    // uniqueness under concurrent commitBackExecution calls.
-    void rootHashSignature;
-    void send;
-    void submitSignedTradeExecution;
-
-    const [a, b] = await Promise.all([
-      commitBackExecution({
-        agent: AGENT,
-        execute: {
-          ok: true,
-          receiptId: "rcpt_shared",
-          quoteId: quote.quoteId,
-          quoteFingerprint: quote.quoteFingerprint,
-          transactionId: "tx-shared",
-          summary: "shared",
-          receipt: receipt("rcpt_shared"),
-          dollarsIn: 10,
-          dollarsOut: 9.95,
-          feeUsd: 0.05,
-          idempotencyKey: "idem-shared",
-          action: "back",
-          entryId: ENTRY.entryId,
+    let sends = 0;
+    const submitOnce = () =>
+      submitSignedTradeExecution({
+        agent,
+        input: {
+          permitId: permit.permitId,
+          idempotencyKey: "idem-concurrent",
+          leaseId: "lease-1",
+          rootHashSignature,
         },
-        entryId: ENTRY.entryId,
-        backStore,
+        permitStore,
         idempotencyStore,
-        startWorkflow: {
+        receipts,
+        quoteStore,
+        spendLedger,
+        backStore,
+        startBackWorkflow: {
           async start(id) {
             return { runId: `run_${id}` };
           },
         },
-        attributeNow: {
+        attributeBack: {
           async apply() {
             return { ok: true };
           },
         },
-        randomId: () => "00000000-0000-4000-8000-0000000000c1",
-      }),
-      commitBackExecution({
-        agent: AGENT,
-        execute: {
-          ok: true,
-          receiptId: "rcpt_shared",
-          quoteId: quote.quoteId,
-          quoteFingerprint: quote.quoteFingerprint,
-          transactionId: "tx-shared",
-          summary: "shared",
-          receipt: receipt("rcpt_shared"),
-          dollarsIn: 10,
-          dollarsOut: 9.95,
-          feeUsd: 0.05,
-          idempotencyKey: "idem-shared",
-          action: "back",
-          entryId: ENTRY.entryId,
+        activeLeaseId: "lease-1",
+        now,
+        randomId: () => "live-back-concurrent",
+        send: async ({ receiptSlug, agreedQuote }) => {
+          sends += 1;
+          return {
+            transactionId: `tx_${sends}`,
+            summary: "Backed",
+            receipt: {
+              slug: receiptSlug,
+              summary: "Backed",
+              dollarsIn: agreedQuote.dollarsIn,
+              dollarsOut: agreedQuote.dollarsOut,
+              feeUsd: agreedQuote.feeUsd,
+              legs: [],
+            },
+          };
         },
-        entryId: ENTRY.entryId,
-        backStore,
-        idempotencyStore,
-        startWorkflow: {
-          async start() {
-            throw new Error("duplicate workflow start");
-          },
-        },
-        randomId: () => "00000000-0000-4000-8000-0000000000c2",
-      }),
-    ]);
+      });
 
-    expect(a.backRecordId).toBe(b.backRecordId);
-    expect(await backStore.getByReceiptId("rcpt_shared")).toBeTruthy();
+    const [a, b] = await Promise.all([submitOnce(), submitOnce()]);
+
+    expect(sends).toBe(1);
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    expect(a.backRecordId).toBeTruthy();
+    expect(b.backRecordId).toBe(a.backRecordId);
+    expect(a.receiptId).toBe(b.receiptId);
+    expect(await backStore.getByReceiptId(a.receiptId)).toBeTruthy();
   });
 });
 

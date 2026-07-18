@@ -55,12 +55,17 @@ export type AgentBackRecord = {
   idempotencyKey: string;
   authorship: AgentBackAuthorship;
   reconciliationState: ReconciliationState;
+  /** Failed attribution attempts recorded on the durable row (ADR 0029). */
+  attemptCount: number;
   workflowRunId: string | null;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
 };
+
+/** Max attribution attempts before escalating to needs_attention. */
+export const MAX_BACK_ATTRIBUTION_ATTEMPTS = 5;
 
 export type AgentBackQuoteResponse = Omit<AgentTradeQuoteResponse, "action"> & {
   action: "back";
@@ -112,6 +117,7 @@ export type AgentBackRecordStore = {
     workflowRunId?: string | null;
     lastError?: string | null;
     completedAt?: string | null;
+    attemptCount?: number;
   }): Promise<AgentBackRecord | null>;
   setWorkflowRunId(
     backRecordId: string,
@@ -179,6 +185,7 @@ export class MemoryAgentBackRecordStore implements AgentBackRecordStore {
     workflowRunId?: string | null;
     lastError?: string | null;
     completedAt?: string | null;
+    attemptCount?: number;
   }): Promise<AgentBackRecord | null> {
     const stored = this.records.get(input.backRecordId);
     if (!stored || stored.reconciliationState !== input.from) return null;
@@ -192,6 +199,9 @@ export class MemoryAgentBackRecordStore implements AgentBackRecordStore {
       ...(input.lastError !== undefined ? { lastError: input.lastError } : {}),
       ...(input.completedAt !== undefined
         ? { completedAt: input.completedAt }
+        : {}),
+      ...(input.attemptCount !== undefined
+        ? { attemptCount: input.attemptCount }
         : {}),
     };
     this.records.set(input.backRecordId, next);
@@ -718,6 +728,7 @@ export function buildAgentBackRecord(input: {
     idempotencyKey: input.idempotencyKey,
     authorship: deriveBackAuthorship(input.agent),
     reconciliationState: "pending_sync",
+    attemptCount: 0,
     workflowRunId: null,
     lastError: null,
     createdAt: now,
@@ -886,6 +897,7 @@ export async function commitBackExecution(options: {
 /**
  * Idempotent attribution step used by Vercel Workflow and local/test runners.
  * Never signs, never issues permits, never moves funds (ADR 0029).
+ * Each failed attempt increments durable `attemptCount` until maxAttempts.
  */
 export async function reconcileBackAttribution(options: {
   backRecordId: string;
@@ -894,13 +906,15 @@ export async function reconcileBackAttribution(options: {
   now?: () => Date;
   /** After this many recorded failures, escalate to needs_attention. */
   maxAttempts?: number;
-  attemptCount?: number;
 }): Promise<AgentBackRecord> {
   const record = await options.backStore.get(options.backRecordId);
   if (!record) {
     throw new Error(`Back record ${options.backRecordId} not found.`);
   }
-  if (record.reconciliationState === "complete") {
+  if (
+    record.reconciliationState === "complete" ||
+    record.reconciliationState === "needs_attention"
+  ) {
     return record;
   }
 
@@ -920,8 +934,8 @@ export async function reconcileBackAttribution(options: {
     return completed ?? ((await options.backStore.get(record.backRecordId)) as AgentBackRecord);
   }
 
-  const attempts = options.attemptCount ?? 1;
-  const maxAttempts = options.maxAttempts ?? 5;
+  const attempts = (record.attemptCount ?? 0) + 1;
+  const maxAttempts = options.maxAttempts ?? MAX_BACK_ATTRIBUTION_ATTEMPTS;
   const nextState: ReconciliationState =
     !attributed.retryable || attempts >= maxAttempts
       ? "needs_attention"
@@ -932,8 +946,50 @@ export async function reconcileBackAttribution(options: {
     from: record.reconciliationState,
     to: nextState,
     lastError: attributed.message,
+    attemptCount: attempts,
   });
   return updated ?? ((await options.backStore.get(record.backRecordId)) as AgentBackRecord);
+}
+
+/**
+ * Retry attribution until complete, needs_attention, or maxAttempts.
+ * Used by the local/test workflow world (no Vercel Workflow runtime).
+ */
+export async function runBackAttributionRetries(options: {
+  backRecordId: string;
+  backStore: AgentBackRecordStore;
+  attribute: BackAttributionApplier;
+  maxAttempts?: number;
+  delayMs?: number;
+  now?: () => Date;
+}): Promise<AgentBackRecord> {
+  const maxAttempts = options.maxAttempts ?? MAX_BACK_ATTRIBUTION_ATTEMPTS;
+  let latest = await reconcileBackAttribution({
+    backRecordId: options.backRecordId,
+    backStore: options.backStore,
+    attribute: options.attribute,
+    maxAttempts,
+    ...(options.now ? { now: options.now } : {}),
+  });
+
+  for (
+    let i = 1;
+    i < maxAttempts && latest.reconciliationState === "pending_sync";
+    i += 1
+  ) {
+    if ((options.delayMs ?? 0) > 0) {
+      await new Promise((resolve) => setTimeout(resolve, options.delayMs));
+    }
+    latest = await reconcileBackAttribution({
+      backRecordId: options.backRecordId,
+      backStore: options.backStore,
+      attribute: options.attribute,
+      maxAttempts,
+      ...(options.now ? { now: options.now } : {}),
+    });
+  }
+
+  return latest;
 }
 
 export function backErrorStatus(

@@ -1,7 +1,7 @@
 import "server-only";
 
 import {
-  reconcileBackAttribution,
+  runBackAttributionRetries,
   type BackAttributionApplier,
   type BackWorkflowStarter,
 } from "@/lib/agent-back";
@@ -44,6 +44,9 @@ export function createConvictionBackAttributionApplier(): BackAttributionApplier
  * Start durable back-attribution reconciliation.
  * Uses Vercel Workflow when available; falls back to an in-process runner for
  * local/test worlds (ADR 0029).
+ *
+ * Production start failures are not masked with fake runIds — callers keep
+ * durable `pending_sync` + `lastError` (ADR 0028).
  */
 export function createBackWorkflowStarter(options?: {
   /** Force the deterministic local runner (tests / CI). */
@@ -61,11 +64,12 @@ export function createBackWorkflowStarter(options?: {
     async start(backRecordId: string) {
       if (forceLocal) {
         const runId = `local_${backRecordId}`;
-        // Fire-and-forget local reconciliation — domain record is already durable.
-        void reconcileBackAttribution({
+        // Fire-and-forget local reconciliation with attempt escalation.
+        void runBackAttributionRetries({
           backRecordId,
           backStore: getAgentBackRecordStore(),
           attribute,
+          delayMs: 0,
         }).catch(() => undefined);
         return { runId };
       }
@@ -84,15 +88,17 @@ export function createBackWorkflowStarter(options?: {
             ? (run as { runId: string }).runId
             : `workflow_${backRecordId}`;
         return { runId };
-      } catch {
-        // Fail soft into local reconciliation so onchain success still returns.
-        const runId = `local_fallback_${backRecordId}`;
-        void reconcileBackAttribution({
+      } catch (error) {
+        // Best-effort local retries without claiming a durable workflow run id.
+        void runBackAttributionRetries({
           backRecordId,
           backStore: getAgentBackRecordStore(),
           attribute,
+          delayMs: 0,
         }).catch(() => undefined);
-        return { runId };
+        throw error instanceof Error
+          ? error
+          : new Error("Could not start attribution workflow.");
       }
     },
   };

@@ -386,8 +386,19 @@ export async function addBacker(
     const updated = appendBacker(entry.backedBy, trimmed);
     entry.backedBy = updated;
     const existingAttributions = entry.backerAttributions ?? [];
-    if (!existingAttributions.some((row) => row.handle === trimmed)) {
+    const existingIndex = existingAttributions.findIndex(
+      (row) => row.handle === trimmed,
+    );
+    if (existingIndex < 0) {
       entry.backerAttributions = [...existingAttributions, attribution];
+    } else if (
+      authorship &&
+      !existingAttributions[existingIndex]?.authorship
+    ) {
+      // Upgrade handle-only rows when agent authorship becomes available.
+      const next = [...existingAttributions];
+      next[existingIndex] = attribution;
+      entry.backerAttributions = next;
     }
     memoryStore.set(entryId, entry);
     return updated;
@@ -411,6 +422,24 @@ export async function addBacker(
           WHERE elem->>'handle' = ${trimmed}
         )
           THEN COALESCE(backer_attributions, '[]'::jsonb) || ${JSON.stringify(attribution)}::jsonb
+        WHEN ${authorship != null}::boolean
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(COALESCE(backer_attributions, '[]'::jsonb)) elem
+            WHERE elem->>'handle' = ${trimmed}
+              AND (elem->'authorship') IS NULL
+          )
+          THEN (
+            SELECT COALESCE(jsonb_agg(
+              CASE
+                WHEN elem->>'handle' = ${trimmed}
+                  AND (elem->'authorship') IS NULL
+                  THEN ${JSON.stringify(attribution)}::jsonb
+                ELSE elem
+              END
+            ), '[]'::jsonb)
+            FROM jsonb_array_elements(COALESCE(backer_attributions, '[]'::jsonb)) elem
+          )
         ELSE backer_attributions
       END
     WHERE entry_id = ${entryId}

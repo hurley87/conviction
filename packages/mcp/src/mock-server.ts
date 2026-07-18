@@ -216,7 +216,8 @@ export async function createMockServer(
   const mcpBackQuoteInput = z
     .object({
       entryId: z.string().min(1),
-      dollarsIn: z.number().positive(),
+      dollarsIn: z.number().positive().optional(),
+      fraction: z.number().gt(0).max(1).optional(),
     })
     .passthrough();
 

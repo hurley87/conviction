@@ -967,7 +967,9 @@ export async function submitSignedTradeExecution(options: {
           ok: false,
           code: "quote_expired",
           message:
-            "The execution permit expired before submission. Call conviction_quote_trade for a new quoteId.",
+            permit.action === "back"
+              ? "The execution permit expired before submission. Call conviction_quote_back for a new quoteId."
+              : "The execution permit expired before submission. Call conviction_quote_trade for a new quoteId.",
           quoteId: permit.quoteId,
         },
       );
@@ -1131,6 +1133,32 @@ export async function submitSignedTradeExecution(options: {
       // reconciliation of receipt / lifetime spend / reservation release.
       // Authenticated retries heal a missing publishable trade receipt above.
       await options.permitStore.casStatus(permitId, "consumed", "pending");
+
+      // Prefer returning back fields when the durable record can still be saved.
+      if (
+        permit.action === "back" &&
+        permit.entryId &&
+        options.backStore &&
+        options.startBackWorkflow
+      ) {
+        try {
+          return await commitBackExecution({
+            agent: options.agent,
+            execute: success,
+            entryId: permit.entryId,
+            backStore: options.backStore,
+            idempotencyStore: options.idempotencyStore,
+            startWorkflow: options.startBackWorkflow,
+            ...(options.attributeBack
+              ? { attributeNow: options.attributeBack }
+              : {}),
+            ...(options.now ? { now: options.now } : {}),
+            ...(options.randomId ? { randomId: options.randomId } : {}),
+          });
+        } catch {
+          // Fall through to bare execute success; heal path on retry.
+        }
+      }
     }
 
     return success;

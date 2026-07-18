@@ -161,6 +161,16 @@ export type MockPublishableReceipt = {
   publishedEntryId?: string;
 };
 
+export type MockBackerAttribution = {
+  handle: string;
+  authorship?: {
+    agentId: string;
+    authorKind: "agent";
+    handle: string;
+    operatorHandle: string;
+  };
+};
+
 export type MockConvictionEntry = {
   entryId: string;
   handle: string;
@@ -174,6 +184,7 @@ export type MockConvictionEntry = {
   };
   createdAt: string;
   backedBy: string[];
+  backerAttributions?: MockBackerAttribution[];
   receiptSlug: string;
   whyNow: Array<{ at: string; event: string }>;
   whatBreaksIt: string;
@@ -450,6 +461,12 @@ export class MockTradeEngine {
 
   getPolicy(): MockAgentPolicy {
     return { ...this.state.policy };
+  }
+
+  /** Test helper — inspect a conviction after mock back attribution. */
+  getConvictionForTests(entryId: string): MockConvictionEntry | null {
+    const entry = this.state.convictions[entryId];
+    return entry ? structuredClone(entry) : null;
   }
 
   setPolicy(patch: Partial<MockAgentPolicy>): void {
@@ -820,10 +837,6 @@ export class MockTradeEngine {
   > {
     const entryId =
       typeof input.entryId === "string" ? input.entryId.trim() : "";
-    const dollarsIn =
-      typeof input.dollarsIn === "number" && Number.isFinite(input.dollarsIn)
-        ? input.dollarsIn
-        : NaN;
     if (!entryId) {
       return {
         ok: false,
@@ -839,21 +852,7 @@ export class MockTradeEngine {
         ],
       };
     }
-    if (!(dollarsIn > 0)) {
-      return {
-        ok: false,
-        mode: "mock",
-        code: "invalid_input",
-        message: "Provide a positive dollarsIn.",
-        fields: [
-          {
-            field: "dollarsIn",
-            code: "required",
-            message: "Provide a positive dollarsIn.",
-          },
-        ],
-      };
-    }
+
     const forbidden = Object.keys(input).filter(
       (key) => !["entryId", "dollarsIn", "fraction"].includes(key),
     );
@@ -870,6 +869,91 @@ export class MockTradeEngine {
           message: `Remove "${field}". The approved target comes from the published conviction.`,
         })),
       };
+    }
+
+    const hasDollars = input.dollarsIn !== undefined;
+    const hasFraction = input.fraction !== undefined;
+    if (hasDollars === hasFraction) {
+      return {
+        ok: false,
+        mode: "mock",
+        code: "invalid_input",
+        message:
+          "Provide exactly one of dollarsIn (positive dollars) or fraction (0–1 of balance).",
+        fields: [
+          {
+            field: "dollarsIn|fraction",
+            code: "size_required",
+            message:
+              "Provide exactly one of dollarsIn or fraction — not both, not neither.",
+          },
+        ],
+      };
+    }
+
+    let requestedUsd: number;
+    if (hasDollars) {
+      if (
+        typeof input.dollarsIn !== "number" ||
+        !Number.isFinite(input.dollarsIn) ||
+        input.dollarsIn <= 0
+      ) {
+        return {
+          ok: false,
+          mode: "mock",
+          code: "invalid_input",
+          message: "Provide a positive dollarsIn.",
+          fields: [
+            {
+              field: "dollarsIn",
+              code: "invalid_value",
+              message: "dollarsIn must be a finite positive number.",
+            },
+          ],
+        };
+      }
+      requestedUsd = input.dollarsIn;
+    } else {
+      if (
+        typeof input.fraction !== "number" ||
+        !Number.isFinite(input.fraction) ||
+        input.fraction <= 0 ||
+        input.fraction > 1
+      ) {
+        return {
+          ok: false,
+          mode: "mock",
+          code: "invalid_input",
+          message: "fraction must be greater than 0 and at most 1.",
+          fields: [
+            {
+              field: "fraction",
+              code: "invalid_value",
+              message: "fraction must be greater than 0 and at most 1.",
+            },
+          ],
+        };
+      }
+      requestedUsd = Number(
+        (this.state.policy.balanceUsd * input.fraction).toFixed(6),
+      );
+      if (!(requestedUsd > 0)) {
+        return {
+          ok: false,
+          mode: "mock",
+          code: "invalid_input",
+          message:
+            "Account balance is empty — provide dollarsIn instead of fraction.",
+          fields: [
+            {
+              field: "dollarsIn",
+              code: "size_required",
+              message:
+                "Account balance is empty — provide dollarsIn instead of fraction.",
+            },
+          ],
+        };
+      }
     }
 
     const entry = this.state.convictions[entryId];
@@ -892,7 +976,7 @@ export class MockTradeEngine {
     const toAsset = isMcpTradeAsset(entry.trade.toAsset)
       ? entry.trade.toAsset
       : "eth";
-    const sizeUsd = Math.min(dollarsIn, 25);
+    const sizeUsd = Math.min(requestedUsd, 25);
     const economics = quoteEconomics(sizeUsd, false);
     const issuedAt = this.now();
     const quoteId = this.randomId();
@@ -1091,8 +1175,23 @@ export class MockTradeEngine {
     };
 
     const conviction = this.state.convictions[quote.entryId];
-    if (conviction && !conviction.backedBy.includes(policy.handle)) {
-      conviction.backedBy = [...conviction.backedBy, policy.handle];
+    if (conviction) {
+      if (!conviction.backedBy.includes(policy.handle)) {
+        conviction.backedBy = [...conviction.backedBy, policy.handle];
+      }
+      const existing = conviction.backerAttributions ?? [];
+      const idx = existing.findIndex((row) => row.handle === policy.handle);
+      const attribution: MockBackerAttribution = {
+        handle: policy.handle,
+        authorship,
+      };
+      if (idx < 0) {
+        conviction.backerAttributions = [...existing, attribution];
+      } else if (!existing[idx]?.authorship) {
+        const next = [...existing];
+        next[idx] = attribution;
+        conviction.backerAttributions = next;
+      }
       this.state.backRecords[backRecordId]!.reconciliationState = "complete";
     }
 

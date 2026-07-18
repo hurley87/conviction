@@ -20,6 +20,7 @@ type BackRow = {
   idempotency_key: string;
   authorship: AgentBackRecord["authorship"];
   reconciliation_state: string;
+  attempt_count: number | null;
   workflow_run_id: string | null;
   last_error: string | null;
   created_at: string;
@@ -38,6 +39,7 @@ function recordFromRow(row: BackRow): AgentBackRecord {
     idempotencyKey: row.idempotency_key,
     authorship: row.authorship,
     reconciliationState: row.reconciliation_state as ReconciliationState,
+    attemptCount: row.attempt_count ?? 0,
     workflowRunId: row.workflow_run_id,
     lastError: row.last_error,
     createdAt: new Date(row.created_at).toISOString(),
@@ -65,6 +67,7 @@ async function ensureSchema(
       reconciliation_state text NOT NULL CHECK (
         reconciliation_state IN ('complete', 'pending_sync', 'needs_attention')
       ),
+      attempt_count integer NOT NULL DEFAULT 0,
       workflow_run_id text,
       last_error text,
       created_at timestamptz NOT NULL,
@@ -72,6 +75,10 @@ async function ensureSchema(
       completed_at timestamptz,
       UNIQUE (agent_id, idempotency_key)
     )
+  `;
+  await sql`
+    ALTER TABLE agent_backs
+      ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0
   `;
   await sql`
     CREATE INDEX IF NOT EXISTS agent_backs_entry_id
@@ -89,31 +96,48 @@ class NeonAgentBackRecordStore implements AgentBackRecordStore {
 
   async save(record: AgentBackRecord): Promise<AgentBackRecord> {
     await ensureSchema(this.sql);
-    await this.sql`
-      INSERT INTO agent_backs (
-        back_record_id, agent_id, entry_id, receipt_id, quote_id,
-        quote_fingerprint, idempotency_key, authorship, reconciliation_state,
-        workflow_run_id, last_error, created_at, updated_at, completed_at
-      ) VALUES (
-        ${record.backRecordId}::uuid,
-        ${record.agentId}::uuid,
-        ${record.entryId},
-        ${record.receiptId},
-        ${record.quoteId}::uuid,
-        ${record.quoteFingerprint},
-        ${record.idempotencyKey},
-        ${JSON.stringify(record.authorship)}::jsonb,
-        ${record.reconciliationState},
-        ${record.workflowRunId},
-        ${record.lastError},
-        ${record.createdAt}::timestamptz,
-        ${record.updatedAt}::timestamptz,
-        ${record.completedAt}::timestamptz
-      )
-      ON CONFLICT (receipt_id) DO NOTHING
-    `;
-    const existing = await this.getByReceiptId(record.receiptId);
-    return existing ?? record;
+    try {
+      await this.sql`
+        INSERT INTO agent_backs (
+          back_record_id, agent_id, entry_id, receipt_id, quote_id,
+          quote_fingerprint, idempotency_key, authorship, reconciliation_state,
+          attempt_count, workflow_run_id, last_error, created_at, updated_at,
+          completed_at
+        ) VALUES (
+          ${record.backRecordId}::uuid,
+          ${record.agentId}::uuid,
+          ${record.entryId},
+          ${record.receiptId},
+          ${record.quoteId}::uuid,
+          ${record.quoteFingerprint},
+          ${record.idempotencyKey},
+          ${JSON.stringify(record.authorship)}::jsonb,
+          ${record.reconciliationState},
+          ${record.attemptCount},
+          ${record.workflowRunId},
+          ${record.lastError},
+          ${record.createdAt}::timestamptz,
+          ${record.updatedAt}::timestamptz,
+          ${record.completedAt}::timestamptz
+        )
+        ON CONFLICT (receipt_id) DO NOTHING
+      `;
+    } catch {
+      // Unique (agent_id, idempotency_key) or other conflict — resolve below.
+    }
+
+    const byReceipt = await this.getByReceiptId(record.receiptId);
+    if (byReceipt) return byReceipt;
+
+    const byIdem = await this.getByIdempotency(
+      record.agentId,
+      record.idempotencyKey,
+    );
+    if (byIdem) return byIdem;
+
+    throw new Error(
+      `Failed to persist back record for receipt ${record.receiptId}.`,
+    );
   }
 
   async get(backRecordId: string): Promise<AgentBackRecord | null> {
@@ -160,6 +184,7 @@ class NeonAgentBackRecordStore implements AgentBackRecordStore {
     workflowRunId?: string | null;
     lastError?: string | null;
     completedAt?: string | null;
+    attemptCount?: number;
   }): Promise<AgentBackRecord | null> {
     await ensureSchema(this.sql);
     const current = await this.get(input.backRecordId);
@@ -176,12 +201,16 @@ class NeonAgentBackRecordStore implements AgentBackRecordStore {
       ...(input.completedAt !== undefined
         ? { completedAt: input.completedAt }
         : {}),
+      ...(input.attemptCount !== undefined
+        ? { attemptCount: input.attemptCount }
+        : {}),
     };
 
     const rows = (await this.sql`
       UPDATE agent_backs
       SET
         reconciliation_state = ${next.reconciliationState},
+        attempt_count = ${next.attemptCount},
         updated_at = ${next.updatedAt}::timestamptz,
         workflow_run_id = ${next.workflowRunId},
         last_error = ${next.lastError},

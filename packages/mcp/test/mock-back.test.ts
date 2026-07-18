@@ -7,7 +7,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { createMockServer } from "../src/mock-server.js";
-import { MOCK_BACKABLE_ENTRY } from "../src/mock-trade-engine.js";
+import {
+  MOCK_BACKABLE_ENTRY,
+  MockTradeEngine,
+} from "../src/mock-trade-engine.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 
@@ -100,6 +103,49 @@ describe("mock conviction_quote_back / conviction_back_conviction", () => {
     expect(retry.ok).toBe(true);
     expect(retry.backRecordId).toBe(backed.backRecordId);
     expect(retry.receiptId).toBe(backed.receiptId);
+  });
+
+  it("quotes back size from fraction of balance", async () => {
+    const client = await connectMock();
+    const quoted = structured(
+      await client.callTool({
+        name: "conviction_quote_back",
+        arguments: {
+          entryId: MOCK_BACKABLE_ENTRY.entryId,
+          fraction: 0.1,
+        },
+      }),
+    ) as { ok: boolean; dollarsIn: number; action: string };
+
+    expect(quoted.ok).toBe(true);
+    expect(quoted.action).toBe("back");
+    expect(quoted.dollarsIn).toBeGreaterThan(0);
+  });
+
+  it("stores agent authorship on the canonical conviction attribution", async () => {
+    const engine = await MockTradeEngine.create();
+    const quoted = await engine.quoteBack({
+      entryId: MOCK_BACKABLE_ENTRY.entryId,
+      dollarsIn: 8,
+    });
+    expect(quoted.ok).toBe(true);
+    if (!quoted.ok) return;
+
+    const backed = await engine.backConviction({
+      quoteId: quoted.quoteId,
+      idempotencyKey: "mock-attr-1",
+    });
+    expect(backed.ok).toBe(true);
+    if (!backed.ok) return;
+
+    const conviction = engine.getConvictionForTests(MOCK_BACKABLE_ENTRY.entryId);
+    expect(conviction?.backedBy).toContain(backed.authorship.handle);
+    expect(conviction?.backerAttributions).toEqual([
+      {
+        handle: backed.authorship.handle,
+        authorship: backed.authorship,
+      },
+    ]);
   });
 
   it("rejects arbitrary token overrides on quote_back", async () => {
