@@ -23,6 +23,19 @@ export type SettingsAgent = {
 
 type ApiError = { error?: { code?: string; message?: string } };
 
+/** Remount key so editable fields reset when server policy/lifecycle changes. */
+export function agentSettingsFormKey(agent: SettingsAgent): string {
+  return [
+    agent.agentId,
+    agent.status,
+    agent.maxTradeUsd,
+    agent.spendBudgetUsd,
+    agent.actionPolicy.trade ? "1" : "0",
+    agent.actionPolicy.back ? "1" : "0",
+    agent.actionPolicy.publish ? "1" : "0",
+  ].join(":");
+}
+
 function money(value: number): string {
   return value.toLocaleString(undefined, {
     style: "currency",
@@ -95,7 +108,9 @@ export function AgentSettingsPanel({
       setTrade(next.actionPolicy.trade);
       setBack(next.actionPolicy.back);
       setPublish(next.actionPolicy.publish);
-      setNotice("Policy saved. Changes apply on the next permit request.");
+      setNotice(
+        "Policy saved. New permit requests use the updated caps and permissions; disabling trade or pausing also releases outstanding issued permits immediately.",
+      );
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Could not update policy.",

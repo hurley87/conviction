@@ -101,6 +101,11 @@ Spend caps and trade/back/publish permissions are edited in Agent Settings;
 budget exhaustion is explained privately as capped while the public profile
 shows Paused.
 
+CLI `disable`/`enable` authenticate with the local profile signer (possession of
+the keystore). They are not MCP tools; a connected host that can make arbitrary
+HTTP calls with the unlocked signer could invoke the same lifecycle routes.
+Prefer Agent Settings (Privy session) when you want operator-only web auth.
+
 Live `conviction_execute_trade` obtains a backend execution permit, signs with
 the local ethers Particle-compatible signer (rootHash + EIP-7702), then submits
 the signatures. Backend unavailability fails closed before signing. A manually

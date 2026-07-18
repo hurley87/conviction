@@ -336,10 +336,8 @@ export async function updateAgentPolicy(
     );
   }
 
-  for (const event of auditEvents) {
-    await options.auditStore.append(event);
-  }
-
+  // Invalidate outstanding permits before audit so a failed audit cannot leave
+  // write authority intact after a pause / action disable / cap.
   let releasedPermitCount = 0;
   const shouldReleaseAllWrites =
     updated.status === "disabled" || updated.status === "capped";
@@ -355,7 +353,26 @@ export async function updateAgentPolicy(
     });
   }
 
+  await appendAuditEventsBestEffort(options.auditStore, auditEvents);
+
   return { agent: updated, releasedPermitCount };
+}
+
+async function appendAuditEventsBestEffort(
+  auditStore: AgentAuditStore,
+  events: Array<ReturnType<typeof buildAuditEvent>>,
+): Promise<void> {
+  for (const event of events) {
+    try {
+      await auditStore.append(event);
+    } catch (error) {
+      console.error("Failed to append agent audit event", {
+        type: event.type,
+        agentId: event.agentId,
+        error: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
 }
 
 /**
@@ -398,7 +415,13 @@ export async function disableAgent(
     disabledAt: now.toISOString(),
   });
 
-  await options.auditStore.append(
+  const releasedPermitCount = await releaseIssuedPermits({
+    permitStore: options.permitStore,
+    spendLedger: options.spendLedger,
+    agentId: updated.agentId,
+  });
+
+  await appendAuditEventsBestEffort(options.auditStore, [
     buildAuditEvent({
       agentId: agent.agentId,
       ownerUserId: agent.ownerUserId,
@@ -410,13 +433,7 @@ export async function disableAgent(
         publicStatus: "paused",
       },
     }),
-  );
-
-  const releasedPermitCount = await releaseIssuedPermits({
-    permitStore: options.permitStore,
-    spendLedger: options.spendLedger,
-    agentId: updated.agentId,
-  });
+  ]);
 
   return { agent: updated, releasedPermitCount };
 }
@@ -476,7 +493,7 @@ export async function enableAgent(options: {
     disabledAt: null,
   });
 
-  await options.auditStore.append(
+  const enableAudit = [
     buildAuditEvent({
       agentId: agent.agentId,
       ownerUserId: agent.ownerUserId,
@@ -490,10 +507,9 @@ export async function enableAgent(options: {
         remainingBudgetUsd: remainingBudgetUsd(updated),
       },
     }),
-  );
-
+  ];
   if (updated.status === "capped") {
-    await options.auditStore.append(
+    enableAudit.push(
       buildAuditEvent({
         agentId: agent.agentId,
         ownerUserId: agent.ownerUserId,
@@ -509,8 +525,57 @@ export async function enableAgent(options: {
       }),
     );
   }
+  await appendAuditEventsBestEffort(options.auditStore, enableAudit);
 
   return { agent: updated, releasedPermitCount: 0 };
+}
+
+/**
+ * Record counted spend, auto-cap when remaining budget hits zero, and invalidate
+ * outstanding issued permits when the agent newly becomes capped.
+ */
+export async function commitAgentSpend(options: {
+  store: AgentProvisioningStore;
+  auditStore: AgentAuditStore;
+  permitStore: AgentPermitStore;
+  spendLedger: AgentSpendLedger;
+  agentId: string;
+  dollarsIn: number;
+  previousStatus: AgentStatus;
+  now?: Date;
+}): Promise<{ agent: OwnedAgent; releasedPermitCount: number }> {
+  const agent = await options.store.addLifetimeSpend({
+    agentId: options.agentId,
+    dollarsIn: options.dollarsIn,
+  });
+
+  const newlyCapped =
+    options.previousStatus === "active" && agent.status === "capped";
+  let releasedPermitCount = 0;
+  if (newlyCapped) {
+    releasedPermitCount = await releaseIssuedPermits({
+      permitStore: options.permitStore,
+      spendLedger: options.spendLedger,
+      agentId: agent.agentId,
+    });
+    await appendAuditEventsBestEffort(options.auditStore, [
+      buildAuditEvent({
+        agentId: agent.agentId,
+        ownerUserId: agent.ownerUserId,
+        type: "capped",
+        actor: "system",
+        now: options.now ?? new Date(),
+        details: {
+          reason: "lifetime_spend_exhausted_budget",
+          spendBudgetUsd: agent.spendBudgetUsd,
+          lifetimeSpendUsd: agent.lifetimeSpendUsd,
+          remainingBudgetUsd: remainingBudgetUsd(agent),
+        },
+      }),
+    ]);
+  }
+
+  return { agent, releasedPermitCount };
 }
 
 /**

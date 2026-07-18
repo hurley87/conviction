@@ -9,7 +9,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useAccount } from "@/components/account/account-context";
-import { AgentSettingsPanel } from "@/components/agent-access/agent-settings-panel";
+import {
+  AgentSettingsPanel,
+  agentSettingsFormKey,
+} from "@/components/agent-access/agent-settings-panel";
 import { AgentSkillHandoff } from "@/components/agent-access/agent-skill-handoff";
 import { SetupActionPanel, type SetupAgent } from "@/components/agent-access/setup-action-panel";
 import { SetupProgressRail } from "@/components/agent-access/setup-progress-rail";
@@ -371,6 +374,7 @@ export function AgentAccessView() {
             <SetupActionPanel phase={phase} agent={agent} handoff={handoff} />
           </section>
           <AgentSettingsPanel
+            key={agentSettingsFormKey(agent)}
             agent={agent}
             authenticatedFetch={authenticatedFetch}
             onUpdated={(next) => {

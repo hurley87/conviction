@@ -6,6 +6,7 @@ import {
   type ExecutionPermitRecord,
 } from "@/lib/agent-permit";
 import {
+  commitAgentSpend,
   disableAgent,
   enableAgent,
   privatePausedReason,
@@ -350,5 +351,49 @@ describe("addLifetimeSpend auto-cap", () => {
 
     expect(updated.status).toBe("disabled");
     expect(updated.lifetimeSpendUsd).toBe(50);
+  });
+});
+
+describe("commitAgentSpend", () => {
+  it("releases outstanding permits and audits when spend newly caps the agent", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const auditStore = new MemoryAgentAuditStore();
+    const permitStore = new MemoryAgentPermitStore();
+    const spendLedger = new MemorySpendLedger();
+    const agent = await seedActiveAgent(store, {
+      spendBudgetUsd: 50,
+      lifetimeSpendUsd: 40,
+    });
+    await permitStore.save(
+      issuedPermit(agent.agentId, "88888888-8888-4888-8888-888888888888"),
+    );
+    spendLedger.tryReserve({
+      agentId: agent.agentId,
+      dollarsIn: 10,
+      maxTradeUsd: 25,
+      spendBudgetUsd: 50,
+      lifetimeSpendUsd: 40,
+    });
+
+    const result = await commitAgentSpend({
+      store,
+      auditStore,
+      permitStore,
+      spendLedger,
+      agentId: agent.agentId,
+      dollarsIn: 10,
+      previousStatus: "active",
+      now: FIXED_NOW,
+    });
+
+    expect(result.agent.status).toBe("capped");
+    expect(result.releasedPermitCount).toBe(1);
+    expect(
+      (await permitStore.get("88888888-8888-4888-8888-888888888888"))?.status,
+    ).toBe("released");
+    expect(spendLedger.reservedUsd(agent.agentId)).toBe(0);
+    expect(auditStore.events.some((event) => event.type === "capped")).toBe(
+      true,
+    );
   });
 });
