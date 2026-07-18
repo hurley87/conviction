@@ -85,6 +85,22 @@ only when intentionally displacing the other process. Live mode authenticates
 backend requests with the local signer and never exposes signing methods as MCP
 tools. Headless unlock uses `CONVICTION_KEYSTORE_PASSWORD`.
 
+## Pause or resume an agent
+
+Operator lifecycle controls are not MCP tools. From Agent Settings in the web
+app, or with the local profile signer:
+
+```sh
+conviction-mcp disable --profile <name>
+conviction-mcp enable --profile <name>
+```
+
+Disablement immediately blocks new write permits while identity, history, and
+funds remain intact. Re-enable restores eligible writes without reprovisioning.
+Spend caps and trade/back/publish permissions are edited in Agent Settings;
+budget exhaustion is explained privately as capped while the public profile
+shows Paused.
+
 Live `conviction_execute_trade` obtains a backend execution permit, signs with
 the local ethers Particle-compatible signer (rootHash + EIP-7702), then submits
 the signatures. Backend unavailability fails closed before signing. A manually

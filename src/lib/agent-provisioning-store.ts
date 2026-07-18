@@ -12,6 +12,9 @@ import {
   ownedAgentFromRow,
   type AgentProvisioningRecord,
   type AgentProvisioningStore,
+  type AgentPublicStatus,
+  type AgentStatus,
+  type CreateAgentInput,
   type HandoffLookup,
   type OwnedAgent,
   type ProvisioningOwner,
@@ -456,9 +459,24 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
       );
     }
 
+    // Exhausted budget auto-transitions active → capped (public Paused).
+    // Independent disablement is preserved (status stays disabled).
     const updated = await this.sql`
       UPDATE agents
-      SET lifetime_spend_usd = lifetime_spend_usd + ${input.dollarsIn}
+      SET
+        lifetime_spend_usd = lifetime_spend_usd + ${input.dollarsIn},
+        status = CASE
+          WHEN status = 'active'
+            AND spend_budget_usd <= lifetime_spend_usd + ${input.dollarsIn}
+          THEN 'capped'
+          ELSE status
+        END,
+        public_status = CASE
+          WHEN status = 'active'
+            AND spend_budget_usd <= lifetime_spend_usd + ${input.dollarsIn}
+          THEN 'paused'
+          ELSE public_status
+        END
       WHERE agent_id = ${input.agentId}
       RETURNING *
     `;
@@ -468,6 +486,70 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     throw new AgentProvisioningError(
       "agent_not_found",
       "No agent matches that identity.",
+    );
+  }
+
+  async updatePolicy(input: {
+    agentId: string;
+    ownerUserId: string;
+    maxTradeUsd: number;
+    spendBudgetUsd: number;
+    actionPolicy: CreateAgentInput["actionPolicy"];
+    status: AgentStatus;
+    publicStatus: AgentPublicStatus;
+    disabledAt: string | null;
+  }): Promise<OwnedAgent> {
+    await ensureSchema(this.sql);
+
+    const updated = await this.sql`
+      UPDATE agents
+      SET
+        max_trade_usd = ${input.maxTradeUsd},
+        spend_budget_usd = ${input.spendBudgetUsd},
+        action_policy = ${JSON.stringify(input.actionPolicy)}::jsonb,
+        status = ${input.status},
+        public_status = ${input.publicStatus},
+        disabled_at = CASE
+          WHEN ${input.status} = 'disabled' THEN COALESCE(
+            disabled_at,
+            ${input.disabledAt}::timestamptz,
+            now()
+          )
+          ELSE NULL
+        END
+      WHERE agent_id = ${input.agentId}::uuid
+        AND owner_user_id = ${input.ownerUserId}
+        AND status NOT IN ('retired', 'retiring')
+      RETURNING *
+    `;
+
+    if (updated[0]) {
+      return ownedAgentFromRow(updated[0] as Record<string, unknown>);
+    }
+
+    const rows = await this.sql`
+      SELECT * FROM agents
+      WHERE agent_id = ${input.agentId}::uuid
+        AND owner_user_id = ${input.ownerUserId}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity for this account.",
+      );
+    }
+    const agent = ownedAgentFromRow(row);
+    if (agent.status === "retired" || agent.status === "retiring") {
+      throw new AgentProvisioningError(
+        "lifecycle_blocked",
+        `Agent @${agent.handle} is ${agent.status} and cannot change operator policy.`,
+      );
+    }
+    throw new AgentProvisioningError(
+      "identity_unavailable",
+      "Could not update agent policy. Try again.",
     );
   }
 

@@ -172,6 +172,7 @@ export const SETUP_CONTRACT: SetupContract = setupContractSchema.parse({
       "Explain installation and major-pinned package-runner usage",
       "Explain host configuration for the four supported clients",
       "Explain doctor and status diagnostics",
+      "Explain that policy, disable, and enable are operator-only (Agent Settings or conviction-mcp disable|enable)",
       "Tell the operator when a human action is required in Agent Access or the local CLI",
     ],
     mustNot: [

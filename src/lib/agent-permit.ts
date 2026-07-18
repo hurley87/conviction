@@ -198,6 +198,8 @@ export type AgentPermitStore = {
     agentId: string,
     idempotencyKey: string,
   ): Promise<ExecutionPermitRecord | null>;
+  /** Outstanding issued permits for an agent (used to invalidate on policy pause). */
+  listIssuedByAgent(agentId: string): Promise<ExecutionPermitRecord[]>;
   /**
    * Atomically transition issued → consumed|pending|released.
    * Returns true only when this caller performed the transition.
@@ -258,6 +260,16 @@ export class MemoryAgentPermitStore implements AgentPermitStore {
     );
     if (!permitId) return null;
     return this.get(permitId);
+  }
+
+  async listIssuedByAgent(agentId: string): Promise<ExecutionPermitRecord[]> {
+    const out: ExecutionPermitRecord[] = [];
+    for (const record of this.records.values()) {
+      if (record.agentId === agentId && record.status === "issued") {
+        out.push(structuredClone(record));
+      }
+    }
+    return out;
   }
 
   async casStatus(

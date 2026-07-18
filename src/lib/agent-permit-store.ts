@@ -171,6 +171,16 @@ class NeonAgentPermitStore implements AgentPermitStore {
     return row ? recordFromRow(row) : null;
   }
 
+  async listIssuedByAgent(agentId: string): Promise<ExecutionPermitRecord[]> {
+    await ensurePermitSchema(this.sql);
+    const rows = (await this.sql`
+      SELECT * FROM agent_execution_permits
+      WHERE agent_id = ${agentId}::uuid
+        AND status = 'issued'
+    `) as PermitRow[];
+    return rows.map(recordFromRow);
+  }
+
   async casStatus(
     permitId: string,
     from: ExecutionPermitStatus,

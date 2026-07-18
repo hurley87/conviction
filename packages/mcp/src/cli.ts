@@ -6,6 +6,11 @@ import { formatHostConfigGuide } from "./host-config.js";
 import { runInit, describeInitUnlockHint } from "./init.js";
 import { loadWalletFromKeystore } from "./keystore.js";
 import { acquireLeaseHandle } from "./lease.js";
+import {
+  formatLifecycleOutput,
+  runDisable,
+  runEnable,
+} from "./lifecycle.js";
 import { createLiveServer } from "./live-server.js";
 import { createMockServer } from "./mock-server.js";
 import { profilePath, resolveConvictionPaths } from "./paths.js";
@@ -31,6 +36,8 @@ Usage:
   conviction-mcp init --code <one-time-code> --backup-path <file> [options]
   conviction-mcp doctor --profile <name> [options]
   conviction-mcp status --profile <name> [options]
+  conviction-mcp disable --profile <name> [options]
+  conviction-mcp enable --profile <name> [options]
   conviction-mcp help
 
 Commands:
@@ -39,6 +46,8 @@ Commands:
   init                       Redeem a provisioning handoff into a local encrypted profile
   doctor                     Non-value-moving connection and profile diagnostics
   status                     Show backend-authoritative account status
+  disable                    Pause the agent (blocks write permits; reversible)
+  enable                     Re-enable a disabled agent without reprovisioning
   help                       Show this help
 
 Serve --mock options:
@@ -58,7 +67,7 @@ Init options:
   --profile <name>               Local profile name (defaults to agent handle)
   --home <dir>                   Override ~/.conviction (also CONVICTION_HOME)
 
-Doctor / status options:
+Doctor / status / disable / enable options:
   --profile <name>           Local profile name (required)
   --api-base <url>           Conviction API base URL
   --home <dir>               Override ~/.conviction (also CONVICTION_HOME)
@@ -182,6 +191,30 @@ async function runStatusCommand(args: string[]): Promise<void> {
   console.log(formatStatusOutput(status));
 }
 
+async function runDisableCommand(args: string[]): Promise<void> {
+  const profileName = requireFlag(args, "--profile", "--profile");
+  const apiBaseUrl = resolveApiBase(args);
+  const home = readFlag(args, "--home")?.trim();
+  const result = await runDisable({
+    profileName,
+    apiBaseUrl,
+    ...(home ? { home } : {}),
+  });
+  console.log(formatLifecycleOutput("disable", result));
+}
+
+async function runEnableCommand(args: string[]): Promise<void> {
+  const profileName = requireFlag(args, "--profile", "--profile");
+  const apiBaseUrl = resolveApiBase(args);
+  const home = readFlag(args, "--home")?.trim();
+  const result = await runEnable({
+    profileName,
+    apiBaseUrl,
+    ...(home ? { home } : {}),
+  });
+  console.log(formatLifecycleOutput("enable", result));
+}
+
 async function runLiveServe(args: string[]): Promise<void> {
   const profileName = requireFlag(args, "--profile", "--profile");
   const apiBaseUrl = resolveApiBase(args);
@@ -298,6 +331,16 @@ export async function runCli(args: string[]): Promise<void> {
 
   if (args[0] === "status") {
     await runStatusCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === "disable") {
+    await runDisableCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === "enable") {
+    await runEnableCommand(args.slice(1));
     return;
   }
 

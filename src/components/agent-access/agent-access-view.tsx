@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useAccount } from "@/components/account/account-context";
+import { AgentSettingsPanel } from "@/components/agent-access/agent-settings-panel";
 import { AgentSkillHandoff } from "@/components/agent-access/agent-skill-handoff";
 import { SetupActionPanel, type SetupAgent } from "@/components/agent-access/setup-action-panel";
 import { SetupProgressRail } from "@/components/agent-access/setup-progress-rail";
@@ -89,6 +90,40 @@ function statusLabel(status: SetupAgent["status"]): string {
   }
 }
 
+function normalizeAgent(raw: Partial<SetupAgent> & {
+  agentId: string;
+  handle: string;
+  operatorHandle: string;
+  status: SetupAgent["status"];
+}): SetupAgent {
+  const spendBudgetUsd = Number(raw.spendBudgetUsd ?? 0);
+  const lifetimeSpendUsd = Number(raw.lifetimeSpendUsd ?? 0);
+  const remainingBudgetUsd =
+    typeof raw.remainingBudgetUsd === "number"
+      ? raw.remainingBudgetUsd
+      : Math.max(0, spendBudgetUsd - lifetimeSpendUsd);
+  return {
+    agentId: raw.agentId,
+    handle: raw.handle,
+    operatorHandle: raw.operatorHandle,
+    address: raw.address ?? null,
+    status: raw.status,
+    publicStatus: raw.publicStatus ?? "paused",
+    actionPolicy: raw.actionPolicy ?? {
+      trade: true,
+      back: true,
+      publish: true,
+    },
+    maxTradeUsd: Number(raw.maxTradeUsd ?? 0),
+    spendBudgetUsd,
+    lifetimeSpendUsd,
+    remainingBudgetUsd,
+    privatePausedReason: raw.privatePausedReason ?? null,
+    fundingReady: raw.fundingReady === true,
+    setupVerifiedAt: raw.setupVerifiedAt ?? null,
+  };
+}
+
 export function AgentAccessView() {
   const account = useAccount();
   const [form, setForm] = useState(DEFAULT_FORM);
@@ -128,7 +163,7 @@ export function AgentAccessView() {
         if (!response.ok) {
           throw new Error(payload.error?.message ?? "Could not load Agent Access.");
         }
-        setAgent(payload.agent ?? null);
+        setAgent(payload.agent ? normalizeAgent(payload.agent) : null);
         setError(null);
       } catch (reason) {
         if (!silent) {
@@ -155,7 +190,7 @@ export function AgentAccessView() {
           throw new Error(payload.error?.message ?? "Could not load Agent Access.");
         }
         if (!cancelled) {
-          setAgent(payload.agent ?? null);
+          setAgent(payload.agent ? normalizeAgent(payload.agent) : null);
           setError(null);
         }
       })
@@ -236,7 +271,7 @@ export function AgentAccessView() {
       if (!response.ok || !payload.agent || !payload.handoff) {
         throw new Error(payload.error?.message ?? "Could not create the agent.");
       }
-      setAgent(payload.agent);
+      setAgent(normalizeAgent(payload.agent));
       setHandoff(payload.handoff);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create the agent.");
@@ -321,19 +356,31 @@ export function AgentAccessView() {
       {loading ? (
         <section className="app-card p-8 text-sm text-ink-3">Checking your agent slot…</section>
       ) : agent ? (
-        <section className="app-card p-7 sm:p-9">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="pt-eyebrow">{statusEyebrow(agent.status)}</p>
-              <h2 className="mt-2 font-display text-3xl font-semibold text-ink">@{agent.handle}</h2>
-              <p className="mt-2 text-sm text-ink-3">Agent · operated by @{agent.operatorHandle}</p>
+        <>
+          <section className="app-card p-7 sm:p-9">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="pt-eyebrow">{statusEyebrow(agent.status)}</p>
+                <h2 className="mt-2 font-display text-3xl font-semibold text-ink">@{agent.handle}</h2>
+                <p className="mt-2 text-sm text-ink-3">Agent · operated by @{agent.operatorHandle}</p>
+              </div>
+              <span className="rounded-full bg-[#fff3d6] px-3 py-1.5 text-xs font-extrabold text-warning">
+                {statusLabel(agent.status)}
+              </span>
             </div>
-            <span className="rounded-full bg-[#fff3d6] px-3 py-1.5 text-xs font-extrabold text-warning">
-              {statusLabel(agent.status)}
-            </span>
-          </div>
-          <SetupActionPanel phase={phase} agent={agent} handoff={handoff} />
-        </section>
+            <SetupActionPanel phase={phase} agent={agent} handoff={handoff} />
+          </section>
+          <AgentSettingsPanel
+            agent={agent}
+            authenticatedFetch={authenticatedFetch}
+            onUpdated={(next) => {
+              setAgent({
+                ...agent,
+                ...next,
+              });
+            }}
+          />
+        </>
       ) : (
         <form onSubmit={submit} className="app-card p-7 sm:p-9">
           <div className="grid gap-8 lg:grid-cols-2">
