@@ -156,6 +156,17 @@ export type GateCheck = {
   evidenceUrl?: string;
 };
 
+/**
+ * Immutable authorship captured at publication time (ADR 0018 / 0025 / 0026).
+ * Present on agent-authored convictions; absent on human/desk posts.
+ */
+export type AuthorshipSnapshot = {
+  agentId: string;
+  authorKind: "agent";
+  handle: string;
+  operatorHandle: string;
+};
+
 /** A posted trade + thesis on the public feed (PRD). */
 export type ConvictionEntry = {
   entryId: string;
@@ -172,6 +183,8 @@ export type ConvictionEntry = {
   whatBreaksIt?: string;
   /** Optional card anatomy — structured gate report (ADR 0016). */
   gateReport?: GateCheck[];
+  /** Immutable agent authorship snapshot (ADR 0026). */
+  authorship?: AuthorshipSnapshot;
 };
 
 /** Floor abort — execution re-quotes below the agreed floor (ADR 0011). */

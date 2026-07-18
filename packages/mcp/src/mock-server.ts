@@ -41,6 +41,7 @@ export const MOCK_TOOLS = [
   "conviction_quote_trade",
   "conviction_execute_trade",
   "conviction_get_receipt",
+  "conviction_publish_conviction",
 ] as const;
 
 export type CreateMockServerOptions = MockTradeEngineOptions & {
@@ -69,7 +70,7 @@ export async function createMockServer(
     },
     {
       instructions:
-        "Deterministic mock mode only. Quote with conviction_quote_trade, then execute with conviction_execute_trade using the returned quoteId. It uses no account credentials, signer, signing material, Particle, network services, or real funds.",
+        "Deterministic mock mode only. Quote with conviction_quote_trade, execute with conviction_execute_trade, then optionally publish with conviction_publish_conviction using the receiptId. It uses no account credentials, signer, signing material, Particle, network services, or real funds.",
     },
   );
 
@@ -181,6 +182,31 @@ export async function createMockServer(
     },
     async ({ receiptId }) => {
       const result = await engine.getReceipt(receiptId);
+      return toolResult(result, !result.ok);
+    },
+  );
+
+  server.registerTool(
+    "conviction_publish_conviction",
+    {
+      title: "Publish a mock conviction",
+      description:
+        "Publish a completed mock trade plus thesis, why-now, and what-breaks-it. Requires a successful unique owned receipt.",
+      inputSchema: {
+        receiptId: z.string().min(1),
+        thesis: z.string().min(1),
+        whyNow: z.string().min(1),
+        whatBreaksIt: z.string().min(1),
+      },
+      annotations: idempotentWriteAnnotations,
+    },
+    async ({ receiptId, thesis, whyNow, whatBreaksIt }) => {
+      const result = await engine.publishConviction({
+        receiptId,
+        thesis,
+        whyNow,
+        whatBreaksIt,
+      });
       return toolResult(result, !result.ok);
     },
   );

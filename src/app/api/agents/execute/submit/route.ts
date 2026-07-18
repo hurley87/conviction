@@ -24,6 +24,8 @@ import {
   verifyAgentRequest,
 } from "@/lib/agent-request-auth";
 import { getPublicAgentProvisioningStore } from "@/lib/agent-provisioning-store";
+import { getAgentQuoteStore } from "@/lib/agent-quote-store";
+import { getAgentTradeReceiptStore } from "@/lib/agent-trade-receipt-store";
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
@@ -89,6 +91,8 @@ export async function POST(request: Request) {
       permitStore: getAgentPermitStore(),
       idempotencyStore: getAgentExecuteIdempotencyStore(),
       receipts: getAgentReceiptPersist(),
+      quoteStore: getAgentQuoteStore(),
+      tradeReceipts: getAgentTradeReceiptStore(),
       send: createSignedTradeSender(verified.agent.address),
       activeLeaseId: activeLease?.leaseId ?? null,
       spendLedger: getAgentSpendLedger(),

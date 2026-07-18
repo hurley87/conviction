@@ -13,6 +13,7 @@ import {
   encodeConvictionCursor,
 } from "@/lib/agent-network-reads";
 import type {
+  AuthorshipSnapshot,
   ConvictionEntry,
   GateCheck,
   WhyNowEvent,
@@ -51,15 +52,17 @@ async function ensureSchema(sql: NonNullable<ReturnType<typeof getSql>>) {
       created_at    timestamptz NOT NULL DEFAULT now(),
       why_now       jsonb,
       what_breaks_it text,
-      gate_report   jsonb
+      gate_report   jsonb,
+      authorship    jsonb
     )
   `;
-  // Existing Neon DBs created before anatomy columns — add if missing.
+  // Existing Neon DBs created before anatomy / authorship columns — add if missing.
   await sql`
     ALTER TABLE convictions
       ADD COLUMN IF NOT EXISTS why_now jsonb,
       ADD COLUMN IF NOT EXISTS what_breaks_it text,
-      ADD COLUMN IF NOT EXISTS gate_report jsonb
+      ADD COLUMN IF NOT EXISTS gate_report jsonb,
+      ADD COLUMN IF NOT EXISTS authorship jsonb
   `;
   await sql`
     INSERT INTO convictions (entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at)
@@ -88,6 +91,7 @@ function rowToEntry(row: {
   why_now: WhyNowEvent[] | null;
   what_breaks_it: string | null;
   gate_report: GateCheck[] | null;
+  authorship: AuthorshipSnapshot | null;
 }): ConvictionEntry {
   return {
     entryId: row.entry_id,
@@ -102,6 +106,7 @@ function rowToEntry(row: {
     ...(row.gate_report && row.gate_report.length > 0
       ? { gateReport: row.gate_report }
       : {}),
+    ...(row.authorship ? { authorship: row.authorship } : {}),
   };
 }
 
@@ -120,7 +125,7 @@ export async function saveConviction(
   await sql`
     INSERT INTO convictions (
       entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
-      why_now, what_breaks_it, gate_report
+      why_now, what_breaks_it, gate_report, authorship
     )
     VALUES (
       ${entry.entryId},
@@ -132,7 +137,8 @@ export async function saveConviction(
       ${entry.createdAt},
       ${entry.whyNow ? JSON.stringify(entry.whyNow) : null}::jsonb,
       ${entry.whatBreaksIt ?? null},
-      ${entry.gateReport ? JSON.stringify(entry.gateReport) : null}::jsonb
+      ${entry.gateReport ? JSON.stringify(entry.gateReport) : null}::jsonb,
+      ${entry.authorship ? JSON.stringify(entry.authorship) : null}::jsonb
     )
     ON CONFLICT (entry_id) DO UPDATE SET
       handle = EXCLUDED.handle,
@@ -142,7 +148,8 @@ export async function saveConviction(
       backed_by = EXCLUDED.backed_by,
       why_now = EXCLUDED.why_now,
       what_breaks_it = EXCLUDED.what_breaks_it,
-      gate_report = EXCLUDED.gate_report
+      gate_report = EXCLUDED.gate_report,
+      authorship = EXCLUDED.authorship
   `;
   return true;
 }
@@ -180,7 +187,7 @@ export async function listConvictions(
   await ensureSchema(sql);
   const rows = await sql`
     SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
-           why_now, what_breaks_it, gate_report
+           why_now, what_breaks_it, gate_report, authorship
     FROM convictions
     ORDER BY created_at DESC, entry_id DESC
     LIMIT ${limit}
@@ -203,9 +210,36 @@ export async function getConviction(
   await ensureSchema(sql);
   const rows = await sql`
     SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
-           why_now, what_breaks_it, gate_report
+           why_now, what_breaks_it, gate_report, authorship
     FROM convictions
     WHERE entry_id = ${trimmed}
+    LIMIT 1
+  `;
+  const row = (rows as Parameters<typeof rowToEntry>[0][])[0];
+  return row ? rowToEntry(row) : null;
+}
+
+/** Fetch one conviction by linked receipt slug, or null when missing. */
+export async function getConvictionByReceiptSlug(
+  receiptSlug: string,
+): Promise<ConvictionEntry | null> {
+  const trimmed = receiptSlug.trim();
+  if (!trimmed) return null;
+
+  const sql = getSql();
+  if (!sql) {
+    ensureMemorySeed();
+    for (const entry of memoryStore.values()) {
+      if (entry.receiptSlug === trimmed) return entry;
+    }
+    return null;
+  }
+  await ensureSchema(sql);
+  const rows = await sql`
+    SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
+           why_now, what_breaks_it, gate_report, authorship
+    FROM convictions
+    WHERE receipt_slug = ${trimmed}
     LIMIT 1
   `;
   const row = (rows as Parameters<typeof rowToEntry>[0][])[0];
@@ -246,7 +280,7 @@ export async function listConvictionsPage(options: {
     const rows = cursor
       ? await sql`
           SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
-                 why_now, what_breaks_it, gate_report
+                 why_now, what_breaks_it, gate_report, authorship
           FROM convictions
           WHERE created_at < ${cursor.createdAt}::timestamptz
              OR (
@@ -258,7 +292,7 @@ export async function listConvictionsPage(options: {
         `
       : await sql`
           SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
-                 why_now, what_breaks_it, gate_report
+                 why_now, what_breaks_it, gate_report, authorship
           FROM convictions
           ORDER BY created_at DESC, entry_id DESC
           LIMIT ${limit + 1}
@@ -306,7 +340,7 @@ export async function listConvictionsByHandle(
   await ensureSchema(sql);
   const rows = await sql`
     SELECT entry_id, handle, thesis, trade, receipt_slug, backed_by, created_at,
-           why_now, what_breaks_it, gate_report
+           why_now, what_breaks_it, gate_report, authorship
     FROM convictions
     WHERE handle = ${handle}
     ORDER BY created_at DESC
