@@ -55,6 +55,15 @@ export type AgentTradeReceiptStore = {
     entryId: string;
     consumedAt: string;
   }): Promise<AgentTradeReceiptRecord | null>;
+  /**
+   * Roll back a consume owned by this entryId so a failed conviction save can
+   * retry without stranding the receipt.
+   */
+  releasePublishConsume(input: {
+    receiptId: string;
+    agentId: string;
+    entryId: string;
+  }): Promise<boolean>;
 };
 
 /** In-memory store for tests and offline mock paths. */
@@ -62,6 +71,19 @@ export class MemoryAgentTradeReceiptStore implements AgentTradeReceiptStore {
   private readonly records = new Map<string, AgentTradeReceiptRecord>();
 
   async save(record: AgentTradeReceiptRecord): Promise<void> {
+    const existing = this.records.get(record.receiptId);
+    // Never un-consume a published receipt (ADR 0027).
+    if (existing && !existing.publishable) {
+      this.records.set(record.receiptId, {
+        ...structuredClone(record),
+        publishable: false,
+        ...(existing.publishedEntryId
+          ? { publishedEntryId: existing.publishedEntryId }
+          : {}),
+        ...(existing.consumedAt ? { consumedAt: existing.consumedAt } : {}),
+      });
+      return;
+    }
     this.records.set(record.receiptId, structuredClone(record));
   }
 
@@ -88,6 +110,26 @@ export class MemoryAgentTradeReceiptStore implements AgentTradeReceiptStore {
     };
     this.records.set(input.receiptId, next);
     return structuredClone(next);
+  }
+
+  async releasePublishConsume(input: {
+    receiptId: string;
+    agentId: string;
+    entryId: string;
+  }): Promise<boolean> {
+    const stored = this.records.get(input.receiptId);
+    if (!stored) return false;
+    if (stored.agentId !== input.agentId) return false;
+    if (stored.publishedEntryId !== input.entryId) return false;
+    if (stored.publishable) return false;
+    const next: AgentTradeReceiptRecord = {
+      ...stored,
+      publishable: true,
+    };
+    delete next.publishedEntryId;
+    delete next.consumedAt;
+    this.records.set(input.receiptId, next);
+    return true;
   }
 
   clear(): void {

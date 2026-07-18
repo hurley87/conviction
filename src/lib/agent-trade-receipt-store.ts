@@ -164,9 +164,22 @@ class NeonAgentTradeReceiptStore implements AgentTradeReceiptStore {
       )
       ON CONFLICT (receipt_id) DO UPDATE SET
         receipt = EXCLUDED.receipt,
-        publishable = EXCLUDED.publishable,
-        published_entry_id = EXCLUDED.published_entry_id,
-        consumed_at = EXCLUDED.consumed_at
+        quote_id = EXCLUDED.quote_id,
+        quote_fingerprint = EXCLUDED.quote_fingerprint,
+        intent = EXCLUDED.intent,
+        size_usd = EXCLUDED.size_usd,
+        dollars_in = EXCLUDED.dollars_in,
+        dollars_out = EXCLUDED.dollars_out,
+        fee_usd = EXCLUDED.fee_usd,
+        source_chain = EXCLUDED.source_chain,
+        dest_chain = EXCLUDED.dest_chain,
+        to_asset = EXCLUDED.to_asset,
+        received_symbol = EXCLUDED.received_symbol,
+        publication_intent = EXCLUDED.publication_intent,
+        gate_report = EXCLUDED.gate_report,
+        gate_version = EXCLUDED.gate_version,
+        target_fingerprint = EXCLUDED.target_fingerprint
+      WHERE agent_trade_receipts.publishable = true
     `;
   }
 
@@ -201,6 +214,27 @@ class NeonAgentTradeReceiptStore implements AgentTradeReceiptStore {
     `;
     const row = (rows as TradeReceiptRow[])[0];
     return row ? recordFromRow(row) : null;
+  }
+
+  async releasePublishConsume(input: {
+    receiptId: string;
+    agentId: string;
+    entryId: string;
+  }): Promise<boolean> {
+    await ensureSchema(this.sql);
+    const rows = await this.sql`
+      UPDATE agent_trade_receipts
+      SET
+        publishable = true,
+        published_entry_id = NULL,
+        consumed_at = NULL
+      WHERE receipt_id = ${input.receiptId}
+        AND agent_id = ${input.agentId}::uuid
+        AND publishable = false
+        AND published_entry_id = ${input.entryId}
+      RETURNING receipt_id
+    `;
+    return rows.length > 0;
   }
 }
 

@@ -28,6 +28,47 @@ import type { UniversalBalance } from "@/lib/verbs/types";
 import type { Receipt, TradeIntent, TradeQuote } from "@/lib/verbs/types";
 import type { RawTransaction } from "@/lib/ua/trade";
 
+/** Persist (or heal) the publishable trade-receipt record for a successful execute. */
+async function ensurePublishableTradeReceipt(options: {
+  agentId: string;
+  permit: ExecutionPermitRecord;
+  receipt: Receipt;
+  entryAt: string;
+  quoteStore: AgentQuoteStore;
+  tradeReceipts: AgentTradeReceiptStore;
+}): Promise<void> {
+  const existing = await options.tradeReceipts.get(options.receipt.slug);
+  if (existing) return;
+
+  const quote = await options.quoteStore.get(options.permit.quoteId);
+  await options.tradeReceipts.save(
+    buildAgentTradeReceiptRecord({
+      agentId: options.agentId,
+      receipt: options.receipt,
+      entryAt: options.entryAt,
+      quoteId: options.permit.quoteId,
+      quoteFingerprint: options.permit.quoteFingerprint,
+      intent: options.permit.intent,
+      sizeUsd: options.permit.sizeUsd,
+      dollarsIn: options.permit.dollarsIn,
+      dollarsOut: options.receipt.dollarsOut,
+      feeUsd: options.receipt.feeUsd,
+      sourceChain: options.permit.agreedQuote.sourceChain,
+      destChain: options.permit.agreedQuote.destChain,
+      toAsset: options.permit.agreedQuote.toAsset,
+      ...(options.permit.agreedQuote.receivedSymbol
+        ? { receivedSymbol: options.permit.agreedQuote.receivedSymbol }
+        : {}),
+      publicationIntent: quote?.publicationIntent ?? false,
+      ...(quote?.gateReport ? { gateReport: quote.gateReport } : {}),
+      ...(quote?.gateVersion ? { gateVersion: quote.gateVersion } : {}),
+      ...(quote?.targetFingerprint
+        ? { targetFingerprint: quote.targetFingerprint }
+        : {}),
+    }),
+  );
+}
+
 /** Permit lifetime capped well under the quote TTL (ADR 0020). */
 export const EXECUTION_PERMIT_TTL_MS = 30_000;
 
@@ -679,7 +720,28 @@ export async function submitSignedTradeExecution(options: {
       options.agent.agentId,
       idempotencyKey,
     );
-    if (prior) return prior;
+    if (prior) {
+      // Heal a missing publishable trade receipt after a prior secondary-save failure.
+      if (prior.ok && options.tradeReceipts) {
+        const permit = await options.permitStore.get(permitId);
+        if (permit && permit.agentId === options.agent.agentId) {
+          try {
+            await ensurePublishableTradeReceipt({
+              agentId: options.agent.agentId,
+              permit,
+              receipt: prior.receipt,
+              entryAt: (options.now?.() ?? new Date()).toISOString(),
+              quoteStore: options.quoteStore,
+              tradeReceipts: options.tradeReceipts,
+            });
+          } catch {
+            // Keep returning the durable execute success; publish may still fail
+            // until reconciliation succeeds.
+          }
+        }
+      }
+      return prior;
+    }
 
     const persist = async (
       result: AgentExecuteResult,
@@ -899,34 +961,14 @@ export async function submitSignedTradeExecution(options: {
       await options.onSpend?.(permit.dollarsIn);
       await options.receipts.save(sendResult.receipt);
       if (options.tradeReceipts) {
-        const quote = await options.quoteStore.get(permit.quoteId);
-        const entryAt = now.toISOString();
-        await options.tradeReceipts.save(
-          buildAgentTradeReceiptRecord({
-            agentId: options.agent.agentId,
-            receipt: sendResult.receipt,
-            entryAt,
-            quoteId: permit.quoteId,
-            quoteFingerprint: permit.quoteFingerprint,
-            intent: permit.intent,
-            sizeUsd: permit.sizeUsd,
-            dollarsIn: permit.dollarsIn,
-            dollarsOut: sendResult.receipt.dollarsOut,
-            feeUsd: sendResult.receipt.feeUsd,
-            sourceChain: permit.agreedQuote.sourceChain,
-            destChain: permit.agreedQuote.destChain,
-            toAsset: permit.agreedQuote.toAsset,
-            ...(permit.agreedQuote.receivedSymbol
-              ? { receivedSymbol: permit.agreedQuote.receivedSymbol }
-              : {}),
-            publicationIntent: quote?.publicationIntent ?? false,
-            ...(quote?.gateReport ? { gateReport: quote.gateReport } : {}),
-            ...(quote?.gateVersion ? { gateVersion: quote.gateVersion } : {}),
-            ...(quote?.targetFingerprint
-              ? { targetFingerprint: quote.targetFingerprint }
-              : {}),
-          }),
-        );
+        await ensurePublishableTradeReceipt({
+          agentId: options.agent.agentId,
+          permit,
+          receipt: sendResult.receipt,
+          entryAt: now.toISOString(),
+          quoteStore: options.quoteStore,
+          tradeReceipts: options.tradeReceipts,
+        });
       }
       await options.spendLedger?.commit(
         options.agent.agentId,
@@ -935,6 +977,7 @@ export async function submitSignedTradeExecution(options: {
     } catch {
       // On-chain send already succeeded. Keep durable success; mark pending for
       // reconciliation of receipt / lifetime spend / reservation release.
+      // Authenticated retries heal a missing publishable trade receipt above.
       await options.permitStore.casStatus(permitId, "consumed", "pending");
     }
 

@@ -437,6 +437,7 @@ export type LivePublishRequest = {
   thesis: string;
   whyNow: string;
   whatBreaksIt: string;
+  leaseId: string;
 };
 
 export type LivePublishSuccess = {

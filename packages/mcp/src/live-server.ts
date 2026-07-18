@@ -480,7 +480,13 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
         const result = await publishConviction({
           apiBaseUrl: options.apiBaseUrl,
           wallet: options.wallet,
-          input: { receiptId, thesis, whyNow, whatBreaksIt },
+          input: {
+            receiptId,
+            thesis,
+            whyNow,
+            whatBreaksIt,
+            leaseId: options.lease.leaseId,
+          },
           ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
         });
         return toolResult(result, !result.ok);

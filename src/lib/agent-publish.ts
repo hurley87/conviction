@@ -391,19 +391,40 @@ export async function publishAgentConviction(options: {
   tradeReceipts: AgentTradeReceiptStore;
   convictions: AgentConvictionPersist;
   checkRouter: (token: WarmUpToken) => Promise<WarmUpRouteResult>;
+  /** Required for MCP writes — ADR 0048 lease before idempotent results. */
+  leaseId?: string;
+  activeLeaseId?: string | null;
   fetchImpl?: typeof fetch;
   now?: () => Date;
   randomId?: () => string;
 }): Promise<AgentPublishResult> {
   const now = options.now?.() ?? new Date();
+  // leaseId is transport metadata, not thesis input.
+  const body = { ...options.body };
+  const leaseIdFromBody =
+    typeof body.leaseId === "string" ? body.leaseId.trim() : "";
+  delete body.leaseId;
+
   let parsed: AgentPublishInput;
   try {
-    parsed = parseAgentPublishInput(options.body, {
+    parsed = parseAgentPublishInput(body, {
       publishedAt: now.toISOString(),
     });
   } catch (error) {
     if (error instanceof AgentPublishError) return error.toBody();
     throw error;
+  }
+
+  const leaseId = (options.leaseId ?? leaseIdFromBody).trim();
+  // ADR 0048: authentication/lease before reading idempotent results.
+  if (!options.activeLeaseId || !leaseId || options.activeLeaseId !== leaseId) {
+    return {
+      ok: false,
+      code: "unavailable",
+      message:
+        "The MCP lease is no longer valid. Restart the server to reconnect.",
+      receiptId: parsed.receiptId,
+    };
   }
 
   const key = publishKey(options.agent.agentId, parsed.receiptId);
@@ -552,6 +573,12 @@ async function runPublishAgentConviction(options: {
     try {
       await options.convictions.save(entry);
     } catch (error) {
+      // Roll back consume so a retry can republish (do not strand the receipt).
+      await options.tradeReceipts.releasePublishConsume({
+        receiptId: record.receiptId,
+        agentId: options.agent.agentId,
+        entryId,
+      });
       return {
         ok: false,
         code: "unavailable",

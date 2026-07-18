@@ -8,6 +8,7 @@ import {
 import {
   MemoryAgentConvictionPersist,
   publishAgentConviction,
+  type AgentPublishResult,
 } from "@/lib/agent-publish";
 import {
   MemoryAgentQuoteStore,
@@ -17,11 +18,16 @@ import type { OwnedAgent } from "@/lib/agent-provisioning";
 import {
   MemoryAgentTradeReceiptStore,
   PUBLICATION_GATE_WINDOW_MS,
+  buildAgentTradeReceiptRecord,
 } from "@/lib/agent-trade-receipt";
 import { MockUAClient } from "@/lib/ua/mock";
 import type { UniversalBalance } from "@/lib/verbs/types";
 
 const FIXED_NOW = new Date("2026-07-17T12:00:00.000Z");
+const LEASE = {
+  leaseId: "lease-publish",
+  activeLeaseId: "lease-publish" as string | null,
+};
 
 const FUNDED_BALANCE: UniversalBalance = {
   totalUsd: 242.5,
@@ -51,6 +57,34 @@ function testAgent(overrides: Partial<OwnedAgent> = {}): OwnedAgent {
     createdAt: FIXED_NOW.toISOString(),
     ...overrides,
   };
+}
+
+async function publish(options: {
+  agent: OwnedAgent;
+  body: Record<string, unknown>;
+  tradeReceipts: MemoryAgentTradeReceiptStore;
+  convictions: MemoryAgentConvictionPersist;
+  checkRouter?: () => Promise<{ status: "routable" | "no_route" }>;
+  now?: () => Date;
+  randomId?: () => string;
+  leaseId?: string;
+  activeLeaseId?: string | null;
+}): Promise<AgentPublishResult> {
+  return publishAgentConviction({
+    agent: options.agent,
+    body: options.body,
+    tradeReceipts: options.tradeReceipts,
+    convictions: options.convictions,
+    leaseId: options.leaseId ?? LEASE.leaseId,
+    activeLeaseId:
+      options.activeLeaseId !== undefined
+        ? options.activeLeaseId
+        : LEASE.activeLeaseId,
+    checkRouter:
+      options.checkRouter ?? (async () => ({ status: "routable" as const })),
+    now: options.now ?? (() => FIXED_NOW),
+    ...(options.randomId ? { randomId: options.randomId } : {}),
+  });
 }
 
 async function executePublishableTrade(options: {
@@ -119,7 +153,7 @@ describe("publishAgentConviction", () => {
     const { agent, tradeReceipts, convictions, receiptId } =
       await executePublishableTrade({ publicationIntent: true });
 
-    const result = await publishAgentConviction({
+    const result = await publish({
       agent,
       body: {
         receiptId,
@@ -129,8 +163,6 @@ describe("publishAgentConviction", () => {
       },
       tradeReceipts,
       convictions,
-      checkRouter: async () => ({ status: "routable" }),
-      now: () => FIXED_NOW,
       randomId: () => "entry-publish-001",
     });
 
@@ -170,7 +202,7 @@ describe("publishAgentConviction", () => {
     const { tradeReceipts, convictions, receiptId } =
       await executePublishableTrade({});
 
-    const foreign = await publishAgentConviction({
+    const foreign = await publish({
       agent: testAgent({ agentId: "00000000-0000-4000-8000-000000000099" }),
       body: {
         receiptId,
@@ -180,15 +212,13 @@ describe("publishAgentConviction", () => {
       },
       tradeReceipts,
       convictions,
-      checkRouter: async () => ({ status: "routable" }),
-      now: () => FIXED_NOW,
     });
     expect(foreign).toMatchObject({
       ok: false,
       code: "receipt_not_publishable",
     });
 
-    const disabled = await publishAgentConviction({
+    const disabled = await publish({
       agent: testAgent({
         actionPolicy: { trade: true, back: true, publish: false },
       }),
@@ -200,8 +230,6 @@ describe("publishAgentConviction", () => {
       },
       tradeReceipts,
       convictions,
-      checkRouter: async () => ({ status: "routable" }),
-      now: () => FIXED_NOW,
     });
     expect(disabled).toMatchObject({
       ok: false,
@@ -211,11 +239,46 @@ describe("publishAgentConviction", () => {
     expect((await tradeReceipts.get(receiptId))?.publishable).toBe(true);
   });
 
+  it("rejects a missing or stale MCP lease before reading publish results", async () => {
+    const { agent, tradeReceipts, convictions, receiptId } =
+      await executePublishableTrade({});
+
+    const lost = await publish({
+      agent,
+      body: {
+        receiptId,
+        thesis: "Lease lost",
+        whyNow: "Lease lost",
+        whatBreaksIt: "Lease lost",
+      },
+      tradeReceipts,
+      convictions,
+      activeLeaseId: null,
+    });
+    expect(lost).toMatchObject({ ok: false, code: "unavailable" });
+
+    const mismatched = await publish({
+      agent,
+      body: {
+        receiptId,
+        thesis: "Wrong lease",
+        whyNow: "Wrong lease",
+        whatBreaksIt: "Wrong lease",
+      },
+      tradeReceipts,
+      convictions,
+      leaseId: "lease-a",
+      activeLeaseId: "lease-b",
+    });
+    expect(mismatched).toMatchObject({ ok: false, code: "unavailable" });
+    expect((await tradeReceipts.get(receiptId))?.publishable).toBe(true);
+  });
+
   it("returns the existing conviction on retry even if publish is later disabled", async () => {
     const { agent, tradeReceipts, convictions, receiptId } =
       await executePublishableTrade({});
 
-    const first = await publishAgentConviction({
+    const first = await publish({
       agent,
       body: {
         receiptId,
@@ -225,13 +288,11 @@ describe("publishAgentConviction", () => {
       },
       tradeReceipts,
       convictions,
-      checkRouter: async () => ({ status: "routable" }),
-      now: () => FIXED_NOW,
       randomId: () => "entry-first",
     });
     expect(first.ok).toBe(true);
 
-    const retry = await publishAgentConviction({
+    const retry = await publish({
       agent: testAgent({
         agentId: agent.agentId,
         actionPolicy: { trade: true, back: true, publish: false },
@@ -244,8 +305,6 @@ describe("publishAgentConviction", () => {
       },
       tradeReceipts,
       convictions,
-      checkRouter: async () => ({ status: "routable" }),
-      now: () => FIXED_NOW,
     });
     expect(retry).toMatchObject({
       ok: true,
@@ -257,7 +316,7 @@ describe("publishAgentConviction", () => {
     const { agent, tradeReceipts, convictions, receiptId } =
       await executePublishableTrade({});
 
-    const result = await publishAgentConviction({
+    const result = await publish({
       agent,
       body: {
         receiptId,
@@ -270,8 +329,6 @@ describe("publishAgentConviction", () => {
       },
       tradeReceipts,
       convictions,
-      checkRouter: async () => ({ status: "routable" }),
-      now: () => FIXED_NOW,
     });
 
     expect(result).toMatchObject({
@@ -296,31 +353,25 @@ describe("publishAgentConviction", () => {
     };
 
     const [a, b, c] = await Promise.all([
-      publishAgentConviction({
+      publish({
         agent,
         body,
         tradeReceipts,
         convictions,
-        checkRouter: async () => ({ status: "routable" }),
-        now: () => FIXED_NOW,
         randomId: () => "entry-concurrent",
       }),
-      publishAgentConviction({
+      publish({
         agent,
         body,
         tradeReceipts,
         convictions,
-        checkRouter: async () => ({ status: "routable" }),
-        now: () => FIXED_NOW,
         randomId: () => "entry-concurrent-b",
       }),
-      publishAgentConviction({
+      publish({
         agent,
         body,
         tradeReceipts,
         convictions,
-        checkRouter: async () => ({ status: "routable" }),
-        now: () => FIXED_NOW,
         randomId: () => "entry-concurrent-c",
       }),
     ]);
@@ -333,13 +384,124 @@ describe("publishAgentConviction", () => {
     });
   });
 
+  it("rolls back consume when conviction save fails so publish can retry", async () => {
+    const { agent, tradeReceipts, receiptId } = await executePublishableTrade(
+      {},
+    );
+    let failOnce = true;
+    const convictions = new MemoryAgentConvictionPersist();
+    const flaky = {
+      save: async (entry: Parameters<MemoryAgentConvictionPersist["save"]>[0]) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error("neon write failed");
+        }
+        await convictions.save(entry);
+      },
+      get: (entryId: string) => convictions.get(entryId),
+      getByReceiptSlug: (slug: string) => convictions.getByReceiptSlug(slug),
+    };
+
+    const first = await publishAgentConviction({
+      agent,
+      body: {
+        receiptId,
+        thesis: "Retryable thesis",
+        whyNow: "Retryable why",
+        whatBreaksIt: "Retryable break",
+      },
+      tradeReceipts,
+      convictions: flaky,
+      leaseId: LEASE.leaseId,
+      activeLeaseId: LEASE.activeLeaseId,
+      checkRouter: async () => ({ status: "routable" }),
+      now: () => FIXED_NOW,
+      randomId: () => "entry-retryable",
+    });
+    expect(first).toMatchObject({ ok: false, code: "unavailable" });
+    expect((await tradeReceipts.get(receiptId))?.publishable).toBe(true);
+
+    const second = await publish({
+      agent,
+      body: {
+        receiptId,
+        thesis: "Retryable thesis",
+        whyNow: "Retryable why",
+        whatBreaksIt: "Retryable break",
+      },
+      tradeReceipts,
+      convictions,
+      randomId: () => "entry-retryable",
+    });
+    expect(second).toMatchObject({ ok: true, entryId: "entry-retryable" });
+  });
+
+  it("never un-consumes a published receipt when execute re-saves it", async () => {
+    const { agent, tradeReceipts, convictions, receiptId } =
+      await executePublishableTrade({});
+
+    const published = await publish({
+      agent,
+      body: {
+        receiptId,
+        thesis: "Published once",
+        whyNow: "Once",
+        whatBreaksIt: "Once",
+      },
+      tradeReceipts,
+      convictions,
+      randomId: () => "entry-once",
+    });
+    expect(published.ok).toBe(true);
+
+    const before = await tradeReceipts.get(receiptId);
+    expect(before?.publishable).toBe(false);
+
+    await tradeReceipts.save(
+      buildAgentTradeReceiptRecord({
+        agentId: agent.agentId,
+        receipt: before!.receipt,
+        entryAt: before!.entryAt,
+        quoteId: before!.quoteId,
+        quoteFingerprint: before!.quoteFingerprint,
+        intent: before!.intent,
+        sizeUsd: before!.sizeUsd,
+        dollarsIn: before!.dollarsIn,
+        dollarsOut: before!.dollarsOut,
+        feeUsd: before!.feeUsd,
+        sourceChain: before!.sourceChain,
+        destChain: before!.destChain,
+        toAsset: before!.toAsset,
+        publicationIntent: false,
+      }),
+    );
+
+    const after = await tradeReceipts.get(receiptId);
+    expect(after?.publishable).toBe(false);
+    expect(after?.publishedEntryId).toBe("entry-once");
+
+    const retry = await publish({
+      agent,
+      body: {
+        receiptId,
+        thesis: "Second attempt",
+        whyNow: "Should not create another",
+        whatBreaksIt: "Nope",
+      },
+      tradeReceipts,
+      convictions,
+      randomId: () => "entry-twice",
+    });
+    expect(retry).toMatchObject({ ok: true, entryId: "entry-once" });
+  });
+
   it("reuses a publication-intent gate within 24h and refreshes after", async () => {
     const { agent, tradeReceipts, convictions, receiptId, quote } =
       await executePublishableTrade({ publicationIntent: true });
 
     expect(quote.gateReport?.length).toBeGreaterThan(0);
 
-    const within = await publishAgentConviction({
+    const within = await publish({
       agent,
       body: {
         receiptId,
@@ -357,14 +519,12 @@ describe("publishAgentConviction", () => {
     });
     expect(within.ok).toBe(true);
 
-    // Fresh receipt for the expired-window case.
     const second = await executePublishableTrade({
       publicationIntent: true,
       receiptId: "mock-receipt-publish-002",
       now: () => FIXED_NOW,
     });
-    let routerCalls = 0;
-    const after = await publishAgentConviction({
+    const after = await publish({
       agent: second.agent,
       body: {
         receiptId: second.receiptId,
@@ -374,24 +534,18 @@ describe("publishAgentConviction", () => {
       },
       tradeReceipts: second.tradeReceipts,
       convictions: second.convictions,
-      checkRouter: async () => {
-        routerCalls += 1;
-        return { status: "routable" };
-      },
       now: () =>
         new Date(FIXED_NOW.getTime() + PUBLICATION_GATE_WINDOW_MS + 1),
       randomId: () => "entry-after",
     });
     expect(after.ok).toBe(true);
-    // Native ETH product gate does not call the router; ensure publish still succeeds.
-    expect(routerCalls).toBeGreaterThanOrEqual(0);
   });
 
-  it("rejects lifecycle-blocked agents before creating a conviction", async () => {
+  it("rejects lifecycle-blocked agents and missing receipts", async () => {
     const { tradeReceipts, convictions, receiptId } =
       await executePublishableTrade({});
 
-    const result = await publishAgentConviction({
+    const blocked = await publish({
       agent: testAgent({ status: "disabled", publicStatus: "paused" }),
       body: {
         receiptId,
@@ -401,14 +555,27 @@ describe("publishAgentConviction", () => {
       },
       tradeReceipts,
       convictions,
-      checkRouter: async () => ({ status: "routable" }),
-      now: () => FIXED_NOW,
     });
-
-    expect(result).toMatchObject({
+    expect(blocked).toMatchObject({
       ok: false,
       code: "lifecycle_blocked",
     });
     expect((await tradeReceipts.get(receiptId))?.publishable).toBe(true);
+
+    const missing = await publish({
+      agent: testAgent(),
+      body: {
+        receiptId: "does-not-exist",
+        thesis: "Thesis only is rejected",
+        whyNow: "No receipt",
+        whatBreaksIt: "No receipt",
+      },
+      tradeReceipts,
+      convictions,
+    });
+    expect(missing).toMatchObject({
+      ok: false,
+      code: "receipt_not_found",
+    });
   });
 });

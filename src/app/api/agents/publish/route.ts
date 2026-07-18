@@ -44,9 +44,18 @@ export async function POST(request: Request) {
       throw error;
     }
 
+    const now = new Date();
+    const activeLease = await store.getActiveLease(
+      verified.agent.agentId,
+      now,
+    );
+    const leaseId = typeof body.leaseId === "string" ? body.leaseId : "";
+
     const result = await publishAgentConviction({
       agent: verified.agent,
       body,
+      leaseId,
+      activeLeaseId: activeLease?.leaseId ?? null,
       tradeReceipts: getAgentTradeReceiptStore(),
       convictions: {
         save: async (entry) => {
@@ -58,6 +67,7 @@ export async function POST(request: Request) {
       // Matches issueTradeQuote default — product primaries are gated offline;
       // long-tail targets are not direct MCP trade inputs in v1 (ADR 0031).
       checkRouter: async () => ({ status: "routable" }),
+      now: () => now,
     });
 
     if (!result.ok) {
