@@ -57,6 +57,9 @@ function sampleAgent(): OwnedAgent {
     fundingReady: true,
     setupVerifiedAt: null,
     createdAt: "2026-07-17T12:00:00.000Z",
+    disabledAt: null,
+    retirementStartedAt: null,
+    retiredAt: null,
   };
 }
 

@@ -180,6 +180,83 @@ export async function enableAgentLifecycle(options: {
   });
 }
 
+export type RetirementRecordSummary = {
+  retirementId: string;
+  reconciliationState: "complete" | "pending_sync" | "needs_attention";
+  recoveredUsd: number;
+  dustUsd: number;
+  residualHoldings: Array<{
+    asset: string;
+    chain: string;
+    usd: number;
+    reason: string;
+    unrecoverableDust: boolean;
+  }>;
+  lastError: string | null;
+  conversionLegs: Array<{
+    legId: string;
+    status: string;
+    fromAsset?: string;
+    sizeUsd?: number;
+    error: string | null;
+  }>;
+  transferLeg: {
+    legId: string;
+    status: string;
+    amount: string | null;
+    destination: string;
+    error: string | null;
+  } | null;
+};
+
+export type RetirementMutationResult = LifecycleMutationResult & {
+  retirement: RetirementRecordSummary;
+  recoveryRequired: boolean;
+  signerNote?: string | null;
+};
+
+/** Operator CLI retire — not an MCP tool. Requires the original local signer. */
+export async function retireAgentLifecycle(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  idempotencyKey?: string;
+  fetchImpl?: typeof fetch;
+}): Promise<RetirementMutationResult> {
+  return signedFetch<RetirementMutationResult>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/lifecycle/retire",
+    body: {
+      ...(options.idempotencyKey
+        ? { idempotencyKey: options.idempotencyKey }
+        : {}),
+    },
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+}
+
+/** Operator CLI recovery retry after needs_attention — not an MCP tool. */
+export async function recoverAgentRetirement(options: {
+  apiBaseUrl: string;
+  wallet: LocalWallet;
+  retirementId?: string;
+  retry?: boolean;
+  fetchImpl?: typeof fetch;
+}): Promise<RetirementMutationResult> {
+  return signedFetch<RetirementMutationResult>({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet: options.wallet,
+    method: "POST",
+    path: "/api/agents/lifecycle/retirement/recover",
+    body: {
+      ...(options.retirementId ? { retirementId: options.retirementId } : {}),
+      ...(options.retry ? { retry: true } : {}),
+    },
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+}
+
 export async function fetchConvictionsPage(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;

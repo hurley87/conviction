@@ -55,6 +55,9 @@ function testAgent(overrides: Partial<OwnedAgent> = {}): OwnedAgent {
     fundingReady: true,
     setupVerifiedAt: null,
     createdAt: FIXED_NOW.toISOString(),
+    disabledAt: null,
+    retirementStartedAt: null,
+    retiredAt: null,
     ...overrides,
   };
 }

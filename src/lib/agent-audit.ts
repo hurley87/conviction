@@ -10,6 +10,9 @@ export const AGENT_AUDIT_EVENT_TYPES = [
   "enabled",
   "capped",
   "cap_lifted",
+  "retirement_started",
+  "recovery_attempted",
+  "retirement_completed",
 ] as const;
 
 export type AgentAuditEventType = (typeof AGENT_AUDIT_EVENT_TYPES)[number];

@@ -85,6 +85,12 @@ export type OwnedAgent = {
   /** Set after a successful non-value-moving doctor/setup verification. */
   setupVerifiedAt: string | null;
   createdAt: string;
+  /** Set when operator disablement is applied. */
+  disabledAt: string | null;
+  /** Set when retirement begins (status → retiring). */
+  retirementStartedAt: string | null;
+  /** Set when retirement completes (status → retired); releases the one-agent slot. */
+  retiredAt: string | null;
 };
 
 /** Fresh create path: reserved identity with no bound signer yet. */
@@ -95,6 +101,9 @@ export type PendingAgent = OwnedAgent & {
   lifetimeSpendUsd: 0;
   fundingReady: false;
   setupVerifiedAt: null;
+  disabledAt: null;
+  retirementStartedAt: null;
+  retiredAt: null;
 };
 
 function isAgentStatus(value: string): value is AgentStatus {
@@ -152,6 +161,11 @@ export function ownedAgentFromRow(row: Record<string, unknown>): OwnedAgent {
       ? null
       : new Date(String(setupVerifiedRaw)).toISOString();
 
+  const optionalTimestamp = (value: unknown): string | null => {
+    if (value === null || value === undefined) return null;
+    return new Date(String(value)).toISOString();
+  };
+
   return {
     agentId: String(row.agent_id),
     ownerUserId: String(row.owner_user_id),
@@ -169,6 +183,9 @@ export function ownedAgentFromRow(row: Record<string, unknown>): OwnedAgent {
     fundingReady,
     setupVerifiedAt,
     createdAt: new Date(String(row.created_at)).toISOString(),
+    disabledAt: optionalTimestamp(row.disabled_at),
+    retirementStartedAt: optionalTimestamp(row.retirement_started_at),
+    retiredAt: optionalTimestamp(row.retired_at),
   };
 }
 
@@ -290,6 +307,24 @@ export type AgentProvisioningStore = {
     status: AgentStatus;
     publicStatus: AgentPublicStatus;
     disabledAt: string | null;
+  }): Promise<OwnedAgent>;
+  /**
+   * CAS agent into retiring. Locks return address implicitly (column unchanged).
+   * Idempotent when already retiring.
+   */
+  beginRetirement(input: {
+    agentId: string;
+    ownerUserId: string;
+    retirementStartedAt: string;
+  }): Promise<OwnedAgent>;
+  /**
+   * CAS retiring → retired. Releases the one non-retired agent slot.
+   * Idempotent when already retired.
+   */
+  completeRetirement(input: {
+    agentId: string;
+    ownerUserId: string;
+    retiredAt: string;
   }): Promise<OwnedAgent>;
   getActiveLease(agentId: string, now: Date): Promise<StoredAgentLease | null>;
   acquireLease(input: {
@@ -413,6 +448,9 @@ export async function createPendingAgent(
     fundingReady: false,
     setupVerifiedAt: null,
     createdAt: now.toISOString(),
+    disabledAt: null,
+    retirementStartedAt: null,
+    retiredAt: null,
   };
 
   await store.create({
@@ -800,15 +838,84 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
     record.agent.publicStatus = input.publicStatus;
 
     if (input.status === "disabled") {
-      const existing = this.disabledAtByAgentId.get(input.agentId);
-      this.disabledAtByAgentId.set(
-        input.agentId,
-        input.disabledAt ?? existing ?? new Date().toISOString(),
-      );
+      const existing =
+        record.agent.disabledAt ??
+        this.disabledAtByAgentId.get(input.agentId);
+      const disabledAt =
+        input.disabledAt ?? existing ?? new Date().toISOString();
+      this.disabledAtByAgentId.set(input.agentId, disabledAt);
+      record.agent.disabledAt = disabledAt;
     } else {
       this.disabledAtByAgentId.delete(input.agentId);
+      record.agent.disabledAt = null;
     }
 
+    return record.agent;
+  }
+
+  async beginRetirement(input: {
+    agentId: string;
+    ownerUserId: string;
+    retirementStartedAt: string;
+  }): Promise<OwnedAgent> {
+    const record = this.records.find(
+      ({ agent }) =>
+        agent.agentId === input.agentId &&
+        agent.ownerUserId === input.ownerUserId,
+    );
+    if (!record) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity for this account.",
+      );
+    }
+    if (record.agent.status === "retired") {
+      throw new AgentProvisioningError(
+        "lifecycle_blocked",
+        `Agent @${record.agent.handle} is already retired.`,
+      );
+    }
+    if (record.agent.status === "retiring") {
+      return record.agent;
+    }
+
+    record.agent.status = "retiring";
+    // Public profile stays paused until completion marks Retired.
+    record.agent.publicStatus = "paused";
+    record.agent.retirementStartedAt =
+      record.agent.retirementStartedAt ?? input.retirementStartedAt;
+    return record.agent;
+  }
+
+  async completeRetirement(input: {
+    agentId: string;
+    ownerUserId: string;
+    retiredAt: string;
+  }): Promise<OwnedAgent> {
+    const record = this.records.find(
+      ({ agent }) =>
+        agent.agentId === input.agentId &&
+        agent.ownerUserId === input.ownerUserId,
+    );
+    if (!record) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity for this account.",
+      );
+    }
+    if (record.agent.status === "retired") {
+      return record.agent;
+    }
+    if (record.agent.status !== "retiring") {
+      throw new AgentProvisioningError(
+        "lifecycle_blocked",
+        `Agent @${record.agent.handle} must be retiring before completion.`,
+      );
+    }
+
+    record.agent.status = "retired";
+    record.agent.publicStatus = "retired";
+    record.agent.retiredAt = record.agent.retiredAt ?? input.retiredAt;
     return record.agent;
   }
 

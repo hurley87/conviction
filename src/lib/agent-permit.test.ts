@@ -52,6 +52,9 @@ function testAgent(
     fundingReady: true,
     setupVerifiedAt: null,
     createdAt: FIXED_NOW.toISOString(),
+    disabledAt: null,
+    retirementStartedAt: null,
+    retiredAt: null,
     ...overrides,
   };
 }

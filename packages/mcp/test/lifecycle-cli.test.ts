@@ -141,4 +141,164 @@ describe("conviction-mcp disable/enable CLI", () => {
     expect(help).toMatch(/disable/);
     expect(help).toMatch(/enable/);
   });
+
+  it("routes retire through signed lifecycle retire and recover endpoints", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "conviction-retire-"));
+    cleanup.push(async () => rm(home, { recursive: true, force: true }));
+
+    const unlockSecret = "retire-unlock-secret";
+    const generated = await generateEncryptedKeystore(unlockSecret);
+    const paths = resolveConvictionPaths(home);
+    const profileName = "retire-scout";
+    await writeKeystoreFile(
+      keystorePath(paths, profileName),
+      generated.keystoreJson,
+    );
+    await writeAgentProfile(profilePath(paths, profileName), {
+      version: 1,
+      profileName,
+      agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      handle: "retire-scout",
+      operatorHandle: "operator",
+      signerAddress: generated.address,
+      universalAccountAddress: generated.address,
+      keystorePath: keystorePath(paths, profileName),
+      fundingReady: true,
+      actionPolicy: { trade: true, back: true, publish: true },
+      maxTradeUsd: 25,
+      spendBudgetUsd: 100,
+      createdAt: "2026-07-18T12:00:00.000Z",
+    });
+
+    const calls: Array<{ method: string; path: string }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      const pathname = new URL(url).pathname;
+      calls.push({ method: String(init?.method ?? "GET"), path: pathname });
+      const headers = init?.headers as Record<string, string>;
+      expect(headers["x-conviction-agent"]).toBeTruthy();
+      expect(headers["x-conviction-signature"]).toBeTruthy();
+
+      if (pathname.endsWith("/lifecycle/retire")) {
+        return new Response(
+          JSON.stringify({
+            agent: {
+              agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              handle: "retire-scout",
+              status: "retiring",
+              publicStatus: "paused",
+              actionPolicy: { trade: true, back: true, publish: true },
+              maxTradeUsd: 25,
+              spendBudgetUsd: 100,
+              lifetimeSpendUsd: 0,
+            },
+            retirement: {
+              retirementId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+              reconciliationState: "pending_sync",
+              recoveredUsd: 0,
+              dustUsd: 0,
+              residualHoldings: [],
+              lastError: null,
+              conversionLegs: [],
+              transferLeg: null,
+            },
+            releasedPermitCount: 1,
+            recoveryRequired: true,
+            privatePausedReason: "Retirement is in progress. Normal writes stay blocked.",
+            signerNote:
+              "Recovery uses the original local signer only. Conviction cannot reconstruct or replace it.",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          agent: {
+            agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            handle: "retire-scout",
+            status: "retired",
+            publicStatus: "retired",
+            actionPolicy: { trade: true, back: true, publish: true },
+            maxTradeUsd: 25,
+            spendBudgetUsd: 100,
+            lifetimeSpendUsd: 0,
+          },
+          retirement: {
+            retirementId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            reconciliationState: "complete",
+            recoveredUsd: 42,
+            dustUsd: 0,
+            residualHoldings: [],
+            lastError: null,
+            conversionLegs: [],
+            transferLeg: {
+              legId: "transfer:usdc:Arbitrum:0xbb",
+              status: "complete",
+              amount: "42",
+              destination: "0x00000000000000000000000000000000000000Bb",
+              error: null,
+            },
+          },
+          releasedPermitCount: 0,
+          recoveryRequired: false,
+          privatePausedReason: "This agent is permanently retired.",
+          signerNote:
+            "Recovery used the authenticated local signer path. Conviction cannot reconstruct or replace that signer.",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      logs.push(String(message ?? ""));
+    };
+
+    const previousPassword = process.env.CONVICTION_KEYSTORE_PASSWORD;
+    process.env.CONVICTION_KEYSTORE_PASSWORD = unlockSecret;
+
+    try {
+      await runCli([
+        "retire",
+        "--profile",
+        profileName,
+        "--home",
+        home,
+        "--api-base",
+        "http://127.0.0.1:3999",
+      ]);
+    } finally {
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      if (previousPassword === undefined) {
+        delete process.env.CONVICTION_KEYSTORE_PASSWORD;
+      } else {
+        process.env.CONVICTION_KEYSTORE_PASSWORD = previousPassword;
+      }
+    }
+
+    expect(calls).toEqual([
+      { method: "POST", path: "/api/agents/lifecycle/retire" },
+      { method: "POST", path: "/api/agents/lifecycle/retirement/recover" },
+    ]);
+    expect(logs.join("\n")).toMatch(/retired/i);
+    expect(logs.join("\n")).toMatch(/Recovered/i);
+  });
+
+  it("documents retire in help", async () => {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      logs.push(String(message ?? ""));
+    };
+    try {
+      await runCli(["help"]);
+    } finally {
+      console.log = originalLog;
+    }
+    expect(logs.join("\n")).toMatch(/retire/);
+  });
 });

@@ -1,0 +1,277 @@
+import "server-only";
+import { getSql } from "@/lib/db";
+import {
+  MemoryAgentRetirementStore,
+  type AgentRetirementRecord,
+  type AgentRetirementStore,
+  type RetirementConversionLeg,
+  type RetirementReconciliationState,
+  type RetirementResidualHolding,
+  type RetirementTransferLeg,
+} from "@/lib/agent-retirement";
+
+const memoryStore = new MemoryAgentRetirementStore();
+let neonSchemaReady = false;
+
+type RetirementRow = {
+  retirement_id: string;
+  agent_id: string;
+  owner_user_id: string;
+  return_address: string;
+  idempotency_key: string;
+  reconciliation_state: string;
+  conversion_legs: unknown;
+  transfer_leg: unknown;
+  residual_holdings: unknown;
+  recovered_usd: number | string;
+  dust_usd: number | string;
+  attempt_count: number | null;
+  workflow_run_id: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function recordFromRow(row: RetirementRow): AgentRetirementRecord {
+  return {
+    retirementId: row.retirement_id,
+    agentId: row.agent_id,
+    ownerUserId: row.owner_user_id,
+    returnAddress: row.return_address,
+    idempotencyKey: row.idempotency_key,
+    reconciliationState:
+      row.reconciliation_state as RetirementReconciliationState,
+    conversionLegs: asArray<RetirementConversionLeg>(row.conversion_legs),
+    transferLeg:
+      row.transfer_leg && typeof row.transfer_leg === "object"
+        ? (row.transfer_leg as RetirementTransferLeg)
+        : null,
+    residualHoldings: asArray<RetirementResidualHolding>(
+      row.residual_holdings,
+    ),
+    recoveredUsd: Number(row.recovered_usd),
+    dustUsd: Number(row.dust_usd),
+    attemptCount: row.attempt_count ?? 0,
+    workflowRunId: row.workflow_run_id,
+    lastError: row.last_error,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+    completedAt: row.completed_at
+      ? new Date(row.completed_at).toISOString()
+      : null,
+  };
+}
+
+async function ensureSchema(
+  sql: NonNullable<ReturnType<typeof getSql>>,
+): Promise<void> {
+  if (neonSchemaReady) return;
+  await sql`
+    CREATE TABLE IF NOT EXISTS agent_retirements (
+      retirement_id uuid PRIMARY KEY,
+      agent_id uuid NOT NULL UNIQUE,
+      owner_user_id text NOT NULL,
+      return_address text NOT NULL,
+      idempotency_key text NOT NULL,
+      reconciliation_state text NOT NULL CHECK (
+        reconciliation_state IN ('complete', 'pending_sync', 'needs_attention')
+      ),
+      conversion_legs jsonb NOT NULL DEFAULT '[]'::jsonb,
+      transfer_leg jsonb,
+      residual_holdings jsonb NOT NULL DEFAULT '[]'::jsonb,
+      recovered_usd numeric NOT NULL DEFAULT 0,
+      dust_usd numeric NOT NULL DEFAULT 0,
+      attempt_count integer NOT NULL DEFAULT 0,
+      workflow_run_id text,
+      last_error text,
+      created_at timestamptz NOT NULL,
+      updated_at timestamptz NOT NULL,
+      completed_at timestamptz,
+      UNIQUE (agent_id, idempotency_key)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS agent_retirements_reconciliation
+      ON agent_retirements (reconciliation_state)
+  `;
+  neonSchemaReady = true;
+}
+
+class NeonAgentRetirementStore implements AgentRetirementStore {
+  constructor(private readonly sql: NonNullable<ReturnType<typeof getSql>>) {}
+
+  async save(record: AgentRetirementRecord): Promise<AgentRetirementRecord> {
+    await ensureSchema(this.sql);
+    try {
+      await this.sql`
+        INSERT INTO agent_retirements (
+          retirement_id, agent_id, owner_user_id, return_address,
+          idempotency_key, reconciliation_state, conversion_legs, transfer_leg,
+          residual_holdings, recovered_usd, dust_usd, attempt_count,
+          workflow_run_id, last_error, created_at, updated_at, completed_at
+        ) VALUES (
+          ${record.retirementId}::uuid,
+          ${record.agentId}::uuid,
+          ${record.ownerUserId},
+          ${record.returnAddress},
+          ${record.idempotencyKey},
+          ${record.reconciliationState},
+          ${JSON.stringify(record.conversionLegs)}::jsonb,
+          ${record.transferLeg ? JSON.stringify(record.transferLeg) : null}::jsonb,
+          ${JSON.stringify(record.residualHoldings)}::jsonb,
+          ${record.recoveredUsd},
+          ${record.dustUsd},
+          ${record.attemptCount},
+          ${record.workflowRunId},
+          ${record.lastError},
+          ${record.createdAt}::timestamptz,
+          ${record.updatedAt}::timestamptz,
+          ${record.completedAt}::timestamptz
+        )
+        ON CONFLICT (agent_id) DO NOTHING
+      `;
+    } catch {
+      // Resolve via agent_id / idempotency below.
+    }
+
+    const byAgent = await this.getByAgentId(record.agentId);
+    if (byAgent) return byAgent;
+
+    const byIdem = await this.getByIdempotency(
+      record.agentId,
+      record.idempotencyKey,
+    );
+    if (byIdem) return byIdem;
+
+    throw new Error(
+      `Failed to persist retirement record for agent ${record.agentId}.`,
+    );
+  }
+
+  async get(retirementId: string): Promise<AgentRetirementRecord | null> {
+    await ensureSchema(this.sql);
+    const rows = (await this.sql`
+      SELECT * FROM agent_retirements
+      WHERE retirement_id = ${retirementId}::uuid
+      LIMIT 1
+    `) as RetirementRow[];
+    const row = rows[0];
+    return row ? recordFromRow(row) : null;
+  }
+
+  async getByAgentId(agentId: string): Promise<AgentRetirementRecord | null> {
+    await ensureSchema(this.sql);
+    const rows = (await this.sql`
+      SELECT * FROM agent_retirements
+      WHERE agent_id = ${agentId}::uuid
+      LIMIT 1
+    `) as RetirementRow[];
+    const row = rows[0];
+    return row ? recordFromRow(row) : null;
+  }
+
+  async getByIdempotency(
+    agentId: string,
+    idempotencyKey: string,
+  ): Promise<AgentRetirementRecord | null> {
+    await ensureSchema(this.sql);
+    const rows = (await this.sql`
+      SELECT * FROM agent_retirements
+      WHERE agent_id = ${agentId}::uuid
+        AND idempotency_key = ${idempotencyKey}
+      LIMIT 1
+    `) as RetirementRow[];
+    const row = rows[0];
+    return row ? recordFromRow(row) : null;
+  }
+
+  async update(record: AgentRetirementRecord): Promise<AgentRetirementRecord> {
+    await ensureSchema(this.sql);
+    const rows = (await this.sql`
+      UPDATE agent_retirements
+      SET
+        reconciliation_state = ${record.reconciliationState},
+        conversion_legs = ${JSON.stringify(record.conversionLegs)}::jsonb,
+        transfer_leg = ${record.transferLeg ? JSON.stringify(record.transferLeg) : null}::jsonb,
+        residual_holdings = ${JSON.stringify(record.residualHoldings)}::jsonb,
+        recovered_usd = ${record.recoveredUsd},
+        dust_usd = ${record.dustUsd},
+        attempt_count = ${record.attemptCount},
+        workflow_run_id = ${record.workflowRunId},
+        last_error = ${record.lastError},
+        updated_at = ${record.updatedAt}::timestamptz,
+        completed_at = ${record.completedAt}::timestamptz
+      WHERE retirement_id = ${record.retirementId}::uuid
+      RETURNING *
+    `) as RetirementRow[];
+    const row = rows[0];
+    if (!row) {
+      throw new Error(`Unknown retirement ${record.retirementId}`);
+    }
+    return recordFromRow(row);
+  }
+
+  async casReconciliationState(input: {
+    retirementId: string;
+    from: RetirementReconciliationState;
+    to: RetirementReconciliationState;
+    workflowRunId?: string | null;
+    lastError?: string | null;
+    completedAt?: string | null;
+    attemptCount?: number;
+  }): Promise<AgentRetirementRecord | null> {
+    await ensureSchema(this.sql);
+    const current = await this.get(input.retirementId);
+    if (!current || current.reconciliationState !== input.from) return null;
+
+    const next: AgentRetirementRecord = {
+      ...current,
+      reconciliationState: input.to,
+      updatedAt: new Date().toISOString(),
+      ...(input.workflowRunId !== undefined
+        ? { workflowRunId: input.workflowRunId }
+        : {}),
+      ...(input.lastError !== undefined ? { lastError: input.lastError } : {}),
+      ...(input.completedAt !== undefined
+        ? { completedAt: input.completedAt }
+        : {}),
+      ...(input.attemptCount !== undefined
+        ? { attemptCount: input.attemptCount }
+        : {}),
+    };
+    return this.update(next);
+  }
+
+  async setWorkflowRunId(
+    retirementId: string,
+    workflowRunId: string,
+  ): Promise<void> {
+    await ensureSchema(this.sql);
+    const updatedAt = new Date().toISOString();
+    await this.sql`
+      UPDATE agent_retirements
+      SET workflow_run_id = ${workflowRunId},
+          updated_at = ${updatedAt}::timestamptz
+      WHERE retirement_id = ${retirementId}::uuid
+    `;
+  }
+}
+
+/** Neon-authoritative when DATABASE_URL is set; memory fallback for local/mock. */
+export function getAgentRetirementStore(): AgentRetirementStore {
+  const sql = getSql();
+  if (sql) return new NeonAgentRetirementStore(sql);
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Agent retirement storage is not configured.");
+  }
+  return memoryStore;
+}
+
+export function getMemoryAgentRetirementStoreForTests(): MemoryAgentRetirementStore {
+  return memoryStore;
+}

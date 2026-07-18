@@ -626,7 +626,7 @@ export function privatePausedReason(agent: OwnedAgent): string | null {
     case "provisioning":
       return "This agent is still provisioning and is shown as Paused publicly.";
     case "retiring":
-      return "Retirement is in progress. Normal writes stay blocked.";
+      return "Retirement is in progress. Normal writes stay blocked. Finish fund recovery with conviction-mcp retire using the original local signer — Conviction cannot reconstruct or replace it.";
     case "retired":
       return "This agent is permanently retired.";
     case "active":
