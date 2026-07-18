@@ -2,6 +2,7 @@ import "server-only";
 import { getSql } from "@/lib/db";
 import {
   MemoryAgentRetirementStore,
+  RECOVERY_CLAIM_TTL_MS,
   type AgentRetirementRecord,
   type AgentRetirementStore,
   type RetirementConversionLeg,
@@ -28,6 +29,8 @@ type RetirementRow = {
   attempt_count: number | null;
   workflow_run_id: string | null;
   last_error: string | null;
+  recovery_claim_token: string | null;
+  recovery_claimed_at: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -59,6 +62,10 @@ function recordFromRow(row: RetirementRow): AgentRetirementRecord {
     attemptCount: row.attempt_count ?? 0,
     workflowRunId: row.workflow_run_id,
     lastError: row.last_error,
+    recoveryClaimToken: row.recovery_claim_token ?? null,
+    recoveryClaimedAt: row.recovery_claimed_at
+      ? new Date(row.recovery_claimed_at).toISOString()
+      : null,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
     completedAt: row.completed_at
@@ -89,11 +96,21 @@ async function ensureSchema(
       attempt_count integer NOT NULL DEFAULT 0,
       workflow_run_id text,
       last_error text,
+      recovery_claim_token text,
+      recovery_claimed_at timestamptz,
       created_at timestamptz NOT NULL,
       updated_at timestamptz NOT NULL,
       completed_at timestamptz,
       UNIQUE (agent_id, idempotency_key)
     )
+  `;
+  await sql`
+    ALTER TABLE agent_retirements
+      ADD COLUMN IF NOT EXISTS recovery_claim_token text
+  `;
+  await sql`
+    ALTER TABLE agent_retirements
+      ADD COLUMN IF NOT EXISTS recovery_claimed_at timestamptz
   `;
   await sql`
     CREATE INDEX IF NOT EXISTS agent_retirements_reconciliation
@@ -113,7 +130,8 @@ class NeonAgentRetirementStore implements AgentRetirementStore {
           retirement_id, agent_id, owner_user_id, return_address,
           idempotency_key, reconciliation_state, conversion_legs, transfer_leg,
           residual_holdings, recovered_usd, dust_usd, attempt_count,
-          workflow_run_id, last_error, created_at, updated_at, completed_at
+          workflow_run_id, last_error, recovery_claim_token, recovery_claimed_at,
+          created_at, updated_at, completed_at
         ) VALUES (
           ${record.retirementId}::uuid,
           ${record.agentId}::uuid,
@@ -129,6 +147,8 @@ class NeonAgentRetirementStore implements AgentRetirementStore {
           ${record.attemptCount},
           ${record.workflowRunId},
           ${record.lastError},
+          ${record.recoveryClaimToken},
+          ${record.recoveryClaimedAt}::timestamptz,
           ${record.createdAt}::timestamptz,
           ${record.updatedAt}::timestamptz,
           ${record.completedAt}::timestamptz
@@ -204,6 +224,8 @@ class NeonAgentRetirementStore implements AgentRetirementStore {
         attempt_count = ${record.attemptCount},
         workflow_run_id = ${record.workflowRunId},
         last_error = ${record.lastError},
+        recovery_claim_token = ${record.recoveryClaimToken},
+        recovery_claimed_at = ${record.recoveryClaimedAt}::timestamptz,
         updated_at = ${record.updatedAt}::timestamptz,
         completed_at = ${record.completedAt}::timestamptz
       WHERE retirement_id = ${record.retirementId}::uuid
@@ -259,6 +281,56 @@ class NeonAgentRetirementStore implements AgentRetirementStore {
           updated_at = ${updatedAt}::timestamptz
       WHERE retirement_id = ${retirementId}::uuid
     `;
+  }
+
+  async claimRecovery(input: {
+    retirementId: string;
+    claimToken: string;
+    now: Date;
+    ttlMs?: number;
+  }): Promise<AgentRetirementRecord | null> {
+    await ensureSchema(this.sql);
+    const ttl = input.ttlMs ?? RECOVERY_CLAIM_TTL_MS;
+    const expiresBefore = new Date(input.now.getTime() - ttl).toISOString();
+    const claimedAt = input.now.toISOString();
+    const rows = (await this.sql`
+      UPDATE agent_retirements
+      SET
+        recovery_claim_token = ${input.claimToken},
+        recovery_claimed_at = ${claimedAt}::timestamptz,
+        updated_at = ${claimedAt}::timestamptz
+      WHERE retirement_id = ${input.retirementId}::uuid
+        AND (
+          recovery_claim_token IS NULL
+          OR recovery_claim_token = ${input.claimToken}
+          OR recovery_claimed_at IS NULL
+          OR recovery_claimed_at <= ${expiresBefore}::timestamptz
+        )
+      RETURNING *
+    `) as RetirementRow[];
+    const row = rows[0];
+    return row ? recordFromRow(row) : null;
+  }
+
+  async releaseRecovery(input: {
+    retirementId: string;
+    claimToken: string;
+  }): Promise<AgentRetirementRecord | null> {
+    await ensureSchema(this.sql);
+    const updatedAt = new Date().toISOString();
+    const rows = (await this.sql`
+      UPDATE agent_retirements
+      SET
+        recovery_claim_token = NULL,
+        recovery_claimed_at = NULL,
+        updated_at = ${updatedAt}::timestamptz
+      WHERE retirement_id = ${input.retirementId}::uuid
+        AND recovery_claim_token = ${input.claimToken}
+      RETURNING *
+    `) as RetirementRow[];
+    const row = rows[0];
+    if (row) return recordFromRow(row);
+    return this.get(input.retirementId);
   }
 }
 

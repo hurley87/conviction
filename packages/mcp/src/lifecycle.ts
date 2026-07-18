@@ -7,6 +7,7 @@ import {
   type RetirementMutationResult,
 } from "./live-api-client.js";
 import { loadWalletFromKeystore } from "./keystore.js";
+import { createLocalTradeSigners } from "./local-trade-signers.js";
 import { profilePath, resolveConvictionPaths } from "./paths.js";
 import { readAgentProfile } from "./profile.js";
 import {
@@ -14,6 +15,8 @@ import {
   requireUnlockSecret,
   type UnlockSecretStore,
 } from "./unlock-secret.js";
+
+const MAX_LIVE_RECOVERY_LEGS = 32;
 
 export type LifecycleOptions = {
   profileName: string;
@@ -76,6 +79,9 @@ export async function runEnable(
 /**
  * Permanently retire the agent and recover canonical cash using the original
  * local signer. Conviction cannot reconstruct or replace that signer.
+ *
+ * Mock/local: single recover call completes in-process.
+ * Live Particle: prepare → local sign → submit per leg, then finalize.
  */
 export async function runRetire(
   options: LifecycleOptions,
@@ -90,12 +96,69 @@ export async function runRetire(
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
 
-  if (result.recoveryRequired) {
+  if (!result.recoveryRequired) {
+    return result;
+  }
+
+  const retirementId = result.retirement.retirementId;
+  const signers = createLocalTradeSigners(wallet);
+
+  // First call: mock path completes; live path returns a signable leg.
+  result = await recoverAgentRetirement({
+    apiBaseUrl: options.apiBaseUrl,
+    wallet,
+    retirementId,
+    action: "prepare",
+    retry: result.retirement.reconciliationState === "needs_attention",
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+
+  for (
+    let i = 0;
+    i < MAX_LIVE_RECOVERY_LEGS &&
+    result.recoveryRequired &&
+    result.signable;
+    i += 1
+  ) {
+    const signable = result.signable;
+    const rootHashSignature = await signers.signRootHash(signable.rootHash);
+    const authorizations: Array<{ userOpHash: string; signature: string }> =
+      [];
+    for (const pending of signable.userOpsNeeding7702) {
+      authorizations.push({
+        userOpHash: pending.userOpHash,
+        signature: await signers.sign7702(pending.auth),
+      });
+    }
+
     result = await recoverAgentRetirement({
       apiBaseUrl: options.apiBaseUrl,
       wallet,
-      retirementId: result.retirement.retirementId,
-      retry: result.retirement.reconciliationState === "needs_attention",
+      retirementId,
+      action: "submit",
+      legId: signable.legId,
+      rootHashSignature,
+      ...(authorizations.length > 0 ? { authorizations } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    });
+
+    if (!result.recoveryRequired) break;
+
+    result = await recoverAgentRetirement({
+      apiBaseUrl: options.apiBaseUrl,
+      wallet,
+      retirementId,
+      action: "prepare",
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    });
+  }
+
+  if (result.recoveryRequired && !result.signable) {
+    result = await recoverAgentRetirement({
+      apiBaseUrl: options.apiBaseUrl,
+      wallet,
+      retirementId,
+      action: "finalize",
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     });
   }

@@ -20,22 +20,48 @@ import {
 import { isTradeFundingAsset, assetMatches } from "@/lib/verbs/assets";
 import { DEFAULT_DEST_CHAIN } from "@/lib/verbs/intent";
 import type { UAClient } from "@/lib/ua/types";
+import type { RawTransaction } from "@/lib/ua/trade";
+import { userOpsNeeding7702 } from "@/lib/ua/trade";
+import { hasParticleEnv } from "@/lib/ua";
+import { validateWithdrawal } from "@/lib/verbs/withdrawal";
 import type {
   BalanceSource,
   ProductAsset,
+  TradeQuote,
   TradeSigners,
   UniversalBalance,
+  WithdrawalQuote,
 } from "@/lib/verbs/types";
 
 /** Aggregate residual USD that may complete as dust without blocking retirement. */
 export const RETIREMENT_DUST_THRESHOLD_USD = 1;
+
+/** Recovery claim TTL — prevents stuck locks from blocking operator retry forever. */
+export const RECOVERY_CLAIM_TTL_MS = 120_000;
 
 export type RetirementReconciliationState =
   | "complete"
   | "pending_sync"
   | "needs_attention";
 
-export type RetirementLegStatus = "pending" | "complete" | "failed" | "skipped";
+export type RetirementLegStatus =
+  | "pending"
+  | "quoted"
+  | "in_flight"
+  | "complete"
+  | "failed"
+  | "skipped";
+
+/** Signable payload returned to the CLI for rootHash / EIP-7702 signing. */
+export type RetirementSignableLeg = {
+  legId: string;
+  kind: "conversion" | "transfer";
+  rootHash: string;
+  userOpsNeeding7702: Array<{
+    userOpHash: string;
+    auth: { contractAddress: string; chainId: number; nonce: number };
+  }>;
+};
 
 export type RetirementConversionLeg = {
   legId: string;
@@ -44,6 +70,9 @@ export type RetirementConversionLeg = {
   fromChain: string;
   sizeUsd: number;
   status: RetirementLegStatus;
+  /** Stored quote for prepare → sign → submit (live Particle path). */
+  quote: TradeQuote | null;
+  rootHash: string | null;
   transactionId: string | null;
   receiptId: string | null;
   error: string | null;
@@ -57,6 +86,8 @@ export type RetirementTransferLeg = {
   amount: string | null;
   destination: string;
   status: RetirementLegStatus;
+  quote: WithdrawalQuote | null;
+  rootHash: string | null;
   transactionId: string | null;
   receiptId: string | null;
   error: string | null;
@@ -85,6 +116,9 @@ export type AgentRetirementRecord = {
   attemptCount: number;
   workflowRunId: string | null;
   lastError: string | null;
+  /** Exclusive recovery claim — prevents concurrent convert/transfer races. */
+  recoveryClaimToken: string | null;
+  recoveryClaimedAt: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -112,6 +146,20 @@ export type AgentRetirementStore = {
     retirementId: string,
     workflowRunId: string,
   ): Promise<void>;
+  /**
+   * Claim exclusive recovery. Succeeds when unlocked, expired, or same token.
+   * Returns the claimed record or null when another claim is active.
+   */
+  claimRecovery(input: {
+    retirementId: string;
+    claimToken: string;
+    now: Date;
+    ttlMs?: number;
+  }): Promise<AgentRetirementRecord | null>;
+  releaseRecovery(input: {
+    retirementId: string;
+    claimToken: string;
+  }): Promise<AgentRetirementRecord | null>;
 };
 
 export type RetirementWorkflowStarter = {
@@ -247,11 +295,221 @@ export class MemoryAgentRetirementStore implements AgentRetirementStore {
     });
   }
 
+  async claimRecovery(input: {
+    retirementId: string;
+    claimToken: string;
+    now: Date;
+    ttlMs?: number;
+  }): Promise<AgentRetirementRecord | null> {
+    const current = this.records.get(input.retirementId);
+    if (!current) return null;
+    const ttl = input.ttlMs ?? RECOVERY_CLAIM_TTL_MS;
+    const claimedAtMs = current.recoveryClaimedAt
+      ? new Date(current.recoveryClaimedAt).getTime()
+      : 0;
+    const expired =
+      !current.recoveryClaimToken ||
+      claimedAtMs + ttl <= input.now.getTime();
+    const sameToken = current.recoveryClaimToken === input.claimToken;
+    if (!expired && !sameToken) return null;
+    const next: AgentRetirementRecord = {
+      ...current,
+      recoveryClaimToken: input.claimToken,
+      recoveryClaimedAt: input.now.toISOString(),
+      updatedAt: input.now.toISOString(),
+    };
+    this.records.set(input.retirementId, next);
+    return cloneRecord(next);
+  }
+
+  async releaseRecovery(input: {
+    retirementId: string;
+    claimToken: string;
+  }): Promise<AgentRetirementRecord | null> {
+    const current = this.records.get(input.retirementId);
+    if (!current || current.recoveryClaimToken !== input.claimToken) {
+      return current ? cloneRecord(current) : null;
+    }
+    const next: AgentRetirementRecord = {
+      ...current,
+      recoveryClaimToken: null,
+      recoveryClaimedAt: null,
+      updatedAt: new Date().toISOString(),
+    };
+    this.records.set(input.retirementId, next);
+    return cloneRecord(next);
+  }
+
   clear(): void {
     this.records.clear();
     this.byAgent.clear();
     this.byIdempotency.clear();
   }
+}
+
+/** True only for explicit test/local mock recovery — never production. */
+export function canUseMockRetirementRecovery(options?: {
+  allowMock?: boolean;
+}): boolean {
+  if (options?.allowMock === true) return true;
+  if (process.env.NODE_ENV === "test") return true;
+  if (process.env.NODE_ENV === "development") return true;
+  if (process.env.CONVICTION_WORKFLOW_WORLD === "local") return true;
+  if (process.env.CONVICTION_ALLOW_MOCK_UA === "true") return true;
+  return false;
+}
+
+function emptyConversionLeg(
+  fromAsset: ProductAsset,
+  fromChain: string,
+  sizeUsd: number,
+): RetirementConversionLeg {
+  return {
+    legId: conversionLegId(fromAsset, fromChain),
+    kind: "conversion",
+    fromAsset,
+    fromChain,
+    sizeUsd,
+    status: "pending",
+    quote: null,
+    rootHash: null,
+    transactionId: null,
+    receiptId: null,
+    error: null,
+  };
+}
+
+function emptyTransferLeg(
+  destination: string,
+  amount: string,
+): RetirementTransferLeg {
+  return {
+    legId: transferLegId(destination),
+    kind: "transfer",
+    asset: "usdc",
+    destChain: "Arbitrum",
+    amount,
+    destination,
+    status: "pending",
+    quote: null,
+    rootHash: null,
+    transactionId: null,
+    receiptId: null,
+    error: null,
+  };
+}
+
+function isTerminalLegStatus(status: RetirementLegStatus): boolean {
+  return status === "complete" || status === "skipped";
+}
+
+function assertTransferDestinationLocked(
+  quoteDestination: string,
+  returnAddress: string,
+): void {
+  if (getAddress(quoteDestination) !== getAddress(returnAddress)) {
+    throw new Error(
+      "Withdrawal quote destination must equal the locked return address.",
+    );
+  }
+}
+
+function validateRetirementWithdrawal(input: {
+  amount: string;
+  destination: string;
+  ownerAddress: string | null | undefined;
+  balance: UniversalBalance;
+}): void {
+  const validated = validateWithdrawal({
+    asset: "usdc",
+    destChain: "Arbitrum",
+    amountRaw: input.amount,
+    destinationRaw: input.destination,
+    ownerAddress: input.ownerAddress,
+    balance: input.balance,
+  });
+  if (!validated.ok) {
+    throw new Error(validated.error);
+  }
+  if (getAddress(validated.request.destination) !== getAddress(input.destination)) {
+    throw new Error(
+      "Validated withdrawal destination must equal the locked return address.",
+    );
+  }
+}
+
+export function assertRetirementOwnership(
+  retirement: AgentRetirementRecord,
+  agent: OwnedAgent,
+): void {
+  if (
+    retirement.agentId !== agent.agentId ||
+    retirement.ownerUserId !== agent.ownerUserId
+  ) {
+    throw new AgentProvisioningError(
+      "agent_not_found",
+      "No retirement record matches that agent.",
+    );
+  }
+}
+
+function rawFromUnknown(raw: unknown): RawTransaction | null {
+  if (!raw || typeof raw !== "object") return null;
+  return raw as RawTransaction;
+}
+
+function rootHashFromQuote(
+  quote: TradeQuote | WithdrawalQuote | null | undefined,
+): string | null {
+  if (!quote) return null;
+  const raw = rawFromUnknown(quote.rawTransaction);
+  return typeof raw?.rootHash === "string" ? raw.rootHash : null;
+}
+
+function signableFromLeg(
+  leg: RetirementConversionLeg | RetirementTransferLeg,
+): RetirementSignableLeg | null {
+  if (leg.status !== "quoted" || !leg.rootHash) return null;
+  const raw = rawFromQuote(leg.quote);
+  return {
+    legId: leg.legId,
+    kind: leg.kind,
+    rootHash: leg.rootHash,
+    userOpsNeeding7702: userOpsNeeding7702(raw?.userOps).map((pending) => ({
+      userOpHash: pending.userOpHash,
+      auth: pending.auth,
+    })),
+  };
+}
+
+function rawFromQuote(
+  quote: TradeQuote | WithdrawalQuote | null | undefined,
+): RawTransaction | null {
+  if (!quote) return null;
+  return rawFromUnknown(quote.rawTransaction);
+}
+
+/** Build TradeSigners that return CLI-provided signatures (live Particle submit). */
+export function createProvidedRetirementSigners(input: {
+  rootHashSignature: string;
+  authorizations?: Array<{ userOpHash: string; signature: string }>;
+}): TradeSigners {
+  let authCursor = 0;
+  const authList = input.authorizations ?? [];
+  return {
+    async signRootHash() {
+      if (!input.rootHashSignature.startsWith("0x")) {
+        throw new Error("Invalid rootHash signature.");
+      }
+      return input.rootHashSignature;
+    },
+    async sign7702() {
+      const next = authList[authCursor];
+      authCursor += 1;
+      if (next?.signature?.startsWith("0x")) return next.signature;
+      throw new Error("Missing EIP-7702 authorization signature.");
+    },
+  };
 }
 
 function assertOwner(agent: OwnedAgent, ownerUserId: string): void {
@@ -451,6 +709,8 @@ export async function startRetirement(
     attemptCount: 0,
     workflowRunId: null,
     lastError: null,
+    recoveryClaimToken: null,
+    recoveryClaimedAt: null,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     completedAt: null,
@@ -574,10 +834,116 @@ function markResidualsDust(
   return { residuals, dustUsd: 0 };
 }
 
+export type RetirementPrepareResult = RetirementRecoveryResult & {
+  /** Next leg the CLI must sign, or null when only finalize remains. */
+  signable: RetirementSignableLeg | null;
+};
+
+async function loadOwnedRetirement(options: {
+  retirementStore: AgentRetirementStore;
+  agent: OwnedAgent;
+  retirementId: string;
+}): Promise<AgentRetirementRecord> {
+  const retirement = await options.retirementStore.get(options.retirementId);
+  if (!retirement) {
+    throw new AgentProvisioningError(
+      "agent_not_found",
+      "No retirement record matches that agent.",
+    );
+  }
+  assertRetirementOwnership(retirement, options.agent);
+  if (getAddress(retirement.returnAddress) !== getAddress(options.agent.returnAddress)) {
+    throw new AgentProvisioningError(
+      "invalid_request",
+      "Return address is locked for this retirement and cannot change.",
+    );
+  }
+  return retirement;
+}
+
+function buildResidualHoldings(
+  classified: ReturnType<typeof classifyHoldings>,
+): RetirementResidualHolding[] {
+  const residualHoldings: RetirementResidualHolding[] = [
+    ...classified.residuals,
+  ];
+  for (const item of classified.conversions) {
+    residualHoldings.push({
+      asset: item.fromAsset.toUpperCase(),
+      chain: item.fromChain,
+      usd: item.sizeUsd,
+      reason: "Routable holding remained after recovery attempt.",
+      unrecoverableDust: false,
+    });
+  }
+  if (classified.canonicalUsdcUsd >= RETIREMENT_DUST_THRESHOLD_USD) {
+    residualHoldings.push({
+      asset: "USDC",
+      chain: "Arbitrum",
+      usd: classified.canonicalUsdcUsd,
+      reason: "Canonical USDC remained after the return-address transfer.",
+      unrecoverableDust: false,
+    });
+  } else if (classified.canonicalUsdcUsd > 0) {
+    residualHoldings.push({
+      asset: "USDC",
+      chain: "Arbitrum",
+      usd: classified.canonicalUsdcUsd,
+      reason:
+        "Recorded as unrecoverable dust below the $1 retirement threshold.",
+      unrecoverableDust: true,
+    });
+  }
+  return residualHoldings;
+}
+
+async function completeRetirementRecord(options: {
+  store: AgentProvisioningStore;
+  retirementStore: AgentRetirementStore;
+  auditStore: AgentAuditStore;
+  agent: OwnedAgent;
+  retirement: AgentRetirementRecord;
+  now: Date;
+  actor: "operator" | "system";
+  via?: string;
+}): Promise<RetirementRecoveryResult> {
+  const completedAgent = await options.store.completeRetirement({
+    agentId: options.agent.agentId,
+    ownerUserId: options.agent.ownerUserId,
+    retiredAt: options.now.toISOString(),
+  });
+  const retirement = await options.retirementStore.update({
+    ...options.retirement,
+    reconciliationState: "complete",
+    completedAt: options.now.toISOString(),
+    lastError: null,
+    recoveryClaimToken: null,
+    recoveryClaimedAt: null,
+    updatedAt: options.now.toISOString(),
+  });
+  await appendAuditBestEffort(
+    options.auditStore,
+    buildAuditEvent({
+      agentId: completedAgent.agentId,
+      ownerUserId: completedAgent.ownerUserId,
+      type: "retirement_completed",
+      actor: options.actor,
+      now: options.now,
+      details: {
+        retirementId: retirement.retirementId,
+        recoveredUsd: retirement.recoveredUsd,
+        dustUsd: retirement.dustUsd,
+        residualCount: retirement.residualHoldings.length,
+        ...(options.via ? { via: options.via } : {}),
+      },
+    }),
+  );
+  return { agent: completedAgent, retirement };
+}
+
 /**
- * Idempotent recovery: convert routable holdings to Arbitrum USDC, transfer to
- * the locked return address, then reconcile residuals. Requires the original
- * local signer via TradeSigners — Conviction never reconstructs it.
+ * Idempotent mock/local recovery: convert → transfer → reconcile with
+ * in-process TradeSigners. Production Particle must use prepare → submit.
  */
 export async function executeRetirementRecovery(
   options: {
@@ -588,6 +954,7 @@ export async function executeRetirementRecovery(
     retirementId: string;
     ua: UAClient;
     signers: TradeSigners;
+    allowMock?: boolean;
     now?: Date;
     randomId?: () => string;
   },
@@ -595,6 +962,7 @@ export async function executeRetirementRecovery(
   if (options.agent.status === "retired") {
     const existing = await options.retirementStore.get(options.retirementId);
     if (existing) {
+      assertRetirementOwnership(existing, options.agent);
       return { agent: options.agent, retirement: existing };
     }
     throw new AgentProvisioningError(
@@ -609,90 +977,484 @@ export async function executeRetirementRecovery(
     );
   }
 
-  let retirement = await options.retirementStore.get(options.retirementId);
-  if (!retirement || retirement.agentId !== options.agent.agentId) {
+  // Production Particle must use prepare → sign → submit. Explicit allowMock is
+  // reserved for unit tests that inject MockUAClient + mockTradeSigners.
+  if (hasParticleEnv() && options.allowMock !== true) {
     throw new AgentProvisioningError(
-      "agent_not_found",
-      "No retirement record matches that agent.",
+      "invalid_request",
+      "Live Particle recovery requires prepare → sign → submit. In-process recovery is disabled.",
     );
   }
+  if (!canUseMockRetirementRecovery({ allowMock: options.allowMock })) {
+    throw new AgentProvisioningError(
+      "setup_not_ready",
+      "Retirement recovery is not configured for mock execution in this environment.",
+    );
+  }
+
+  let retirement = await loadOwnedRetirement(options);
   if (retirement.reconciliationState === "complete") {
     return { agent: options.agent, retirement };
   }
 
   const now = options.now ?? new Date();
-  const returnAddress = retirement.returnAddress;
-  if (getAddress(returnAddress) !== getAddress(options.agent.returnAddress)) {
+  const claimToken = options.randomId?.() ?? randomUUID();
+  const claimed = await options.retirementStore.claimRecovery({
+    retirementId: retirement.retirementId,
+    claimToken,
+    now,
+  });
+  if (!claimed) {
     throw new AgentProvisioningError(
-      "invalid_request",
-      "Return address is locked for this retirement and cannot change.",
+      "lifecycle_blocked",
+      "Retirement recovery is already in progress. Retry shortly.",
+    );
+  }
+  retirement = claimed;
+
+  try {
+    await appendAuditBestEffort(
+      options.auditStore,
+      buildAuditEvent({
+        agentId: options.agent.agentId,
+        ownerUserId: options.agent.ownerUserId,
+        type: "recovery_attempted",
+        actor: "operator",
+        now,
+        details: {
+          retirementId: retirement.retirementId,
+          attemptCount: retirement.attemptCount + 1,
+        },
+      }),
+    );
+
+    retirement = await options.retirementStore.update({
+      ...retirement,
+      attemptCount: retirement.attemptCount + 1,
+      updatedAt: now.toISOString(),
+      lastError: null,
+      reconciliationState: "pending_sync",
+    });
+
+    const returnAddress = retirement.returnAddress;
+    let balance: UniversalBalance;
+    try {
+      balance = await options.ua.getUniversalBalance();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Could not read agent holdings for retirement recovery.";
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        reconciliationState: "needs_attention",
+        lastError: message,
+        recoveryClaimToken: null,
+        recoveryClaimedAt: null,
+        updatedAt: now.toISOString(),
+      });
+      return { agent: options.agent, retirement };
+    }
+
+    const classified = classifyHoldings(balance);
+    const conversionById = new Map(
+      retirement.conversionLegs.map((leg) => [leg.legId, leg]),
+    );
+
+    for (const item of classified.conversions) {
+      const legId = conversionLegId(item.fromAsset, item.fromChain);
+      const existing = conversionById.get(legId);
+      if (existing && isTerminalLegStatus(existing.status)) continue;
+
+      let leg: RetirementConversionLeg = existing
+        ? {
+            ...existing,
+            sizeUsd: item.sizeUsd,
+            // Interrupted in-flight legs are re-armed on operator retry.
+            status:
+              existing.status === "in_flight" ? "pending" : existing.status,
+          }
+        : emptyConversionLeg(item.fromAsset, item.fromChain, item.sizeUsd);
+
+      leg = { ...leg, status: "in_flight", error: null };
+      conversionById.set(legId, leg);
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        conversionLegs: [...conversionById.values()],
+        updatedAt: now.toISOString(),
+      });
+
+      try {
+        const intent = {
+          fromAsset: item.fromAsset,
+          toAsset: "cash" as const,
+          sizeUsd: item.sizeUsd,
+          destChain: DEFAULT_DEST_CHAIN,
+        };
+        const quote = await options.ua.quoteTrade({
+          intent,
+          sizeUsd: item.sizeUsd,
+        });
+        const receiptSlug =
+          options.randomId?.() ??
+          `retire_conv_${legId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
+        const result = await options.ua.executeTrade({
+          intent,
+          sizeUsd: item.sizeUsd,
+          agreedQuote: quote,
+          signers: options.signers,
+          receiptSlug,
+        });
+        leg = {
+          ...leg,
+          status: "complete",
+          quote,
+          rootHash: rootHashFromQuote(quote),
+          transactionId: result.transactionId,
+          receiptId: result.receipt.slug,
+          error: null,
+        };
+      } catch (error) {
+        leg = {
+          ...leg,
+          status: "failed",
+          error:
+            error instanceof Error
+              ? error.message
+              : "Conversion failed during retirement recovery.",
+        };
+      }
+
+      conversionById.set(legId, leg);
+      // Persist before the next leg so crashes never re-run a completed convert.
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        conversionLegs: [...conversionById.values()],
+        updatedAt: now.toISOString(),
+      });
+
+      if (leg.status === "failed") {
+        retirement = await options.retirementStore.update({
+          ...retirement,
+          reconciliationState: "needs_attention",
+          lastError: leg.error,
+          recoveryClaimToken: null,
+          recoveryClaimedAt: null,
+          updatedAt: now.toISOString(),
+        });
+        return { agent: options.agent, retirement };
+      }
+    }
+
+    retirement = {
+      ...retirement,
+      conversionLegs: [...conversionById.values()],
+    };
+
+    try {
+      balance = await options.ua.getUniversalBalance();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Could not re-read holdings after conversion.";
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        reconciliationState: "needs_attention",
+        lastError: message,
+        recoveryClaimToken: null,
+        recoveryClaimedAt: null,
+        updatedAt: now.toISOString(),
+      });
+      return { agent: options.agent, retirement };
+    }
+
+    const afterConvert = classifyHoldings(balance);
+    let recoveredUsd = retirement.recoveredUsd;
+
+    if (afterConvert.canonicalUsdcUsd > 0) {
+      const transferId = transferLegId(returnAddress);
+      let transfer =
+        retirement.transferLeg &&
+        retirement.transferLeg.legId === transferId &&
+        isTerminalLegStatus(retirement.transferLeg.status)
+          ? retirement.transferLeg
+          : emptyTransferLeg(
+              returnAddress,
+              afterConvert.canonicalUsdcUsd.toFixed(6),
+            );
+
+      if (!isTerminalLegStatus(transfer.status)) {
+        transfer = {
+          ...transfer,
+          amount: afterConvert.canonicalUsdcUsd.toFixed(6),
+          destination: returnAddress,
+          status: "in_flight",
+          error: null,
+        };
+        retirement = await options.retirementStore.update({
+          ...retirement,
+          transferLeg: transfer,
+          updatedAt: now.toISOString(),
+        });
+
+        try {
+          validateRetirementWithdrawal({
+            amount: transfer.amount!,
+            destination: returnAddress,
+            ownerAddress: options.agent.address,
+            balance,
+          });
+          const quote = await options.ua.quoteWithdrawal({
+            request: {
+              asset: "usdc",
+              destChain: "Arbitrum",
+              amount: transfer.amount!,
+              destination: returnAddress,
+            },
+          });
+          assertTransferDestinationLocked(quote.destination, returnAddress);
+          const result = await options.ua.executeWithdrawal({
+            agreedQuote: {
+              ...quote,
+              destination: returnAddress,
+            },
+            signers: options.signers,
+          });
+          transfer = {
+            ...transfer,
+            status: "complete",
+            quote,
+            rootHash: rootHashFromQuote(quote),
+            transactionId: result.transactionId,
+            receiptId: result.transactionId,
+            amount: result.amount,
+            error: null,
+          };
+          recoveredUsd += result.estimatedDebitUsd;
+        } catch (error) {
+          transfer = {
+            ...transfer,
+            status: "failed",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Final USDC transfer failed during retirement recovery.",
+          };
+          retirement = await options.retirementStore.update({
+            ...retirement,
+            transferLeg: transfer,
+            reconciliationState: "needs_attention",
+            lastError: transfer.error,
+            recoveryClaimToken: null,
+            recoveryClaimedAt: null,
+            updatedAt: now.toISOString(),
+          });
+          return { agent: options.agent, retirement };
+        }
+
+        retirement = await options.retirementStore.update({
+          ...retirement,
+          transferLeg: transfer,
+          recoveredUsd,
+          updatedAt: now.toISOString(),
+        });
+      } else if (transfer.status === "complete") {
+        retirement = { ...retirement, transferLeg: transfer };
+      }
+    } else if (
+      !retirement.transferLeg ||
+      !isTerminalLegStatus(retirement.transferLeg.status)
+    ) {
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        transferLeg: {
+          ...emptyTransferLeg(returnAddress, "0"),
+          status: "skipped",
+        },
+        updatedAt: now.toISOString(),
+      });
+    }
+
+    try {
+      balance = await options.ua.getUniversalBalance();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Could not reconcile residual holdings after transfer.";
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        recoveredUsd,
+        reconciliationState: "needs_attention",
+        lastError: message,
+        recoveryClaimToken: null,
+        recoveryClaimedAt: null,
+        updatedAt: now.toISOString(),
+      });
+      return { agent: options.agent, retirement };
+    }
+
+    const residualHoldings = buildResidualHoldings(classifyHoldings(balance));
+    const residualTotal = residualHoldings.reduce(
+      (sum, item) => sum + item.usd,
+      0,
+    );
+    const { residuals: dustMarked, dustUsd } =
+      markResidualsDust(residualHoldings);
+
+    retirement = {
+      ...retirement,
+      recoveredUsd,
+      residualHoldings: dustMarked,
+      dustUsd:
+        dustUsd ||
+        dustMarked
+          .filter((item) => item.unrecoverableDust)
+          .reduce((sum, item) => sum + item.usd, 0),
+      updatedAt: now.toISOString(),
+    };
+
+    if (
+      !retirement.transferLeg ||
+      !isTerminalLegStatus(retirement.transferLeg.status)
+    ) {
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        reconciliationState: "needs_attention",
+        lastError:
+          "Cannot complete retirement until the canonical USDC transfer leg is terminal.",
+        recoveryClaimToken: null,
+        recoveryClaimedAt: null,
+      });
+      return { agent: options.agent, retirement };
+    }
+
+    if (residualTotal >= RETIREMENT_DUST_THRESHOLD_USD) {
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        reconciliationState: "needs_attention",
+        lastError: `Recoverable residual value of $${residualTotal.toFixed(2)} remains (threshold $${RETIREMENT_DUST_THRESHOLD_USD.toFixed(2)}). Retry recovery with the original local signer.`,
+        recoveryClaimToken: null,
+        recoveryClaimedAt: null,
+      });
+      return { agent: options.agent, retirement };
+    }
+
+    return completeRetirementRecord({
+      store: options.store,
+      retirementStore: options.retirementStore,
+      auditStore: options.auditStore,
+      agent: options.agent,
+      retirement,
+      now,
+      actor: "operator",
+    });
+  } catch (error) {
+    await options.retirementStore.releaseRecovery({
+      retirementId: retirement.retirementId,
+      claimToken,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Live Particle step 1: quote the next unfinished leg and return digests for
+ * CLI signing. Persists the quote so submit uses the same rootHash.
+ */
+export async function prepareRetirementRecovery(
+  options: {
+    store: AgentProvisioningStore;
+    retirementStore: AgentRetirementStore;
+    auditStore: AgentAuditStore;
+    agent: OwnedAgent;
+    retirementId: string;
+    ua: UAClient;
+    now?: Date;
+    randomId?: () => string;
+  },
+): Promise<RetirementPrepareResult> {
+  if (!hasParticleEnv()) {
+    throw new AgentProvisioningError(
+      "setup_not_ready",
+      "Particle UA is not configured for live retirement recovery.",
+    );
+  }
+  if (options.agent.status === "retired") {
+    const existing = await loadOwnedRetirement(options);
+    return { agent: options.agent, retirement: existing, signable: null };
+  }
+  if (options.agent.status !== "retiring") {
+    throw new AgentProvisioningError(
+      "lifecycle_blocked",
+      `Agent @${options.agent.handle} must be retiring before recovery runs.`,
     );
   }
 
-  await appendAuditBestEffort(
-    options.auditStore,
-    buildAuditEvent({
-      agentId: options.agent.agentId,
-      ownerUserId: options.agent.ownerUserId,
-      type: "recovery_attempted",
-      actor: "operator",
-      now,
-      details: {
-        retirementId: retirement.retirementId,
-        attemptCount: retirement.attemptCount + 1,
-      },
-    }),
-  );
-
-  retirement = {
-    ...retirement,
-    attemptCount: retirement.attemptCount + 1,
-    updatedAt: now.toISOString(),
-    lastError: null,
-  };
-
-  let balance: UniversalBalance;
-  try {
-    balance = await options.ua.getUniversalBalance();
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Could not read agent holdings for retirement recovery.";
-    retirement = {
-      ...retirement,
-      reconciliationState: "needs_attention",
-      lastError: message,
-      updatedAt: now.toISOString(),
-    };
-    retirement = await options.retirementStore.update(retirement);
-    return { agent: options.agent, retirement };
+  let retirement = await loadOwnedRetirement(options);
+  if (retirement.reconciliationState === "complete") {
+    return { agent: options.agent, retirement, signable: null };
   }
 
-  const classified = classifyHoldings(balance);
-  const conversionById = new Map(
-    retirement.conversionLegs.map((leg) => [leg.legId, leg]),
-  );
+  const now = options.now ?? new Date();
+  const claimToken = options.randomId?.() ?? randomUUID();
+  const claimed = await options.retirementStore.claimRecovery({
+    retirementId: retirement.retirementId,
+    claimToken,
+    now,
+  });
+  if (!claimed) {
+    throw new AgentProvisioningError(
+      "lifecycle_blocked",
+      "Retirement recovery is already in progress. Retry shortly.",
+    );
+  }
+  retirement = claimed;
 
-  for (const item of classified.conversions) {
-    const legId = conversionLegId(item.fromAsset, item.fromChain);
-    const existing = conversionById.get(legId);
-    if (existing?.status === "complete") continue;
+  try {
+    await appendAuditBestEffort(
+      options.auditStore,
+      buildAuditEvent({
+        agentId: options.agent.agentId,
+        ownerUserId: options.agent.ownerUserId,
+        type: "recovery_attempted",
+        actor: "operator",
+        now,
+        details: {
+          retirementId: retirement.retirementId,
+          attemptCount: retirement.attemptCount + 1,
+          phase: "prepare",
+        },
+      }),
+    );
 
-    const leg: RetirementConversionLeg = existing ?? {
-      legId,
-      kind: "conversion",
-      fromAsset: item.fromAsset,
-      fromChain: item.fromChain,
-      sizeUsd: item.sizeUsd,
-      status: "pending",
-      transactionId: null,
-      receiptId: null,
-      error: null,
-    };
-    leg.sizeUsd = item.sizeUsd;
+    retirement = await options.retirementStore.update({
+      ...retirement,
+      attemptCount: retirement.attemptCount + 1,
+      reconciliationState: "pending_sync",
+      lastError: null,
+      updatedAt: now.toISOString(),
+    });
 
-    try {
+    const balance = await options.ua.getUniversalBalance();
+    const classified = classifyHoldings(balance);
+    const conversionById = new Map(
+      retirement.conversionLegs.map((leg) => [leg.legId, leg]),
+    );
+
+    for (const item of classified.conversions) {
+      const legId = conversionLegId(item.fromAsset, item.fromChain);
+      const existing = conversionById.get(legId);
+      if (existing && isTerminalLegStatus(existing.status)) continue;
+
+      if (existing?.status === "quoted") {
+        const signable = signableFromLeg(existing);
+        if (signable) {
+          return { agent: options.agent, retirement, signable };
+        }
+      }
+
       const intent = {
         fromAsset: item.fromAsset,
         toAsset: "cash" as const,
@@ -703,161 +1465,430 @@ export async function executeRetirementRecovery(
         intent,
         sizeUsd: item.sizeUsd,
       });
-      const receiptSlug =
-        options.randomId?.() ??
-        `retire_conv_${legId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
-      const result = await options.ua.executeTrade({
-        intent,
+      const rootHash = rootHashFromQuote(quote);
+      if (!rootHash) {
+        throw new Error("Trade quote is missing a signable rootHash.");
+      }
+      const leg: RetirementConversionLeg = {
+        ...(existing ??
+          emptyConversionLeg(item.fromAsset, item.fromChain, item.sizeUsd)),
         sizeUsd: item.sizeUsd,
-        agreedQuote: quote,
-        signers: options.signers,
-        receiptSlug,
+        status: "quoted",
+        quote,
+        rootHash,
+        error: null,
+      };
+      conversionById.set(legId, leg);
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        conversionLegs: [...conversionById.values()],
+        updatedAt: now.toISOString(),
       });
-      leg.status = "complete";
-      leg.transactionId = result.transactionId;
-      leg.receiptId = result.receipt.slug;
-      leg.error = null;
-    } catch (error) {
-      leg.status = "failed";
-      leg.error =
-        error instanceof Error
-          ? error.message
-          : "Conversion failed during retirement recovery.";
+      const signable = signableFromLeg(leg);
+      if (!signable) {
+        throw new Error("Failed to build signable conversion leg.");
+      }
+      return { agent: options.agent, retirement, signable };
     }
-    conversionById.set(legId, leg);
-  }
 
-  retirement.conversionLegs = [...conversionById.values()];
-
-  const failedConversion = retirement.conversionLegs.find(
-    (leg) => leg.status === "failed",
-  );
-  if (failedConversion) {
     retirement = {
       ...retirement,
-      reconciliationState: "needs_attention",
-      lastError: failedConversion.error,
-      updatedAt: now.toISOString(),
+      conversionLegs: [...conversionById.values()],
     };
-    retirement = await options.retirementStore.update(retirement);
+
+    if (classified.canonicalUsdcUsd > 0) {
+      const existing = retirement.transferLeg;
+      if (existing && isTerminalLegStatus(existing.status)) {
+        await options.retirementStore.releaseRecovery({
+          retirementId: retirement.retirementId,
+          claimToken,
+        });
+        retirement = {
+          ...retirement,
+          recoveryClaimToken: null,
+          recoveryClaimedAt: null,
+        };
+        return { agent: options.agent, retirement, signable: null };
+      }
+      if (existing?.status === "quoted") {
+        const signable = signableFromLeg(existing);
+        if (signable) {
+          return { agent: options.agent, retirement, signable };
+        }
+      }
+
+      const amount = classified.canonicalUsdcUsd.toFixed(6);
+      validateRetirementWithdrawal({
+        amount,
+        destination: retirement.returnAddress,
+        ownerAddress: options.agent.address,
+        balance,
+      });
+      const quote = await options.ua.quoteWithdrawal({
+        request: {
+          asset: "usdc",
+          destChain: "Arbitrum",
+          amount,
+          destination: retirement.returnAddress,
+        },
+      });
+      assertTransferDestinationLocked(
+        quote.destination,
+        retirement.returnAddress,
+      );
+      const rootHash = rootHashFromQuote(quote);
+      if (!rootHash) {
+        throw new Error("Withdrawal quote is missing a signable rootHash.");
+      }
+      const transfer: RetirementTransferLeg = {
+        ...(existing && existing.legId === transferLegId(retirement.returnAddress)
+          ? existing
+          : emptyTransferLeg(retirement.returnAddress, amount)),
+        amount,
+        destination: retirement.returnAddress,
+        status: "quoted",
+        quote: { ...quote, destination: retirement.returnAddress },
+        rootHash,
+        error: null,
+      };
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        transferLeg: transfer,
+        updatedAt: now.toISOString(),
+      });
+      const signable = signableFromLeg(transfer);
+      if (!signable) {
+        throw new Error("Failed to build signable transfer leg.");
+      }
+      return { agent: options.agent, retirement, signable };
+    }
+
+    if (
+      !retirement.transferLeg ||
+      !isTerminalLegStatus(retirement.transferLeg.status)
+    ) {
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        transferLeg: {
+          ...emptyTransferLeg(retirement.returnAddress, "0"),
+          status: "skipped",
+        },
+        updatedAt: now.toISOString(),
+      });
+    }
+
+    await options.retirementStore.releaseRecovery({
+      retirementId: retirement.retirementId,
+      claimToken,
+    });
+    retirement = {
+      ...retirement,
+      recoveryClaimToken: null,
+      recoveryClaimedAt: null,
+    };
+    return { agent: options.agent, retirement, signable: null };
+  } catch (error) {
+    await options.retirementStore.releaseRecovery({
+      retirementId: retirement.retirementId,
+      claimToken,
+    });
+    throw error;
+  }
+}
+
+async function sendStoredRetirementRaw(options: {
+  ownerAddress: string;
+  raw: RawTransaction;
+  rootHashSignature: string;
+  authorizations?: Array<{ userOpHash: string; signature: string }>;
+}): Promise<string> {
+  if (!options.raw.rootHash) {
+    throw new Error("Stored retirement quote is missing rootHash.");
+  }
+  if (!options.rootHashSignature.startsWith("0x")) {
+    throw new Error("Invalid rootHash signature.");
+  }
+
+  const projectId = process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID;
+  const projectClientKey = process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY;
+  const projectAppUuid = process.env.NEXT_PUBLIC_PARTICLE_APP_ID;
+  if (!projectId || !projectClientKey || !projectAppUuid) {
+    throw new AgentProvisioningError(
+      "setup_not_ready",
+      "Particle UA is not configured for live retirement recovery.",
+    );
+  }
+
+  const { createParticleAccount } = await import("@/lib/ua/particle");
+  const account = await createParticleAccount({
+    ownerAddress: options.ownerAddress,
+    projectId,
+    projectClientKey,
+    projectAppUuid,
+  });
+  const result = await account.sendTransaction(
+    options.raw,
+    options.rootHashSignature,
+    options.authorizations,
+  );
+  return (
+    result.transactionId ??
+    options.raw.transactionId ??
+    `retire-tx-${Date.now()}`
+  );
+}
+
+/**
+ * Live Particle step 2: submit CLI-provided signatures for a prepared leg.
+ * Sends the stored rawTransaction — never silently requotes.
+ */
+export async function submitRetirementLeg(
+  options: {
+    store: AgentProvisioningStore;
+    retirementStore: AgentRetirementStore;
+    auditStore: AgentAuditStore;
+    agent: OwnedAgent;
+    retirementId: string;
+    legId: string;
+    rootHashSignature: string;
+    authorizations?: Array<{ userOpHash: string; signature: string }>;
+    now?: Date;
+  },
+): Promise<RetirementRecoveryResult> {
+  if (!hasParticleEnv()) {
+    throw new AgentProvisioningError(
+      "setup_not_ready",
+      "Particle UA is not configured for live retirement recovery.",
+    );
+  }
+  if (options.agent.status !== "retiring") {
+    throw new AgentProvisioningError(
+      "lifecycle_blocked",
+      `Agent @${options.agent.handle} must be retiring before recovery submit.`,
+    );
+  }
+
+  let retirement = await loadOwnedRetirement(options);
+  if (retirement.reconciliationState === "complete") {
     return { agent: options.agent, retirement };
   }
 
-  // Refresh balance after conversions before the final transfer.
+  const conversion = retirement.conversionLegs.find(
+    (leg) => leg.legId === options.legId,
+  );
+  const transfer =
+    retirement.transferLeg?.legId === options.legId
+      ? retirement.transferLeg
+      : null;
+  const target = conversion ?? transfer;
+  if (!target) {
+    throw new AgentProvisioningError(
+      "invalid_request",
+      `Unknown retirement leg: ${options.legId}`,
+    );
+  }
+  if (isTerminalLegStatus(target.status)) {
+    return { agent: options.agent, retirement };
+  }
+  if (target.status !== "quoted" || !target.quote || !target.rootHash) {
+    throw new AgentProvisioningError(
+      "invalid_request",
+      `Retirement leg ${options.legId} is not prepared for signing.`,
+    );
+  }
+
+  const raw = rawFromQuote(target.quote);
+  if (!raw?.rootHash || raw.rootHash !== target.rootHash) {
+    throw new AgentProvisioningError(
+      "invalid_request",
+      "Stored retirement quote rootHash is missing or mismatched.",
+    );
+  }
+
+  const now = options.now ?? new Date();
+  const ownerAddress = options.agent.address;
+  if (!ownerAddress) {
+    throw new AgentProvisioningError(
+      "invalid_request",
+      "Agent address is required for live retirement submit.",
+    );
+  }
+
+  if (conversion) {
+    const legs = retirement.conversionLegs.map((leg) =>
+      leg.legId === options.legId
+        ? { ...leg, status: "in_flight" as const, error: null }
+        : leg,
+    );
+    retirement = await options.retirementStore.update({
+      ...retirement,
+      conversionLegs: legs,
+      updatedAt: now.toISOString(),
+    });
+    try {
+      const transactionId = await sendStoredRetirementRaw({
+        ownerAddress,
+        raw,
+        rootHashSignature: options.rootHashSignature,
+        ...(options.authorizations
+          ? { authorizations: options.authorizations }
+          : {}),
+      });
+      const nextLegs = retirement.conversionLegs.map((leg) =>
+        leg.legId === options.legId
+          ? {
+              ...leg,
+              status: "complete" as const,
+              transactionId,
+              receiptId: transactionId,
+              error: null,
+            }
+          : leg,
+      );
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        conversionLegs: nextLegs,
+        recoveredUsd: retirement.recoveredUsd + conversion.sizeUsd,
+        recoveryClaimToken: null,
+        recoveryClaimedAt: null,
+        updatedAt: now.toISOString(),
+      });
+      return { agent: options.agent, retirement };
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Conversion submit failed during retirement recovery.";
+      const nextLegs = retirement.conversionLegs.map((leg) =>
+        leg.legId === options.legId
+          ? { ...leg, status: "failed" as const, error: message }
+          : leg,
+      );
+      retirement = await options.retirementStore.update({
+        ...retirement,
+        conversionLegs: nextLegs,
+        reconciliationState: "needs_attention",
+        lastError: message,
+        recoveryClaimToken: null,
+        recoveryClaimedAt: null,
+        updatedAt: now.toISOString(),
+      });
+      return { agent: options.agent, retirement };
+    }
+  }
+
+  const transferLeg = transfer!;
+  assertTransferDestinationLocked(
+    transferLeg.destination,
+    retirement.returnAddress,
+  );
+  retirement = await options.retirementStore.update({
+    ...retirement,
+    transferLeg: { ...transferLeg, status: "in_flight", error: null },
+    updatedAt: now.toISOString(),
+  });
   try {
-    balance = await options.ua.getUniversalBalance();
+    const transactionId = await sendStoredRetirementRaw({
+      ownerAddress,
+      raw,
+      rootHashSignature: options.rootHashSignature,
+      ...(options.authorizations
+        ? { authorizations: options.authorizations }
+        : {}),
+    });
+    const amountUsd = Number(transferLeg.amount ?? 0);
+    retirement = await options.retirementStore.update({
+      ...retirement,
+      transferLeg: {
+        ...transferLeg,
+        status: "complete",
+        transactionId,
+        receiptId: transactionId,
+        error: null,
+      },
+      recoveredUsd: retirement.recoveredUsd + (Number.isFinite(amountUsd) ? amountUsd : 0),
+      recoveryClaimToken: null,
+      recoveryClaimedAt: null,
+      updatedAt: now.toISOString(),
+    });
+    return { agent: options.agent, retirement };
   } catch (error) {
     const message =
       error instanceof Error
         ? error.message
-        : "Could not re-read holdings after conversion.";
-    retirement = {
+        : "Transfer submit failed during retirement recovery.";
+    retirement = await options.retirementStore.update({
       ...retirement,
+      transferLeg: {
+        ...transferLeg,
+        status: "failed",
+        error: message,
+      },
       reconciliationState: "needs_attention",
       lastError: message,
+      recoveryClaimToken: null,
+      recoveryClaimedAt: null,
       updatedAt: now.toISOString(),
-    };
-    retirement = await options.retirementStore.update(retirement);
+    });
+    return { agent: options.agent, retirement };
+  }
+}
+
+/**
+ * Live Particle step 3: after legs are terminal, dust-check and mark retired.
+ */
+export async function finalizeRetirementRecovery(
+  options: {
+    store: AgentProvisioningStore;
+    retirementStore: AgentRetirementStore;
+    auditStore: AgentAuditStore;
+    agent: OwnedAgent;
+    retirementId: string;
+    ua: UAClient;
+    now?: Date;
+  },
+): Promise<RetirementRecoveryResult> {
+  let retirement = await loadOwnedRetirement(options);
+  if (retirement.reconciliationState === "complete") {
+    return { agent: options.agent, retirement };
+  }
+  if (options.agent.status === "retired") {
+    return { agent: options.agent, retirement };
+  }
+  if (options.agent.status !== "retiring") {
+    throw new AgentProvisioningError(
+      "lifecycle_blocked",
+      `Agent @${options.agent.handle} must be retiring before finalize.`,
+    );
+  }
+
+  const now = options.now ?? new Date();
+  const unfinishedConversion = retirement.conversionLegs.find(
+    (leg) => !isTerminalLegStatus(leg.status),
+  );
+  if (unfinishedConversion) {
+    retirement = await options.retirementStore.update({
+      ...retirement,
+      reconciliationState: "needs_attention",
+      lastError: `Conversion leg ${unfinishedConversion.legId} is not complete.`,
+      updatedAt: now.toISOString(),
+    });
+    return { agent: options.agent, retirement };
+  }
+  if (
+    !retirement.transferLeg ||
+    !isTerminalLegStatus(retirement.transferLeg.status)
+  ) {
+    retirement = await options.retirementStore.update({
+      ...retirement,
+      reconciliationState: "needs_attention",
+      lastError: "Canonical USDC transfer is not complete.",
+      updatedAt: now.toISOString(),
+    });
     return { agent: options.agent, retirement };
   }
 
-  const afterConvert = classifyHoldings(balance);
-  let recoveredUsd = retirement.recoveredUsd;
-
-  if (afterConvert.canonicalUsdcUsd > 0) {
-    const transferId = transferLegId(returnAddress);
-    let transfer =
-      retirement.transferLeg &&
-      retirement.transferLeg.legId === transferId &&
-      retirement.transferLeg.status === "complete"
-        ? retirement.transferLeg
-        : ({
-            legId: transferId,
-            kind: "transfer",
-            asset: "usdc",
-            destChain: "Arbitrum",
-            amount: afterConvert.canonicalUsdcUsd.toFixed(6),
-            destination: returnAddress,
-            status: "pending",
-            transactionId: null,
-            receiptId: null,
-            error: null,
-          } satisfies RetirementTransferLeg);
-
-    if (transfer.status !== "complete") {
-      transfer = {
-        ...transfer,
-        amount: afterConvert.canonicalUsdcUsd.toFixed(6),
-        destination: returnAddress,
-      };
-      try {
-        const quote = await options.ua.quoteWithdrawal({
-          request: {
-            asset: "usdc",
-            destChain: "Arbitrum",
-            amount: transfer.amount!,
-            destination: returnAddress,
-          },
-        });
-        // Hard-lock destination to the stored return address (ADR 0035).
-        if (getAddress(quote.destination) !== getAddress(returnAddress)) {
-          throw new Error(
-            "Withdrawal quote destination must equal the locked return address.",
-          );
-        }
-        const result = await options.ua.executeWithdrawal({
-          agreedQuote: {
-            ...quote,
-            destination: returnAddress,
-          },
-          signers: options.signers,
-        });
-        transfer = {
-          ...transfer,
-          status: "complete",
-          transactionId: result.transactionId,
-          receiptId: result.transactionId,
-          amount: result.amount,
-          error: null,
-        };
-        recoveredUsd += result.estimatedDebitUsd;
-      } catch (error) {
-        transfer = {
-          ...transfer,
-          status: "failed",
-          error:
-            error instanceof Error
-              ? error.message
-              : "Final USDC transfer failed during retirement recovery.",
-        };
-        retirement = {
-          ...retirement,
-          transferLeg: transfer,
-          reconciliationState: "needs_attention",
-          lastError: transfer.error,
-          updatedAt: now.toISOString(),
-        };
-        retirement = await options.retirementStore.update(retirement);
-        return { agent: options.agent, retirement };
-      }
-    }
-    retirement.transferLeg = transfer;
-  } else if (!retirement.transferLeg) {
-    retirement.transferLeg = {
-      legId: transferLegId(returnAddress),
-      kind: "transfer",
-      asset: "usdc",
-      destChain: "Arbitrum",
-      amount: "0",
-      destination: returnAddress,
-      status: "skipped",
-      transactionId: null,
-      receiptId: null,
-      error: null,
-    };
-  }
-
-  // Final inventory for residual / dust accounting.
+  let balance: UniversalBalance;
   try {
     balance = await options.ua.getUniversalBalance();
   } catch (error) {
@@ -865,54 +1896,20 @@ export async function executeRetirementRecovery(
       error instanceof Error
         ? error.message
         : "Could not reconcile residual holdings after transfer.";
-    retirement = {
+    retirement = await options.retirementStore.update({
       ...retirement,
-      recoveredUsd,
       reconciliationState: "needs_attention",
       lastError: message,
       updatedAt: now.toISOString(),
-    };
-    retirement = await options.retirementStore.update(retirement);
+    });
     return { agent: options.agent, retirement };
   }
 
-  const finalClassified = classifyHoldings(balance);
-  const residualHoldings: RetirementResidualHolding[] = [
-    ...finalClassified.residuals,
-  ];
-  for (const item of finalClassified.conversions) {
-    residualHoldings.push({
-      asset: item.fromAsset.toUpperCase(),
-      chain: item.fromChain,
-      usd: item.sizeUsd,
-      reason: "Routable holding remained after recovery attempt.",
-      unrecoverableDust: false,
-    });
-  }
-  if (finalClassified.canonicalUsdcUsd >= RETIREMENT_DUST_THRESHOLD_USD) {
-    residualHoldings.push({
-      asset: "USDC",
-      chain: "Arbitrum",
-      usd: finalClassified.canonicalUsdcUsd,
-      reason: "Canonical USDC remained after the return-address transfer.",
-      unrecoverableDust: false,
-    });
-  } else if (finalClassified.canonicalUsdcUsd > 0) {
-    residualHoldings.push({
-      asset: "USDC",
-      chain: "Arbitrum",
-      usd: finalClassified.canonicalUsdcUsd,
-      reason: "Recorded as unrecoverable dust below the $1 retirement threshold.",
-      unrecoverableDust: true,
-    });
-  }
-
+  const residualHoldings = buildResidualHoldings(classifyHoldings(balance));
   const residualTotal = residualHoldings.reduce((sum, item) => sum + item.usd, 0);
   const { residuals: dustMarked, dustUsd } = markResidualsDust(residualHoldings);
-
   retirement = {
     ...retirement,
-    recoveredUsd,
     residualHoldings: dustMarked,
     dustUsd:
       dustUsd ||
@@ -923,47 +1920,24 @@ export async function executeRetirementRecovery(
   };
 
   if (residualTotal >= RETIREMENT_DUST_THRESHOLD_USD) {
-    retirement = {
+    retirement = await options.retirementStore.update({
       ...retirement,
       reconciliationState: "needs_attention",
-      lastError: `Recoverable residual value of $${residualTotal.toFixed(2)} remains (threshold $${RETIREMENT_DUST_THRESHOLD_USD.toFixed(2)}). Retry recovery with the original local signer.`,
-    };
-    retirement = await options.retirementStore.update(retirement);
+      lastError: `Recoverable residual value of $${residualTotal.toFixed(2)} remains. Retry with the original local signer.`,
+    });
     return { agent: options.agent, retirement };
   }
 
-  const completedAgent = await options.store.completeRetirement({
-    agentId: options.agent.agentId,
-    ownerUserId: options.agent.ownerUserId,
-    retiredAt: now.toISOString(),
+  return completeRetirementRecord({
+    store: options.store,
+    retirementStore: options.retirementStore,
+    auditStore: options.auditStore,
+    agent: options.agent,
+    retirement,
+    now,
+    actor: "operator",
+    via: "finalize",
   });
-
-  retirement = {
-    ...retirement,
-    reconciliationState: "complete",
-    completedAt: now.toISOString(),
-    lastError: null,
-  };
-  retirement = await options.retirementStore.update(retirement);
-
-  await appendAuditBestEffort(
-    options.auditStore,
-    buildAuditEvent({
-      agentId: completedAgent.agentId,
-      ownerUserId: completedAgent.ownerUserId,
-      type: "retirement_completed",
-      actor: "operator",
-      now,
-      details: {
-        retirementId: retirement.retirementId,
-        recoveredUsd: retirement.recoveredUsd,
-        dustUsd: retirement.dustUsd,
-        residualCount: retirement.residualHoldings.length,
-      },
-    }),
-  );
-
-  return { agent: completedAgent, retirement };
 }
 
 /**
@@ -977,15 +1951,16 @@ export async function retryRetirementRecovery(
     auditStore: AgentAuditStore;
     ownerUserId: string;
     agentId: string;
+    retirementId?: string;
     ua: UAClient;
     signers: TradeSigners;
+    allowMock?: boolean;
     now?: Date;
     randomId?: () => string;
   },
 ): Promise<RetirementRecoveryResult> {
   const agent = await options.store.findNonRetiredByOwner(options.ownerUserId);
   if (!agent || agent.agentId !== options.agentId) {
-    // Also allow lookup of already-retired agents for idempotent complete replay.
     throw new AgentProvisioningError(
       "agent_not_found",
       "No agent matches that identity for this account.",
@@ -995,7 +1970,10 @@ export async function retryRetirementRecovery(
 
   if (agent.status === "retired") {
     const existing = await options.retirementStore.getByAgentId(agent.agentId);
-    if (existing) return { agent, retirement: existing };
+    if (existing) {
+      assertRetirementOwnership(existing, agent);
+      return { agent, retirement: existing };
+    }
   }
   if (agent.status !== "retiring") {
     throw new AgentProvisioningError(
@@ -1004,13 +1982,17 @@ export async function retryRetirementRecovery(
     );
   }
 
-  const retirement = await options.retirementStore.getByAgentId(agent.agentId);
+  const retirement =
+    (typeof options.retirementId === "string" && options.retirementId
+      ? await options.retirementStore.get(options.retirementId)
+      : null) ?? (await options.retirementStore.getByAgentId(agent.agentId));
   if (!retirement) {
     throw new AgentProvisioningError(
       "agent_not_found",
       "No retirement record exists for this agent.",
     );
   }
+  assertRetirementOwnership(retirement, agent);
 
   if (retirement.reconciliationState === "complete") {
     return { agent, retirement };
@@ -1034,6 +2016,9 @@ export async function retryRetirementRecovery(
     retirementId: retirement.retirementId,
     ua: options.ua,
     signers: options.signers,
+    ...(options.allowMock !== undefined
+      ? { allowMock: options.allowMock }
+      : {}),
     ...(options.now ? { now: options.now } : {}),
     ...(options.randomId ? { randomId: options.randomId } : {}),
   });
@@ -1086,6 +2071,28 @@ export async function reconcileRetirementResiduals(options: {
     return retirement;
   }
 
+  const now = options.now ?? new Date();
+
+  // Never complete from an empty/stale balance alone — require receipted legs.
+  const unfinishedConversion = retirement.conversionLegs.find(
+    (leg) => !isTerminalLegStatus(leg.status),
+  );
+  if (
+    unfinishedConversion ||
+    !retirement.transferLeg ||
+    !isTerminalLegStatus(retirement.transferLeg.status)
+  ) {
+    const next: AgentRetirementRecord = {
+      ...retirement,
+      reconciliationState: "needs_attention",
+      lastError:
+        "Cannot complete retirement until conversion and transfer legs are terminal. Retry with the original local signer.",
+      attemptCount: retirement.attemptCount + 1,
+      updatedAt: now.toISOString(),
+    };
+    return options.retirementStore.update(next);
+  }
+
   // Without signers the workflow can only complete empty/dust inventories or
   // escalate. Value-moving retries stay operator/signer-authenticated.
   let balance: UniversalBalance;
@@ -1106,36 +2113,25 @@ export async function reconcileRetirementResiduals(options: {
     return updated ?? retirement;
   }
 
-  const classified = classifyHoldings(balance);
-  const residualHoldings: RetirementResidualHolding[] = [
-    ...classified.residuals,
-  ];
-  for (const item of classified.conversions) {
-    residualHoldings.push({
-      asset: item.fromAsset.toUpperCase(),
-      chain: item.fromChain,
-      usd: item.sizeUsd,
-      reason: "Routable holding still present; operator must retry recovery.",
-      unrecoverableDust: false,
-    });
-  }
-  if (classified.canonicalUsdcUsd > 0) {
-    residualHoldings.push({
-      asset: "USDC",
-      chain: "Arbitrum",
-      usd: classified.canonicalUsdcUsd,
-      reason:
-        classified.canonicalUsdcUsd < RETIREMENT_DUST_THRESHOLD_USD
-          ? "Recorded as unrecoverable dust below the $1 retirement threshold."
-          : "Canonical USDC still present; operator must retry the return transfer.",
-      unrecoverableDust:
-        classified.canonicalUsdcUsd < RETIREMENT_DUST_THRESHOLD_USD,
-    });
-  }
+  const residualHoldings = buildResidualHoldings(classifyHoldings(balance)).map(
+    (item) =>
+      item.reason.includes("remained after recovery")
+        ? {
+            ...item,
+            reason:
+              "Routable holding still present; operator must retry recovery.",
+          }
+        : item.reason.includes("after the return-address")
+          ? {
+              ...item,
+              reason:
+                "Canonical USDC still present; operator must retry the return transfer.",
+            }
+          : item,
+  );
 
   const residualTotal = residualHoldings.reduce((sum, item) => sum + item.usd, 0);
   const { residuals: dustMarked, dustUsd } = markResidualsDust(residualHoldings);
-  const now = options.now ?? new Date();
 
   if (residualTotal >= RETIREMENT_DUST_THRESHOLD_USD) {
     const next: AgentRetirementRecord = {
@@ -1150,44 +2146,25 @@ export async function reconcileRetirementResiduals(options: {
     return options.retirementStore.update(next);
   }
 
-  const completedAgent = await options.store.completeRetirement({
-    agentId: owned.agentId,
-    ownerUserId: owned.ownerUserId,
-    retiredAt: now.toISOString(),
+  const completed = await completeRetirementRecord({
+    store: options.store,
+    retirementStore: options.retirementStore,
+    auditStore: options.auditStore,
+    agent: owned,
+    retirement: {
+      ...retirement,
+      residualHoldings: dustMarked,
+      dustUsd:
+        dustUsd ||
+        dustMarked
+          .filter((item) => item.unrecoverableDust)
+          .reduce((sum, item) => sum + item.usd, 0),
+      attemptCount: retirement.attemptCount + 1,
+      updatedAt: now.toISOString(),
+    },
+    now,
+    actor: "system",
+    via: "workflow_reconcile",
   });
-
-  const next: AgentRetirementRecord = {
-    ...retirement,
-    residualHoldings: dustMarked,
-    dustUsd:
-      dustUsd ||
-      dustMarked
-        .filter((item) => item.unrecoverableDust)
-        .reduce((sum, item) => sum + item.usd, 0),
-    reconciliationState: "complete",
-    completedAt: now.toISOString(),
-    lastError: null,
-    attemptCount: retirement.attemptCount + 1,
-    updatedAt: now.toISOString(),
-  };
-  const saved = await options.retirementStore.update(next);
-
-  await appendAuditBestEffort(
-    options.auditStore,
-    buildAuditEvent({
-      agentId: completedAgent.agentId,
-      ownerUserId: completedAgent.ownerUserId,
-      type: "retirement_completed",
-      actor: "system",
-      now,
-      details: {
-        retirementId: saved.retirementId,
-        recoveredUsd: saved.recoveredUsd,
-        dustUsd: saved.dustUsd,
-        via: "workflow_reconcile",
-      },
-    }),
-  );
-
-  return saved;
+  return completed.retirement;
 }

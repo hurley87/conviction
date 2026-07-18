@@ -12,14 +12,18 @@ import {
   type OwnedAgent,
 } from "@/lib/agent-provisioning";
 import {
+  assertRetirementOwnership,
+  canUseMockRetirementRecovery,
   classifyHoldings,
   executeRetirementRecovery,
   MemoryAgentRetirementStore,
+  reconcileRetirementResiduals,
   RETIREMENT_DUST_THRESHOLD_USD,
   retryRetirementRecovery,
   startRetirement,
 } from "@/lib/agent-retirement";
 import { MockUAClient, mockTradeSigners } from "@/lib/ua/mock";
+import { AgentProvisioningError } from "@/lib/agent-provisioning";
 
 const OWNER = { userId: "did:privy:retire-owner", operatorHandle: "operator" };
 const FIXED_NOW = new Date("2026-07-18T15:00:00.000Z");
@@ -210,6 +214,7 @@ describe("agent retirement", () => {
       retirementId: started.retirement.retirementId,
       ua,
       signers: mockTradeSigners,
+      allowMock: true,
       now: FIXED_NOW,
     });
 
@@ -286,6 +291,7 @@ describe("agent retirement", () => {
       retirementId: started.retirement.retirementId,
       ua,
       signers: mockTradeSigners,
+      allowMock: true,
       now: FIXED_NOW,
     });
     expect(first.retirement.reconciliationState).toBe("complete");
@@ -299,6 +305,7 @@ describe("agent retirement", () => {
       retirementId: first.retirement.retirementId,
       ua,
       signers: mockTradeSigners,
+      allowMock: true,
       now: FIXED_NOW,
     });
     expect(second.retirement.reconciliationState).toBe("complete");
@@ -336,6 +343,7 @@ describe("agent retirement", () => {
       retirementId: started.retirement.retirementId,
       ua,
       signers: mockTradeSigners,
+      allowMock: true,
       now: FIXED_NOW,
     });
 
@@ -382,6 +390,7 @@ describe("agent retirement", () => {
       retirementId: started.retirement.retirementId,
       ua,
       signers: mockTradeSigners,
+      allowMock: true,
       now: FIXED_NOW,
     });
 
@@ -398,6 +407,7 @@ describe("agent retirement", () => {
       agentId: agent.agentId,
       ua,
       signers: mockTradeSigners,
+      allowMock: true,
       now: FIXED_NOW,
     });
     expect(retried.agent.status).toBe("retiring");
@@ -443,6 +453,7 @@ describe("agent retirement", () => {
       retirementId: started.retirement.retirementId,
       ua,
       signers: mockTradeSigners,
+      allowMock: true,
       now: FIXED_NOW,
     });
     expect(recovered.agent.status).toBe("retired");
@@ -489,6 +500,7 @@ describe("agent retirement", () => {
       retirementId: started.retirement.retirementId,
       ua,
       signers: mockTradeSigners,
+      allowMock: true,
       now: FIXED_NOW,
     });
 
@@ -497,6 +509,273 @@ describe("agent retirement", () => {
       expect(record.request.destination).toBe(RETURN_ADDRESS);
       expect(record.request.asset).toBe("usdc");
       expect(record.request.destChain).toBe("Arbitrum");
+    }
+  });
+
+  it("rejects concurrent recovery claims", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const retirementStore = new MemoryAgentRetirementStore();
+    const auditStore = new MemoryAgentAuditStore();
+    const permitStore = new MemoryAgentPermitStore();
+    const spendLedger = new MemorySpendLedger();
+    const agent = await seedActiveAgent(store);
+    const started = await startRetirement({
+      store,
+      retirementStore,
+      auditStore,
+      permitStore,
+      spendLedger,
+      ownerUserId: OWNER.userId,
+      agentId: agent.agentId,
+      now: FIXED_NOW,
+    });
+
+    const claimed = await retirementStore.claimRecovery({
+      retirementId: started.retirement.retirementId,
+      claimToken: "claim-a",
+      now: FIXED_NOW,
+    });
+    expect(claimed?.recoveryClaimToken).toBe("claim-a");
+
+    const blocked = await retirementStore.claimRecovery({
+      retirementId: started.retirement.retirementId,
+      claimToken: "claim-b",
+      now: FIXED_NOW,
+    });
+    expect(blocked).toBeNull();
+
+    await expect(
+      executeRetirementRecovery({
+        store,
+        retirementStore,
+        auditStore,
+        agent: started.agent,
+        retirementId: started.retirement.retirementId,
+        ua: new MockUAClient({
+          mutateSourcesOnExecute: true,
+          sources: [{ chain: "Arbitrum", asset: "USDC", usd: 10 }],
+        }),
+        signers: mockTradeSigners,
+        allowMock: true,
+      now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "lifecycle_blocked" });
+  });
+
+  it("rejects recovery for a retirementId that does not belong to the agent", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const retirementStore = new MemoryAgentRetirementStore();
+    const auditStore = new MemoryAgentAuditStore();
+    const permitStore = new MemoryAgentPermitStore();
+    const spendLedger = new MemorySpendLedger();
+    const agent = await seedActiveAgent(store);
+    const started = await startRetirement({
+      store,
+      retirementStore,
+      auditStore,
+      permitStore,
+      spendLedger,
+      ownerUserId: OWNER.userId,
+      agentId: agent.agentId,
+      now: FIXED_NOW,
+    });
+
+    const foreign = {
+      ...started.agent,
+      agentId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      ownerUserId: "did:privy:other",
+    };
+
+    expect(() =>
+      assertRetirementOwnership(started.retirement, foreign),
+    ).toThrow(AgentProvisioningError);
+
+    await expect(
+      executeRetirementRecovery({
+        store,
+        retirementStore,
+        auditStore,
+        agent: foreign,
+        retirementId: started.retirement.retirementId,
+        ua: new MockUAClient({ sources: [] }),
+        signers: mockTradeSigners,
+        allowMock: true,
+      now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "agent_not_found" });
+  });
+
+  it("persists completed conversion legs before a later failure so retry skips them", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const retirementStore = new MemoryAgentRetirementStore();
+    const auditStore = new MemoryAgentAuditStore();
+    const permitStore = new MemoryAgentPermitStore();
+    const spendLedger = new MemorySpendLedger();
+    const agent = await seedActiveAgent(store);
+    const started = await startRetirement({
+      store,
+      retirementStore,
+      auditStore,
+      permitStore,
+      spendLedger,
+      ownerUserId: OWNER.userId,
+      agentId: agent.agentId,
+      now: FIXED_NOW,
+    });
+
+    let withdrawals = 0;
+    const ua = new MockUAClient({
+      mutateSourcesOnExecute: true,
+      sources: [
+        { chain: "Base", asset: "ETH", usd: 20 },
+        { chain: "Arbitrum", asset: "USDC", usd: 5 },
+      ],
+    });
+    const originalWithdraw = ua.executeWithdrawal.bind(ua);
+    ua.executeWithdrawal = async (params) => {
+      withdrawals += 1;
+      if (withdrawals === 1) {
+        throw new Error("simulated transfer failure");
+      }
+      return originalWithdraw(params);
+    };
+
+    const first = await executeRetirementRecovery({
+      store,
+      retirementStore,
+      auditStore,
+      agent: started.agent,
+      retirementId: started.retirement.retirementId,
+      ua,
+      signers: mockTradeSigners,
+      allowMock: true,
+      now: FIXED_NOW,
+    });
+    expect(first.retirement.reconciliationState).toBe("needs_attention");
+    expect(
+      first.retirement.conversionLegs.some((leg) => leg.status === "complete"),
+    ).toBe(true);
+
+    const persisted = await retirementStore.get(started.retirement.retirementId);
+    expect(
+      persisted?.conversionLegs.every(
+        (leg) => leg.status === "complete" || leg.status === "skipped",
+      ),
+    ).toBe(true);
+
+    const second = await executeRetirementRecovery({
+      store,
+      retirementStore,
+      auditStore,
+      agent: started.agent,
+      retirementId: started.retirement.retirementId,
+      ua,
+      signers: mockTradeSigners,
+      allowMock: true,
+      now: FIXED_NOW,
+    });
+    expect(second.retirement.reconciliationState).toBe("complete");
+    expect(second.agent.status).toBe("retired");
+  });
+
+  it("does not complete reconcile from an empty balance without a terminal transfer leg", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const retirementStore = new MemoryAgentRetirementStore();
+    const auditStore = new MemoryAgentAuditStore();
+    const permitStore = new MemoryAgentPermitStore();
+    const spendLedger = new MemorySpendLedger();
+    const agent = await seedActiveAgent(store);
+    const started = await startRetirement({
+      store,
+      retirementStore,
+      auditStore,
+      permitStore,
+      spendLedger,
+      ownerUserId: OWNER.userId,
+      agentId: agent.agentId,
+      now: FIXED_NOW,
+    });
+
+    const reconciled = await reconcileRetirementResiduals({
+      store,
+      retirementStore,
+      auditStore,
+      retirementId: started.retirement.retirementId,
+      ua: new MockUAClient({ sources: [] }),
+      now: FIXED_NOW,
+    });
+    expect(reconciled.reconciliationState).toBe("needs_attention");
+    expect(reconciled.lastError).toMatch(/terminal/i);
+    expect(
+      (await store.findNonRetiredByOwner(OWNER.userId))?.status,
+    ).toBe("retiring");
+  });
+});
+
+describe("canUseMockRetirementRecovery", () => {
+  it("allows mock recovery in test and fails closed without explicit allow in production-like flags", () => {
+    expect(canUseMockRetirementRecovery()).toBe(true);
+    expect(canUseMockRetirementRecovery({ allowMock: true })).toBe(true);
+  });
+});
+
+describe("particle fail-closed recovery", () => {
+  it("refuses in-process recovery when Particle is configured and allowMock is unset", async () => {
+    const previous = {
+      projectId: process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID,
+      clientKey: process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY,
+      appId: process.env.NEXT_PUBLIC_PARTICLE_APP_ID,
+    };
+    process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID = "test-project";
+    process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY = "test-client";
+    process.env.NEXT_PUBLIC_PARTICLE_APP_ID = "test-app";
+
+    try {
+      const store = new MemoryAgentProvisioningStore();
+      const retirementStore = new MemoryAgentRetirementStore();
+      const auditStore = new MemoryAgentAuditStore();
+      const permitStore = new MemoryAgentPermitStore();
+      const spendLedger = new MemorySpendLedger();
+      const agent = await seedActiveAgent(store);
+      const started = await startRetirement({
+        store,
+        retirementStore,
+        auditStore,
+        permitStore,
+        spendLedger,
+        ownerUserId: OWNER.userId,
+        agentId: agent.agentId,
+        now: FIXED_NOW,
+      });
+
+      await expect(
+        executeRetirementRecovery({
+          store,
+          retirementStore,
+          auditStore,
+          agent: started.agent,
+          retirementId: started.retirement.retirementId,
+          ua: new MockUAClient({ sources: [] }),
+          signers: mockTradeSigners,
+          now: FIXED_NOW,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_request" });
+    } finally {
+      if (previous.projectId === undefined) {
+        delete process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID;
+      } else {
+        process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID = previous.projectId;
+      }
+      if (previous.clientKey === undefined) {
+        delete process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY;
+      } else {
+        process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY = previous.clientKey;
+      }
+      if (previous.appId === undefined) {
+        delete process.env.NEXT_PUBLIC_PARTICLE_APP_ID;
+      } else {
+        process.env.NEXT_PUBLIC_PARTICLE_APP_ID = previous.appId;
+      }
     }
   });
 });

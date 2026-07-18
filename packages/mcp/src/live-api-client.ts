@@ -209,10 +209,21 @@ export type RetirementRecordSummary = {
   } | null;
 };
 
+export type RetirementSignableLeg = {
+  legId: string;
+  kind: "conversion" | "transfer";
+  rootHash: string;
+  userOpsNeeding7702: Array<{
+    userOpHash: string;
+    auth: { contractAddress: string; chainId: number; nonce: number };
+  }>;
+};
+
 export type RetirementMutationResult = LifecycleMutationResult & {
   retirement: RetirementRecordSummary;
   recoveryRequired: boolean;
   signerNote?: string | null;
+  signable?: RetirementSignableLeg | null;
 };
 
 /** Operator CLI retire — not an MCP tool. Requires the original local signer. */
@@ -236,12 +247,16 @@ export async function retireAgentLifecycle(options: {
   });
 }
 
-/** Operator CLI recovery retry after needs_attention — not an MCP tool. */
+/** Operator CLI recovery — mock recover or live prepare/submit/finalize. */
 export async function recoverAgentRetirement(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   retirementId?: string;
   retry?: boolean;
+  action?: "prepare" | "submit" | "finalize" | "recover";
+  legId?: string;
+  rootHashSignature?: string;
+  authorizations?: Array<{ userOpHash: string; signature: string }>;
   fetchImpl?: typeof fetch;
 }): Promise<RetirementMutationResult> {
   return signedFetch<RetirementMutationResult>({
@@ -252,6 +267,14 @@ export async function recoverAgentRetirement(options: {
     body: {
       ...(options.retirementId ? { retirementId: options.retirementId } : {}),
       ...(options.retry ? { retry: true } : {}),
+      ...(options.action ? { action: options.action } : {}),
+      ...(options.legId ? { legId: options.legId } : {}),
+      ...(options.rootHashSignature
+        ? { rootHashSignature: options.rootHashSignature }
+        : {}),
+      ...(options.authorizations
+        ? { authorizations: options.authorizations }
+        : {}),
     },
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });

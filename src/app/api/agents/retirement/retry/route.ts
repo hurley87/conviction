@@ -53,7 +53,11 @@ export async function POST(request: Request) {
       (typeof body?.retirementId === "string"
         ? await retirementStore.get(body.retirementId)
         : null) ?? (await retirementStore.getByAgentId(agent.agentId));
-    if (!retirement) {
+    if (
+      !retirement ||
+      retirement.agentId !== agent.agentId ||
+      retirement.ownerUserId !== agent.ownerUserId
+    ) {
       throw new AgentProvisioningError(
         "agent_not_found",
         "No retirement record exists for this agent.",

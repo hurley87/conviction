@@ -13,6 +13,7 @@ import {
   verifyAgentRequest,
 } from "@/lib/agent-request-auth";
 import {
+  canUseMockRetirementRecovery,
   executeRetirementRecovery,
   startRetirementBySigner,
   startRetirementReconciliationWorkflow,
@@ -25,10 +26,9 @@ import { mockTradeSigners } from "@/lib/ua/mock";
 /**
  * POST /api/agents/lifecycle/retire
  * Agent-signer authenticated retirement used by `conviction-mcp retire`.
- * Starts retiring (blocks writes) then runs canonical-cash recovery when the
- * mock/local path can supply TradeSigners. Live Particle recovery still proves
- * possession of the original local signer via this signed request; value-moving
- * execution uses the server UA + mock signers only when Particle is absent.
+ * Starts retiring (blocks writes) then runs canonical-cash recovery only on the
+ * explicit mock/local path. Live Particle recovery continues via prepare →
+ * sign → submit on /lifecycle/retirement/recover.
  */
 export async function POST(request: Request) {
   const rawBody = await request.text();
@@ -58,16 +58,13 @@ export async function POST(request: Request) {
         : {}),
     });
 
-    // Recovery requires the original local signer. This endpoint is already
-    // authenticated by that signer. When Particle is configured, live UA
-    // submission still needs root-hash signatures from the CLI process — those
-    // are handled by /lifecycle/retirement/recover. In mock/zero-credential
-    // mode, complete recovery here with mockTradeSigners.
     let agent = started.agent;
     let retirement = started.retirement;
 
+    // Fail closed in production without Particle — never mock-complete retirement.
     if (
       !hasParticleEnv() &&
+      canUseMockRetirementRecovery() &&
       agent.status === "retiring" &&
       retirement.reconciliationState !== "complete"
     ) {
@@ -102,8 +99,9 @@ export async function POST(request: Request) {
           agent.status === "retiring" &&
           retirement.reconciliationState !== "complete",
         privatePausedReason: privatePausedReason(agent),
-        signerNote:
-          "Recovery uses the original local signer only. Conviction cannot reconstruct or replace it.",
+        signerNote: hasParticleEnv()
+          ? "Live Particle recovery requires CLI-held root-hash signatures via prepare → sign → submit. Conviction cannot reconstruct or replace the local signer."
+          : "Recovery uses the original local signer only. Conviction cannot reconstruct or replace it.",
       },
       { status: 200, headers: { "cache-control": "no-store" } },
     );
@@ -120,7 +118,9 @@ export async function POST(request: Request) {
           ? 404
           : error.code === "lifecycle_blocked"
             ? 409
-            : 422;
+            : error.code === "setup_not_ready"
+              ? 503
+              : 422;
       return Response.json(
         { error: { code: error.code, message: error.message } },
         { status },
