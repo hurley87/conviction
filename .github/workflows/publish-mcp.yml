@@ -1,4 +1,4 @@
-name: Publish @conviction/mcp
+name: Publish @getconviction/mcp
 
 # Tag-gated npm publish. Never moves funds (ADR 0014).
 # Create a tag after merge: git tag mcp-v1.0.0 && git push origin mcp-v1.0.0
@@ -28,14 +28,14 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm ci
-      - run: npm run build --workspace @conviction/mcp
-      - run: npm test --workspace @conviction/mcp
+      - run: npm run build --workspace @getconviction/mcp
+      - run: npm test --workspace @getconviction/mcp
       - name: Publish package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            npm publish --workspace @conviction/mcp --dry-run --access public
+            npm publish --workspace @getconviction/mcp --dry-run --access public
           else
-            npm publish --workspace @conviction/mcp --access public
+            npm publish --workspace @getconviction/mcp --access public
           fi

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `@conviction/mcp` are documented in this file.
+All notable changes to `@getconviction/mcp` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -11,12 +11,18 @@ safety boundaries.
 
 ## [1.0.0] - 2026-07-19
 
+### Changed
+
+- Published npm scope is `@getconviction/mcp` (npm org `getconviction`); the
+  `@conviction` registry scope was unavailable. Generated host pins use
+  `@getconviction/mcp@1`. The `conviction-mcp` executable name is unchanged.
+
 ### Added
 
 - Public `conviction-mcp` executable with `init`, `serve`, `doctor`, `status`,
   `disable`, `enable`, and `retire` commands.
 - Major-pinned host configuration for Claude Code, Codex CLI, Hermes Agent,
-  OpenClaw, and MCP Inspector (`@conviction/mcp@1`).
+  OpenClaw, and MCP Inspector (`@getconviction/mcp@1`).
 - Live and mock MCP tool contract (ADR 0047):
   - `conviction_account_status`
   - `conviction_list_convictions`

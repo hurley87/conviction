@@ -46,7 +46,7 @@ export function SetupSkillViewer({
         <p className="mt-2 text-sm leading-6 text-ink-2">
           Paste this into an Agent Skills-compatible host, or keep the file from{" "}
           <code className="rounded bg-ink/5 px-1.5 py-0.5 text-xs">
-            @conviction/mcp/skills/conviction-mcp-setup
+            @getconviction/mcp/skills/conviction-mcp-setup
           </code>
           .
         </p>

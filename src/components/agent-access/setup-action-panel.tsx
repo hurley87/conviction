@@ -1,11 +1,11 @@
 "use client";
 
-import { generateHostConfigs } from "@conviction/mcp/host-config";
+import { generateHostConfigs } from "@getconviction/mcp/host-config";
 import {
   SETUP_CONTRACT,
   defaultProfileName,
   type SetupPhase,
-} from "@conviction/mcp/setup-contract";
+} from "@getconviction/mcp/setup-contract";
 import { CopyBlock } from "@/components/agent-access/copy-block";
 
 type AgentStatus =

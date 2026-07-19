@@ -1,6 +1,6 @@
 # CLI telemetry is off and support reports are operator-shared
 
-The `@conviction/mcp` package sends no behavioral telemetry or automatic diagnostic uploads in v1. It does not report commands run, tools called, host identity, timing, errors, machine characteristics, or feature usage through a separate analytics channel.
+The `@getconviction/mcp` package sends no behavioral telemetry or automatic diagnostic uploads in v1. It does not report commands run, tools called, host identity, timing, errors, machine characteristics, or feature usage through a separate analytics channel.
 
 `conviction-mcp doctor --report <path>` generates a redacted diagnostic bundle locally. The operator can inspect the bundle and must explicitly choose whether and how to share it with Conviction support. Generating a report never uploads it, opens a network submission, or enables future telemetry.
 

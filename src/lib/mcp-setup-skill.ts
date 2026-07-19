@@ -7,7 +7,7 @@ const SKILL_RELATIVE = path.join(
   "SKILL.md",
 );
 
-/** Load the public Agent Skills setup guide shipped with @conviction/mcp. */
+/** Load the public Agent Skills setup guide shipped with @getconviction/mcp. */
 export async function loadMcpSetupSkillMarkdown(): Promise<string> {
   const candidates = [
     path.join(process.cwd(), "packages", "mcp", SKILL_RELATIVE),

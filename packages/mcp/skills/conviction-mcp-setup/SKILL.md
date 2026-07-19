@@ -1,11 +1,11 @@
 ---
 name: conviction-mcp-setup
-description: Guide operators and agents through Conviction MCP v1 setup using the versioned setup contract. Use when installing @conviction/mcp, configuring Claude Code, Codex, Hermes, or OpenClaw, running doctor/status diagnostics, or deciding when human operator action is required. Does not provision, fund, change policy, or access secrets.
+description: Guide operators and agents through Conviction MCP v1 setup using the versioned setup contract. Use when installing @getconviction/mcp, configuring Claude Code, Codex, Hermes, or OpenClaw, running doctor/status diagnostics, or deciding when human operator action is required. Does not provision, fund, change policy, or access secrets.
 license: UNLICENSED
 compatibility: Requires Node.js 20+, macOS or Linux, or Windows through WSL. Native Windows is deferred. Setup contract version 1.
 metadata:
   setupContractVersion: "1"
-  packageMajorPin: "@conviction/mcp@1"
+  packageMajorPin: "@getconviction/mcp@1"
 ---
 
 # Conviction MCP setup (contract v1)
@@ -16,7 +16,7 @@ This skill explains the public setup journey for Conviction MCP. It is agent-rea
 
 Claude Code, Codex, Hermes, and OpenClaw share one MCP tool contract. Host-specific content is configuration only.
 
-Generated package-runner configs always pin `@conviction/mcp@1`. Never suggest an unpinned `latest` major, and never embed signer secrets, unlock secrets, recovery passphrases, or one-time provisioning codes in host configuration.
+Generated package-runner configs always pin `@getconviction/mcp@1`. Never suggest an unpinned `latest` major, and never embed signer secrets, unlock secrets, recovery passphrases, or one-time provisioning codes in host configuration.
 
 ## Platforms
 
@@ -44,19 +44,19 @@ These steps map to observable backend state:
 Replace `<name>` with the local profile name. All hosts launch:
 
 ```text
-npx -y @conviction/mcp@1 serve --profile <name>
+npx -y @getconviction/mcp@1 serve --profile <name>
 ```
 
 ### Claude Code
 
 ```sh
-claude mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
+claude mcp add conviction -- npx -y @getconviction/mcp@1 serve --profile <name>
 ```
 
 ### Codex
 
 ```sh
-codex mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
+codex mcp add conviction -- npx -y @getconviction/mcp@1 serve --profile <name>
 ```
 
 Or `~/.codex/config.toml`:
@@ -64,7 +64,7 @@ Or `~/.codex/config.toml`:
 ```toml
 [mcp_servers.conviction]
 command = "npx"
-args = ["-y", "@conviction/mcp@1", "serve", "--profile", "<name>"]
+args = ["-y", "@getconviction/mcp@1", "serve", "--profile", "<name>"]
 ```
 
 ### Hermes
@@ -76,7 +76,7 @@ mcp_servers:
     command: "npx"
     args:
       - "-y"
-      - "@conviction/mcp@1"
+      - "@getconviction/mcp@1"
       - "serve"
       - "--profile"
       - "<name>"
@@ -85,7 +85,7 @@ mcp_servers:
 ### OpenClaw
 
 ```sh
-openclaw mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
+openclaw mcp add conviction -- npx -y @getconviction/mcp@1 serve --profile <name>
 ```
 
 ## Diagnostics

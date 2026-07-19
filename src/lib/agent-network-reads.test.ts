@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { COMPACT_THESIS_MAX_CHARS } from "@conviction/mcp/agent-reads-contract";
+import { COMPACT_THESIS_MAX_CHARS } from "@getconviction/mcp/agent-reads-contract";
 import { loadAgentAccountStatus } from "@/lib/agent-account-status";
 import {
   compactThesis,

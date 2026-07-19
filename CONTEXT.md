@@ -125,15 +125,15 @@ A provisioned, backup-verified agent UA with no spendable unified balance. It ma
 _Avoid_: disabled agent, incomplete provisioning, unusable profile
 
 **MCP package**:
-The public npm package `@conviction/mcp`, which contains the local server, CLI, profile management, signer integration, and MCP tool contract.
+The public npm package `@getconviction/mcp`, which contains the local server, CLI, profile management, signer integration, and MCP tool contract.
 _Avoid_: conviction package, hosted MCP, client-specific integration
 
 **MCP executable**:
-The stable `conviction-mcp` command installed by `@conviction/mcp` and launched by supported MCP hosts.
+The stable `conviction-mcp` command installed by `@getconviction/mcp` and launched by supported MCP hosts.
 _Avoid_: per-host command, package-name executable, temporary CLI name
 
 **Major-pinned host config**:
-A generated MCP configuration that resolves `@conviction/mcp@1` or an equivalent v1 installation. It may receive compatible minor and patch updates but never crosses a major version without explicit operator action.
+A generated MCP configuration that resolves `@getconviction/mcp@1` or an equivalent v1 installation. It may receive compatible minor and patch updates but never crosses a major version without explicit operator action.
 _Avoid_: latest, exact-version freeze, self-updating config
 
 **Behavioral telemetry**:
