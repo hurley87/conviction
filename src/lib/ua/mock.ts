@@ -39,6 +39,10 @@ import {
   type WithdrawalResult,
 } from "@/lib/verbs/types";
 import { sumSources } from "@/lib/verbs/map-balance";
+import {
+  normalizeParticleTransactionStatus,
+  type ParticleTransactionStatusRead,
+} from "@/lib/ua/particle-finality";
 
 /** Stub signers for mock/demo and unit tests — no real wallet (ADR 0014). */
 export const mockTradeSigners: TradeSigners = {
@@ -188,6 +192,25 @@ export class MockUAClient implements UAClient {
     const alreadyUpgraded = this.upgraded;
     this.upgraded = true;
     return { upgraded: !alreadyUpgraded, alreadyUpgraded };
+  }
+
+  async getTransactionStatus(
+    transactionId: string,
+  ): Promise<ParticleTransactionStatusRead> {
+    const chainId = transactionId.includes("withdraw")
+      ? ARBITRUM_CHAIN_ID
+      : BASE_CHAIN_ID;
+    return normalizeParticleTransactionStatus(transactionId, {
+      transactionId,
+      status: 7,
+      lendingUserOperations: [
+        {
+          chainId,
+          status: 3,
+          txHash: `0x${"d".repeat(64)}`,
+        },
+      ],
+    });
   }
 
   private mockTokenChanges(sizeUsd: number, stale = false) {

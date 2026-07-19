@@ -47,6 +47,7 @@ import {
   warmUpTokenPair,
   type WarmUpAccount,
 } from "@/lib/ua/warm-up";
+import { readParticleTransactionStatus } from "@/lib/ua/particle-finality";
 
 export type ParticleConfig = {
   ownerAddress: string;
@@ -81,6 +82,7 @@ export type ParticleAccount = WarmUpAccount & {
     signature: string,
     authorizations?: { userOpHash: string; signature: string }[],
   ): Promise<{ transactionId?: string }>;
+  getTransaction(transactionId: string): Promise<unknown>;
 };
 
 /** Shared Particle account construction for the UA client and desk CLIs. */
@@ -191,6 +193,10 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
 
     async ensureUpgraded(): Promise<UpgradeResult> {
       return { upgraded: false, alreadyUpgraded: true };
+    },
+
+    async getTransactionStatus(transactionId) {
+      return readParticleTransactionStatus(await account(), transactionId);
     },
 
     async quoteTrade(params: QuoteTradeParams): Promise<TradeQuote> {
