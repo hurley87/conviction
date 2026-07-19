@@ -27,10 +27,14 @@ For each host: add server → `tools/list` shows full v1 contract → account st
 
 ## Post-merge publish
 
+Merge to `main` does not publish npm. After version + CHANGELOG land on `main`:
+
 ```sh
-git tag mcp-v1.0.0
-git push origin mcp-v1.0.0
+git tag mcp-vX.Y.Z
+git push origin mcp-vX.Y.Z
 # or: workflow_dispatch on publish-mcp.yml with dry_run=false
 ```
 
-Requires `NPM_TOKEN` repository secret. See [packages/mcp/CHANGELOG.md](../packages/mcp/CHANGELOG.md).
+Requires `NPM_TOKEN` repository secret. Full maintainer checklist:
+[`.cursor/skills/publish-getconviction-mcp/SKILL.md`](../.cursor/skills/publish-getconviction-mcp/SKILL.md).
+See also [packages/mcp/CHANGELOG.md](../packages/mcp/CHANGELOG.md).
