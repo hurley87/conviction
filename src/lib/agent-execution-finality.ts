@@ -1,6 +1,8 @@
 // Durable execution-finality state for Particle value-moving operations.
 // Submission and reconciliation are intentionally kept outside this module.
 
+import type { Receipt } from "@/lib/verbs/types";
+
 export const EXECUTION_OUTCOMES = [
   "submitted",
   "pending",
@@ -68,6 +70,44 @@ export type OperatorRecoveryGuidance = {
   steps: string[];
 };
 
+export const EXECUTION_SETTLEMENT_STATUSES = [
+  "held",
+  "accounting",
+  "persisting",
+  "settled",
+  "released",
+  "needs_attention",
+] as const;
+
+export type ExecutionSettlementStatus =
+  (typeof EXECUTION_SETTLEMENT_STATUSES)[number];
+
+/** Durable successful result. It is populated only from confirmed finality. */
+export type ExecutionFinalizedResult = {
+  ok: true;
+  receiptId: string;
+  quoteId: string;
+  quoteFingerprint: string;
+  transactionId: string;
+  summary: string;
+  receipt: Receipt;
+  dollarsIn: number;
+  dollarsOut: number;
+  feeUsd: number;
+  idempotencyKey: string;
+  action: "trade" | "back";
+  entryId?: string;
+  backRecordId?: string;
+  reconciliationState?: "complete" | "pending_sync" | "needs_attention";
+  authorship?: {
+    agentId: string;
+    authorKind: "agent";
+    handle: string;
+    operatorHandle: string;
+  };
+  code?: "executed_pending_sync";
+};
+
 export type ExecutionFinalityRecord = {
   executionId: string;
   agentId: string;
@@ -85,6 +125,10 @@ export type ExecutionFinalityRecord = {
   workflowCorrelationId: string | null;
   workflowRunId: string | null;
   operatorRecovery: OperatorRecoveryGuidance | null;
+  /** One-way settlement checkpoint after provider finality becomes terminal. */
+  settlementStatus: ExecutionSettlementStatus;
+  settlementResult: ExecutionFinalizedResult | null;
+  settlementError: string | null;
   createdAt: string;
   updatedAt: string;
   submittedAt: string | null;
@@ -117,6 +161,9 @@ export type ExecutionTransitionPatch = {
   workflowCorrelationId?: string | null;
   workflowRunId?: string | null;
   operatorRecovery?: OperatorRecoveryGuidance | null;
+  settlementStatus?: ExecutionSettlementStatus;
+  settlementResult?: ExecutionFinalizedResult | null;
+  settlementError?: string | null;
   submittedAt?: string | null;
   finalizedAt?: string | null;
 };
@@ -194,10 +241,10 @@ const LEGAL_TRANSITIONS: Record<ExecutionOutcome, ReadonlySet<ExecutionOutcome>>
       "failed",
       "needs_attention",
     ]),
-    finalized: new Set(),
+    finalized: new Set(["finalized"]),
     partial: new Set(["partial", "needs_attention"]),
     failed: new Set(["failed", "needs_attention"]),
-    needs_attention: new Set(),
+    needs_attention: new Set(["needs_attention"]),
   };
 
 const LEGAL_LEG_TRANSITIONS: Record<
@@ -302,6 +349,20 @@ export function assertValidExecutionFinalityRecord(
       "A needs_attention execution requires operator recovery guidance.",
     );
   }
+  if (!EXECUTION_SETTLEMENT_STATUSES.includes(record.settlementStatus)) {
+    throw new Error(
+      `Unsupported execution settlement status: ${record.settlementStatus}`,
+    );
+  }
+  if (
+    record.settlementStatus === "settled" &&
+    (!record.settlementResult || record.outcome !== "finalized")
+  ) {
+    throw new Error("A settled execution requires a finalized successful result.");
+  }
+  if (record.settlementResult && record.settlementStatus !== "settled") {
+    throw new Error("A finalized result may only be stored after settlement.");
+  }
 }
 
 export function createExecutionFinalityRecord(
@@ -324,6 +385,9 @@ export function createExecutionFinalityRecord(
     workflowCorrelationId: input.workflowCorrelationId ?? null,
     workflowRunId: input.workflowRunId ?? null,
     operatorRecovery: null,
+    settlementStatus: "held",
+    settlementResult: null,
+    settlementError: null,
     createdAt: input.createdAt,
     updatedAt: input.createdAt,
     submittedAt: outcome === "submitted" ? input.createdAt : null,
@@ -391,6 +455,10 @@ export function applyExecutionTransition(
       patch.operatorRecovery !== undefined
         ? durableClone(patch.operatorRecovery)
         : durableClone(current.operatorRecovery),
+    settlementResult:
+      patch.settlementResult !== undefined
+        ? durableClone(patch.settlementResult)
+        : durableClone(current.settlementResult),
     outcome: input.to,
     updatedAt: input.updatedAt,
     finalizedAt:

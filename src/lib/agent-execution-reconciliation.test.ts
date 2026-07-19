@@ -153,6 +153,59 @@ describe("execution finality reconciliation", () => {
     expect(exhausted.providerEvidence).toHaveLength(2);
   });
 
+  it("preserves a confirmed source success plus destination failure as partial", async () => {
+    const store = await seededStore();
+    const partial = await createExecutionReconciler({
+      store,
+      ua: {
+        getTransactionStatus: async () =>
+          pendingRead({
+            outcome: "partial",
+            retrySafe: false,
+            legs: pendingRead().legs.map((leg, index) => ({
+              ...leg,
+              status: index === 0 ? "finalized" : "failed",
+              confirmedHash: index === 0 ? `0x${"3".repeat(64)}` : null,
+              error: index === 0 ? null : "destination reverted",
+            })),
+          }),
+      },
+      now: () => new Date(T0),
+    }).reconcile("10000000-0000-4000-8000-000000000083");
+
+    expect(partial).toMatchObject({
+      outcome: "partial",
+      legs: [
+        { status: "finalized", confirmedHash: `0x${"3".repeat(64)}` },
+        { status: "failed", confirmedHash: null },
+      ],
+    });
+  });
+
+  it("records an unambiguous all-leg provider failure as failed", async () => {
+    const store = await seededStore();
+    const failed = await createExecutionReconciler({
+      store,
+      ua: {
+        getTransactionStatus: async () =>
+          pendingRead({
+            outcome: "failed",
+            retrySafe: false,
+            legs: pendingRead().legs.map((leg) => ({
+              ...leg,
+              status: "failed",
+              confirmedHash: null,
+              error: "provider confirmed failure",
+            })),
+          }),
+      },
+      now: () => new Date(T0),
+    }).reconcile("10000000-0000-4000-8000-000000000083");
+
+    expect(failed.outcome).toBe("failed");
+    expect(failed.legs.every((leg) => leg.status === "failed")).toBe(true);
+  });
+
   it("continues from a durable repository snapshot after process restart", async () => {
     const firstStore = await seededStore();
     const firstReconciler = createExecutionReconciler({

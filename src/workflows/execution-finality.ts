@@ -6,6 +6,7 @@ import { sleep } from "workflow";
 import { createExecutionReconciler } from "@/lib/agent-execution-reconciliation";
 import type { ExecutionFinalityRecord } from "@/lib/agent-execution-finality";
 import { getExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
+import { settleReconciledExecution } from "@/lib/agent-execution-workflow";
 import { getUAClient } from "@/lib/ua";
 
 const RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000, 60_000] as const;
@@ -15,10 +16,11 @@ async function reconcileExecutionStep(
   ownerAddress: string,
 ): Promise<ExecutionFinalityRecord> {
   "use step";
-  return createExecutionReconciler({
+  const record = await createExecutionReconciler({
     store: getExecutionFinalityStore(),
     ua: getUAClient(ownerAddress),
   }).reconcile(executionId);
+  return settleReconciledExecution(record, ownerAddress);
 }
 
 export async function executionFinalityWorkflow(

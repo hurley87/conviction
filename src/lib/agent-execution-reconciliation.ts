@@ -405,6 +405,26 @@ function transitionForRead(input: {
     return { to: "finalized" as const, patch: basePatch };
   }
 
+  const requiredLegs = legs.filter((leg) => leg.required);
+  const hasConfirmedSuccess = requiredLegs.some(
+    (leg) => leg.status === "finalized" && Boolean(leg.confirmedHash),
+  );
+  const allRequiredTerminal =
+    requiredLegs.length > 0 &&
+    requiredLegs.every(
+      (leg) => leg.status === "finalized" || leg.status === "failed",
+    );
+  if (input.read.outcome === "partial" && hasConfirmedSuccess) {
+    return { to: "partial" as const, patch: basePatch };
+  }
+  if (
+    input.read.outcome === "failed" &&
+    allRequiredTerminal &&
+    !hasConfirmedSuccess
+  ) {
+    return { to: "failed" as const, patch: basePatch };
+  }
+
   const nonRetryable =
     !input.read.retrySafe ||
     input.read.outcome === "partial" ||
@@ -454,6 +474,8 @@ export function createExecutionReconciler(options: {
       if (!initial) throw new Error(`Execution ${executionId} was not found.`);
       if (
         initial.outcome === "finalized" ||
+        initial.outcome === "partial" ||
+        initial.outcome === "failed" ||
         initial.outcome === "needs_attention"
       ) {
         return initial;
@@ -524,6 +546,8 @@ export async function runExecutionReconciliationRetries(input: {
   let latest = await input.reconcile.reconcile(input.executionId);
   while (
     latest.outcome !== "finalized" &&
+    latest.outcome !== "partial" &&
+    latest.outcome !== "failed" &&
     latest.outcome !== "needs_attention"
   ) {
     if (input.delayMs) {

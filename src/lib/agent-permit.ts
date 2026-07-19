@@ -49,6 +49,13 @@ import type { UniversalBalance } from "@/lib/verbs/types";
 import type { Receipt, TradeIntent, TradeQuote } from "@/lib/verbs/types";
 import { assertTradeDebitWithinCeiling } from "@/lib/verbs/quote";
 import type { RawTransaction } from "@/lib/ua/trade";
+import { explorerUrl } from "@/lib/verbs/chains";
+import {
+  buildReceiptSummary,
+  inferSpentSymbol,
+  resolveReceiptSourceChain,
+} from "@/lib/verbs/receipt";
+import { productAssetPrimarySymbol } from "@/lib/verbs/assets";
 
 /** Persist (or heal) the publishable trade-receipt record for a successful execute. */
 async function ensurePublishableTradeReceipt(options: {
@@ -205,18 +212,290 @@ function executionPendingResult(
   action?: AgentQuoteAction,
 ): AgentExecuteErrorBody {
   const terminal = record.outcome === "finalized";
+  const terminalMessage =
+    record.outcome === "partial"
+      ? "Execution is partial. Confirmed legs are retained, publication is disabled, and the spend reservation remains held."
+      : record.outcome === "failed"
+        ? "Execution failed with no confirmed successful value-moving leg. It remains a non-success result."
+        : record.outcome === "needs_attention"
+          ? "Execution finality needs operator attention. Do not resign or resubmit the transaction."
+          : "Execution finality is unresolved. The same durable transaction is being reconciled; do not resign or resubmit.";
   return {
     ok: false,
     code: "unavailable",
     message: terminal
-      ? "Execution is confirmed by Particle and is awaiting finalized receipt settlement."
-      : record.outcome === "needs_attention"
-        ? "Execution finality needs operator attention. Do not resign or resubmit the transaction."
-        : "Execution finality is unresolved. The same durable transaction is being reconciled; do not resign or resubmit.",
+      ? record.settlementError ??
+        "Execution is confirmed by Particle and is awaiting finalized receipt settlement."
+      : terminalMessage,
     ...(action ? { action } : {}),
     quoteId: record.quoteId,
     execution: record,
   };
+}
+
+async function patchExecutionSettlement(input: {
+  store: ExecutionFinalityStore;
+  record: ExecutionFinalityRecord;
+  at: string;
+  patch: Parameters<ExecutionFinalityStore["transition"]>[0]["patch"];
+}): Promise<ExecutionFinalityRecord | null> {
+  return input.store.transition({
+    executionId: input.record.executionId,
+    expectedVersion: input.record.version,
+    from: input.record.outcome,
+    to: input.record.outcome,
+    updatedAt: input.at,
+    patch: input.patch,
+  });
+}
+
+function confirmedReceipt(
+  record: ExecutionFinalityRecord,
+  permit: ExecutionPermitRecord,
+): Receipt | null {
+  const required = record.legs.filter((leg) => leg.required);
+  if (
+    record.outcome !== "finalized" ||
+    required.length === 0 ||
+    required.some(
+      (leg) => leg.status !== "finalized" || !leg.confirmedHash,
+    )
+  ) {
+    return null;
+  }
+  const legs = record.legs
+    .filter((leg) => leg.status === "finalized" && leg.confirmedHash)
+    .map((leg) => ({
+      chain: leg.chainName,
+      txHash: leg.confirmedHash!,
+      explorerUrl: explorerUrl(leg.chainId, leg.confirmedHash!),
+    }));
+  const sourceChain = resolveReceiptSourceChain(
+    permit.agreedQuote.sourceChain,
+    permit.agreedQuote.destChain,
+    legs,
+  );
+  const summary = buildReceiptSummary(
+    permit.dollarsIn,
+    permit.agreedQuote.dollarsOut,
+    sourceChain,
+    permit.agreedQuote.destChain,
+    permit.agreedQuote.receivedSymbol ??
+      productAssetPrimarySymbol(permit.agreedQuote.toAsset),
+    inferSpentSymbol(permit.intent),
+  );
+  return {
+    slug: record.executionId,
+    legs,
+    summary,
+    dollarsIn: permit.dollarsIn,
+    dollarsOut: permit.agreedQuote.dollarsOut,
+    feeUsd: permit.agreedQuote.feeUsd,
+  };
+}
+
+type SettlementOptions = {
+  agent: OwnedAgent;
+  record: ExecutionFinalityRecord;
+  permitStore: AgentPermitStore;
+  idempotencyStore: AgentIdempotencyStore;
+  receipts: AgentReceiptPersist;
+  quoteStore: AgentQuoteStore;
+  tradeReceipts?: AgentTradeReceiptStore;
+  backStore?: AgentBackRecordStore;
+  startBackWorkflow?: BackWorkflowStarter;
+  attributeBack?: BackAttributionApplier;
+  executionFinalityStore: ExecutionFinalityStore;
+  spendLedger?: AgentSpendLedger;
+  onSpend?: (dollarsIn: number) => void | Promise<void>;
+  now?: () => Date;
+  randomId?: () => string;
+};
+
+/** Convert terminal provider finality into accounting and a durable result once. */
+export async function settleExecutionFinality(
+  options: SettlementOptions,
+): Promise<AgentExecuteResult> {
+  let record = options.record;
+  if (record.settlementResult) return record.settlementResult;
+
+  const permit = await options.permitStore.get(record.permitId);
+  if (!permit || permit.agentId !== options.agent.agentId) {
+    return executionPendingResult(record);
+  }
+
+  if (record.outcome === "failed") {
+    const released = await options.permitStore.casStatus(
+      permit.permitId,
+      "pending",
+      "released",
+    );
+    if (released) {
+      await options.spendLedger?.release(options.agent.agentId, permit.dollarsIn);
+    }
+    if (record.settlementStatus !== "released") {
+      record =
+        (await patchExecutionSettlement({
+          store: options.executionFinalityStore,
+          record,
+          at: (options.now?.() ?? new Date()).toISOString(),
+          patch: { settlementStatus: "released", settlementError: null },
+        })) ?? record;
+    }
+    return executionPendingResult(record, permit.action);
+  }
+
+  if (record.outcome !== "finalized") {
+    return executionPendingResult(record, permit.action);
+  }
+  const receipt = confirmedReceipt(record, permit);
+  if (!receipt) {
+    return executionPendingResult(
+      { ...record, settlementError: "Finalized execution lacks confirmed evidence for every required leg." },
+      permit.action,
+    );
+  }
+
+  if (record.settlementStatus === "held") {
+    const claimed = await patchExecutionSettlement({
+      store: options.executionFinalityStore,
+      record,
+      at: (options.now?.() ?? new Date()).toISOString(),
+      patch: { settlementStatus: "accounting", settlementError: null },
+    });
+    if (!claimed) {
+      const latest = await options.executionFinalityStore.get(record.executionId);
+      return latest?.settlementResult ?? executionPendingResult(latest ?? record, permit.action);
+    }
+    record = claimed;
+
+    const accountingClaimed = await options.permitStore.casStatus(
+      permit.permitId,
+      "pending",
+      "consumed",
+    );
+    if (!accountingClaimed) {
+      const prior = await options.idempotencyStore.get(
+        options.agent.agentId,
+        record.idempotencyKey,
+      );
+      if (prior?.ok) return prior;
+      return executionPendingResult(record, permit.action);
+    }
+    try {
+      await options.onSpend?.(permit.dollarsIn);
+      await options.spendLedger?.commit(options.agent.agentId, permit.dollarsIn);
+      record =
+        (await patchExecutionSettlement({
+          store: options.executionFinalityStore,
+          record,
+          at: (options.now?.() ?? new Date()).toISOString(),
+          patch: { settlementStatus: "persisting", settlementError: null },
+        })) ?? record;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Confirmed spend settlement failed.";
+      await patchExecutionSettlement({
+        store: options.executionFinalityStore,
+        record,
+        at: (options.now?.() ?? new Date()).toISOString(),
+        patch: { settlementStatus: "needs_attention", settlementError: message },
+      });
+      return executionPendingResult({ ...record, settlementError: message }, permit.action);
+    }
+  }
+
+  if (record.settlementStatus !== "persisting") {
+    const latest = await options.executionFinalityStore.get(record.executionId);
+    return latest?.settlementResult ?? executionPendingResult(latest ?? record, permit.action);
+  }
+
+  let success: AgentExecuteSuccess & { action: "trade" | "back" } = {
+    ok: true,
+    receiptId: receipt.slug,
+    quoteId: permit.quoteId,
+    quoteFingerprint: permit.quoteFingerprint,
+    transactionId: record.particleTransactionId!,
+    summary: receipt.summary,
+    receipt,
+    dollarsIn: permit.dollarsIn,
+    dollarsOut: receipt.dollarsOut,
+    feeUsd: receipt.feeUsd,
+    idempotencyKey: record.idempotencyKey,
+    action: permit.action,
+    ...(permit.entryId ? { entryId: permit.entryId } : {}),
+  };
+  try {
+    await options.receipts.save(receipt);
+    if (permit.action === "trade" && options.tradeReceipts) {
+      await ensurePublishableTradeReceipt({
+        agentId: options.agent.agentId,
+        permit,
+        receipt,
+        entryAt: record.finalizedAt ?? (options.now?.() ?? new Date()).toISOString(),
+        quoteStore: options.quoteStore,
+        tradeReceipts: options.tradeReceipts,
+      });
+    }
+    if (
+      permit.action === "back" &&
+      permit.entryId &&
+      options.backStore &&
+      options.startBackWorkflow
+    ) {
+      success = await commitBackExecution({
+        agent: options.agent,
+        execute: success,
+        entryId: permit.entryId,
+        backStore: options.backStore,
+        idempotencyStore: options.idempotencyStore,
+        startWorkflow: options.startBackWorkflow,
+        ...(options.attributeBack ? { attributeNow: options.attributeBack } : {}),
+        ...(options.now ? { now: options.now } : {}),
+        ...(options.randomId ? { randomId: options.randomId } : {}),
+      });
+    } else {
+      await options.idempotencyStore.save(
+        options.agent.agentId,
+        record.idempotencyKey,
+        success,
+      );
+    }
+    const settled = await patchExecutionSettlement({
+      store: options.executionFinalityStore,
+      record,
+      at: (options.now?.() ?? new Date()).toISOString(),
+      patch: {
+        settlementStatus: "settled",
+        settlementResult: success,
+        settlementError: null,
+      },
+    });
+    if (!settled) {
+      const latest = await options.executionFinalityStore.get(record.executionId);
+      if (latest?.settlementResult) return latest.settlementResult;
+    }
+    if (permit.action === "trade") {
+      emitOperatorEvent({
+        type: "trade_executed",
+        agentId: options.agent.agentId,
+        ownerUserId: options.agent.ownerUserId,
+        receiptId: success.receiptId,
+        transactionId: success.transactionId,
+        summary: success.summary,
+      });
+    }
+    return success;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Finalized receipt persistence failed.";
+    await patchExecutionSettlement({
+      store: options.executionFinalityStore,
+      record,
+      at: (options.now?.() ?? new Date()).toISOString(),
+      patch: { settlementStatus: "needs_attention", settlementError: message },
+    });
+    return executionPendingResult({ ...record, settlementError: message }, permit.action);
+  }
 }
 
 async function advanceExistingExecution(options: {
@@ -224,14 +503,15 @@ async function advanceExistingExecution(options: {
   store: ExecutionFinalityStore;
   workflow: ExecutionWorkflowStarter;
   ownerAddress: string;
-  action?: AgentQuoteAction;
   reconcile?: ExecutionReconciler;
   now?: () => Date;
-}): Promise<AgentExecuteErrorBody> {
+}): Promise<ExecutionFinalityRecord> {
   let current = options.record;
   if (
     !current.workflowRunId &&
     current.outcome !== "finalized" &&
+    current.outcome !== "partial" &&
+    current.outcome !== "failed" &&
     current.outcome !== "needs_attention"
   ) {
     try {
@@ -260,11 +540,13 @@ async function advanceExistingExecution(options: {
   if (
     options.reconcile &&
     current.outcome !== "finalized" &&
+    current.outcome !== "partial" &&
+    current.outcome !== "failed" &&
     current.outcome !== "needs_attention"
   ) {
     current = await options.reconcile.reconcile(current.executionId);
   }
-  return executionPendingResult(current, options.action);
+  return current;
 }
 
 export type SignedTradeSender = (input: {
@@ -589,7 +871,7 @@ export async function issueTradeExecutionPermit(options: {
           options.executionWorkflow &&
           options.agent.address
         ) {
-          return advanceExistingExecution({
+          const current = await advanceExistingExecution({
             record: execution,
             store: options.executionFinalityStore,
             workflow: options.executionWorkflow,
@@ -599,6 +881,7 @@ export async function issueTradeExecutionPermit(options: {
               : {}),
             ...(options.now ? { now: options.now } : {}),
           });
+          return current.settlementResult ?? executionPendingResult(current);
         }
         return executionPendingResult(execution);
       }
@@ -960,7 +1243,7 @@ export async function submitSignedTradeExecution(options: {
           };
         }
         if (options.executionWorkflow && options.agent.address) {
-          return advanceExistingExecution({
+          const current = await advanceExistingExecution({
             record: execution,
             store: options.executionFinalityStore,
             workflow: options.executionWorkflow,
@@ -969,6 +1252,11 @@ export async function submitSignedTradeExecution(options: {
               ? { reconcile: options.executionReconciler }
               : {}),
             ...(options.now ? { now: options.now } : {}),
+          });
+          return settleExecutionFinality({
+            ...options,
+            record: current,
+            executionFinalityStore: options.executionFinalityStore,
           });
         }
         return executionPendingResult(execution);
@@ -1420,13 +1708,19 @@ export async function submitSignedTradeExecution(options: {
       await options.permitStore.casStatus(permitId, "consumed", "pending");
       if (
         options.executionReconciler &&
+        execution.outcome !== "partial" &&
+        execution.outcome !== "failed" &&
         execution.outcome !== "needs_attention"
       ) {
         execution = await options.executionReconciler.reconcile(
           execution.executionId,
         );
       }
-      return executionPendingResult(execution, permit.action);
+      return settleExecutionFinality({
+        ...options,
+        record: execution,
+        executionFinalityStore: options.executionFinalityStore,
+      });
     }
 
     if (!sendResult.receipt || !sendResult.summary) {

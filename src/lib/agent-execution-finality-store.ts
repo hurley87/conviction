@@ -38,6 +38,9 @@ type ExecutionRow = {
   workflow_correlation_id: string | null;
   workflow_run_id: string | null;
   operator_recovery: unknown;
+  settlement_status: string | null;
+  settlement_result: unknown;
+  settlement_error: string | null;
   created_at: string;
   updated_at: string;
   submitted_at: string | null;
@@ -71,6 +74,14 @@ function recordFromRow(row: ExecutionRow): ExecutionFinalityRecord {
       row.operator_recovery && typeof row.operator_recovery === "object"
         ? (row.operator_recovery as OperatorRecoveryGuidance)
         : null,
+    settlementStatus:
+      (row.settlement_status as ExecutionFinalityRecord["settlementStatus"] | null) ??
+      "held",
+    settlementResult:
+      row.settlement_result && typeof row.settlement_result === "object"
+        ? (row.settlement_result as ExecutionFinalityRecord["settlementResult"])
+        : null,
+    settlementError: row.settlement_error,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
     submittedAt: row.submitted_at
@@ -109,6 +120,14 @@ async function ensureSchema(sql: Sql): Promise<void> {
       workflow_correlation_id text,
       workflow_run_id text,
       operator_recovery jsonb,
+      settlement_status text NOT NULL DEFAULT 'held' CHECK (
+        settlement_status IN (
+          'held', 'accounting', 'persisting', 'settled', 'released',
+          'needs_attention'
+        )
+      ),
+      settlement_result jsonb,
+      settlement_error text,
       created_at timestamptz NOT NULL,
       updated_at timestamptz NOT NULL,
       submitted_at timestamptz,
@@ -116,6 +135,12 @@ async function ensureSchema(sql: Sql): Promise<void> {
       version integer NOT NULL DEFAULT 1 CHECK (version >= 1),
       UNIQUE (agent_id, idempotency_key)
     )
+  `;
+  await sql`
+    ALTER TABLE agent_execution_finality
+      ADD COLUMN IF NOT EXISTS settlement_status text NOT NULL DEFAULT 'held',
+      ADD COLUMN IF NOT EXISTS settlement_result jsonb,
+      ADD COLUMN IF NOT EXISTS settlement_error text
   `;
   await sql`
     CREATE INDEX IF NOT EXISTS agent_execution_finality_outcome
@@ -147,6 +172,7 @@ export class NeonExecutionFinalityStore implements ExecutionFinalityStore {
           particle_transaction_id, outcome, legs, provider_evidence,
           attempt_count, last_provider_status, last_error,
           workflow_correlation_id, workflow_run_id, operator_recovery,
+          settlement_status, settlement_result, settlement_error,
           created_at, updated_at, submitted_at, finalized_at, version
         ) VALUES (
           ${record.executionId}::uuid,
@@ -164,6 +190,9 @@ export class NeonExecutionFinalityStore implements ExecutionFinalityStore {
           ${record.workflowCorrelationId},
           ${record.workflowRunId},
           ${record.operatorRecovery ? JSON.stringify(record.operatorRecovery) : null}::jsonb,
+          ${record.settlementStatus},
+          ${record.settlementResult ? JSON.stringify(record.settlementResult) : null}::jsonb,
+          ${record.settlementError},
           ${record.createdAt}::timestamptz,
           ${record.updatedAt}::timestamptz,
           ${record.submittedAt}::timestamptz,
@@ -332,6 +361,9 @@ export class NeonExecutionFinalityStore implements ExecutionFinalityStore {
         workflow_correlation_id = ${next.workflowCorrelationId},
         workflow_run_id = ${next.workflowRunId},
         operator_recovery = ${next.operatorRecovery ? JSON.stringify(next.operatorRecovery) : null}::jsonb,
+        settlement_status = ${next.settlementStatus},
+        settlement_result = ${next.settlementResult ? JSON.stringify(next.settlementResult) : null}::jsonb,
+        settlement_error = ${next.settlementError},
         updated_at = ${next.updatedAt}::timestamptz,
         submitted_at = ${next.submittedAt}::timestamptz,
         finalized_at = ${next.finalizedAt}::timestamptz,
