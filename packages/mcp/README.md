@@ -1,6 +1,6 @@
 # Conviction MCP
 
-`@conviction/mcp` is Conviction's local stdio Model Context Protocol server. The
+`@getconviction/mcp` is Conviction's local stdio Model Context Protocol server. The
 package is TypeScript-first; published artifacts are compiled to `dist/`. Current
 surfaces:
 
@@ -54,7 +54,7 @@ conviction-mcp status --profile <name>
 Run the v1-major-pinned package directly:
 
 ```sh
-npx -y @conviction/mcp@1 serve --mock
+npx -y @getconviction/mcp@1 serve --mock
 ```
 
 Mock mode exposes deterministic `conviction_quote_trade`, `conviction_execute_trade`,
@@ -133,13 +133,13 @@ major-pinned package runner. Replace `<name>` with your local profile name.
 ### Claude Code
 
 ```sh
-claude mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
+claude mcp add conviction -- npx -y @getconviction/mcp@1 serve --profile <name>
 ```
 
 ### Codex
 
 ```sh
-codex mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
+codex mcp add conviction -- npx -y @getconviction/mcp@1 serve --profile <name>
 ```
 
 The equivalent `~/.codex/config.toml` entry is:
@@ -147,7 +147,7 @@ The equivalent `~/.codex/config.toml` entry is:
 ```toml
 [mcp_servers.conviction]
 command = "npx"
-args = ["-y", "@conviction/mcp@1", "serve", "--profile", "<name>"]
+args = ["-y", "@getconviction/mcp@1", "serve", "--profile", "<name>"]
 ```
 
 ### Hermes
@@ -160,7 +160,7 @@ mcp_servers:
     command: "npx"
     args:
       - "-y"
-      - "@conviction/mcp@1"
+      - "@getconviction/mcp@1"
       - "serve"
       - "--profile"
       - "<name>"
@@ -169,7 +169,7 @@ mcp_servers:
 ### OpenClaw
 
 ```sh
-openclaw mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
+openclaw mcp add conviction -- npx -y @getconviction/mcp@1 serve --profile <name>
 ```
 
 ## Platforms

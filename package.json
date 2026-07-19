@@ -10,14 +10,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "npm run build --workspace @conviction/mcp && vitest run",
+    "test": "npm run build --workspace @getconviction/mcp && vitest run",
     "test:watch": "vitest",
-    "mcp:mock": "npm run build --workspace @conviction/mcp && npm exec --workspace @conviction/mcp -- conviction-mcp serve --mock",
-    "mcp:init": "npm run build --workspace @conviction/mcp && npm exec --workspace @conviction/mcp -- conviction-mcp init",
-    "mcp:doctor": "npm run build --workspace @conviction/mcp && npm exec --workspace @conviction/mcp -- conviction-mcp doctor"
+    "mcp:mock": "npm run build --workspace @getconviction/mcp && npm exec --workspace @getconviction/mcp -- conviction-mcp serve --mock",
+    "mcp:init": "npm run build --workspace @getconviction/mcp && npm exec --workspace @getconviction/mcp -- conviction-mcp init",
+    "mcp:doctor": "npm run build --workspace @getconviction/mcp && npm exec --workspace @getconviction/mcp -- conviction-mcp doctor"
   },
   "dependencies": {
-    "@conviction/mcp": "*",
+    "@getconviction/mcp": "*",
     "@lifi/sdk": "^4.1.0",
     "@neondatabase/serverless": "^1.1.0",
     "@particle-network/universal-account-sdk": "^2.0.3",

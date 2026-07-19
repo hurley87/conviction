@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@conviction/mcp"],
+  transpilePackages: ["@getconviction/mcp"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "api.dicebear.com" },

@@ -1,7 +1,7 @@
 import {
   PACKAGE_MAJOR_PIN,
   SETUP_CONTRACT_VERSION,
-} from "@conviction/mcp/setup-contract";
+} from "@getconviction/mcp/setup-contract";
 
 /** Short paste-to-agent prompt that points at the public skill page. */
 export function buildAgentSetupHandoffPrompt(options: {

@@ -20,7 +20,7 @@ import {
   SETUP_CONTRACT,
   defaultProfileName,
   resolveSetupPhase,
-} from "@conviction/mcp/setup-contract";
+} from "@getconviction/mcp/setup-contract";
 
 function subscribeNoop() {
   return () => {};

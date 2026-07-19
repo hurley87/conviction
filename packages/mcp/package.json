@@ -1,5 +1,5 @@
 {
-  "name": "@conviction/mcp",
+  "name": "@getconviction/mcp",
   "version": "1.0.0",
   "description": "Local Model Context Protocol server for Conviction",
   "type": "module",

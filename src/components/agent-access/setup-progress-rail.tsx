@@ -3,7 +3,7 @@
 import {
   SETUP_CONTRACT,
   type SetupPhase,
-} from "@conviction/mcp/setup-contract";
+} from "@getconviction/mcp/setup-contract";
 
 export function SetupProgressRail({ phase }: { phase: SetupPhase }) {
   return (

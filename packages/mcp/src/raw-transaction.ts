@@ -1,5 +1,5 @@
 // Minimal Particle raw-transaction helpers for local MCP signing (ADR 0045).
-// Kept in-package so @conviction/mcp does not import the Next.js app tree.
+// Kept in-package so @getconviction/mcp does not import the Next.js app tree.
 
 export type RawUserOpWithChain = {
   chainId: number;

@@ -1,5 +1,5 @@
 // Web-side compaction and cursor codec for agent network reads (issue #53).
-// Wire types and signed paths live in @conviction/mcp/agent-reads-contract.
+// Wire types and signed paths live in @getconviction/mcp/agent-reads-contract.
 
 import {
   COMPACT_THESIS_MAX_CHARS,
@@ -7,7 +7,7 @@ import {
   MAX_CONVICTION_PAGE_LIMIT,
   type CompactConviction,
   type ConvictionAttribution,
-} from "@conviction/mcp/agent-reads-contract";
+} from "@getconviction/mcp/agent-reads-contract";
 import type { BackerAttribution, ConvictionEntry } from "@/lib/verbs/types";
 
 export {
@@ -20,7 +20,7 @@ export {
   agentReceiptPath,
   type CompactConviction,
   type ConvictionAttribution,
-} from "@conviction/mcp/agent-reads-contract";
+} from "@getconviction/mcp/agent-reads-contract";
 
 /** Truncate thesis for list rows without cutting mid-surrogate when possible. */
 export function compactThesis(
