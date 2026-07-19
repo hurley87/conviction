@@ -3,6 +3,7 @@
 // Claim + spend reservation happen before any provider/sign side effect (ADR 0020).
 
 import type { OwnedAgent } from "@/lib/agent-provisioning";
+import type { ExecutionFinalityRecord } from "@/lib/agent-execution-finality";
 import {
   AgentQuoteError,
   loadTradeQuoteForExecute,
@@ -72,6 +73,8 @@ export type AgentExecuteErrorBody = {
   message: string;
   action?: "trade" | "back";
   quoteId?: string;
+  /** Authenticated durable finality state; nonterminal, never a receipt. */
+  execution?: ExecutionFinalityRecord;
   fields?: Array<{ field: string; code: string; message: string }>;
 };
 

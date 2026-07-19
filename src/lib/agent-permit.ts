@@ -4,6 +4,18 @@
 import { randomUUID } from "node:crypto";
 import { getAddress, getBytes, verifyMessage } from "ethers";
 
+import {
+  attachExecutionWorkflowRun,
+  createPreSubmissionExecution,
+  markExecutionSubmissionUncertain,
+  markExecutionSubmitted,
+  type ExecutionReconciler,
+  type ExecutionWorkflowStarter,
+} from "@/lib/agent-execution-reconciliation";
+import type {
+  ExecutionFinalityRecord,
+  ExecutionFinalityStore,
+} from "@/lib/agent-execution-finality";
 import { emitOperatorEvent } from "@/lib/agent-operator-events";
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import {
@@ -188,6 +200,73 @@ function permitResponse(record: ExecutionPermitRecord): IssuePermitSuccess {
   };
 }
 
+function executionPendingResult(
+  record: ExecutionFinalityRecord,
+  action?: AgentQuoteAction,
+): AgentExecuteErrorBody {
+  const terminal = record.outcome === "finalized";
+  return {
+    ok: false,
+    code: "unavailable",
+    message: terminal
+      ? "Execution is confirmed by Particle and is awaiting finalized receipt settlement."
+      : record.outcome === "needs_attention"
+        ? "Execution finality needs operator attention. Do not resign or resubmit the transaction."
+        : "Execution finality is unresolved. The same durable transaction is being reconciled; do not resign or resubmit.",
+    ...(action ? { action } : {}),
+    quoteId: record.quoteId,
+    execution: record,
+  };
+}
+
+async function advanceExistingExecution(options: {
+  record: ExecutionFinalityRecord;
+  store: ExecutionFinalityStore;
+  workflow: ExecutionWorkflowStarter;
+  ownerAddress: string;
+  action?: AgentQuoteAction;
+  reconcile?: ExecutionReconciler;
+  now?: () => Date;
+}): Promise<AgentExecuteErrorBody> {
+  let current = options.record;
+  if (
+    !current.workflowRunId &&
+    current.outcome !== "finalized" &&
+    current.outcome !== "needs_attention"
+  ) {
+    try {
+      const started = await options.workflow.start(
+        current.executionId,
+        options.ownerAddress,
+      );
+      current = await attachExecutionWorkflowRun({
+        store: options.store,
+        executionId: current.executionId,
+        runId: started.runId,
+        at: (options.now?.() ?? new Date()).toISOString(),
+      });
+    } catch (error) {
+      current = await markExecutionSubmissionUncertain({
+        store: options.store,
+        executionId: current.executionId,
+        error:
+          error instanceof Error
+            ? new Error(`Could not start finality workflow: ${error.message}`)
+            : new Error("Could not start finality workflow."),
+        at: (options.now?.() ?? new Date()).toISOString(),
+      });
+    }
+  }
+  if (
+    options.reconcile &&
+    current.outcome !== "finalized" &&
+    current.outcome !== "needs_attention"
+  ) {
+    current = await options.reconcile.reconcile(current.executionId);
+  }
+  return executionPendingResult(current, options.action);
+}
+
 export type SignedTradeSender = (input: {
   rawTransaction: RawTransaction;
   rootHashSignature: string;
@@ -198,8 +277,9 @@ export type SignedTradeSender = (input: {
   receiptSlug: string;
 }) => Promise<{
   transactionId: string;
-  receipt: Receipt;
-  summary: string;
+  /** Legacy-only fields; confirmed receipts are created in commit 4. */
+  receipt?: Receipt;
+  summary?: string;
   uncertain?: boolean;
 }>;
 
@@ -459,6 +539,9 @@ export async function issueTradeExecutionPermit(options: {
   quoteStore: AgentQuoteStore;
   permitStore: AgentPermitStore;
   idempotencyStore: AgentIdempotencyStore;
+  executionFinalityStore?: ExecutionFinalityStore;
+  executionWorkflow?: ExecutionWorkflowStarter;
+  executionReconciler?: ExecutionReconciler;
   balance: UniversalBalance;
   spendLedger?: AgentSpendLedger;
   /** When set, only quotes with this action may receive a permit. */
@@ -484,6 +567,41 @@ export async function issueTradeExecutionPermit(options: {
         message:
           "The MCP lease is no longer valid. Restart the server to reconnect.",
       };
+    }
+
+    if (options.executionFinalityStore) {
+      const execution =
+        await options.executionFinalityStore.getByAgentIdempotency(
+          options.agent.agentId,
+          parsed.idempotencyKey,
+        );
+      if (execution) {
+        if (execution.quoteId !== parsed.quoteId) {
+          return {
+            ok: false,
+            code: "quote_mismatch",
+            message:
+              "idempotencyKey is already bound to another execution quote.",
+            quoteId: parsed.quoteId,
+          };
+        }
+        if (
+          options.executionWorkflow &&
+          options.agent.address
+        ) {
+          return advanceExistingExecution({
+            record: execution,
+            store: options.executionFinalityStore,
+            workflow: options.executionWorkflow,
+            ownerAddress: options.agent.address,
+            ...(options.executionReconciler
+              ? { reconcile: options.executionReconciler }
+              : {}),
+            ...(options.now ? { now: options.now } : {}),
+          });
+        }
+        return executionPendingResult(execution);
+      }
     }
 
     const prior = await options.idempotencyStore.get(
@@ -758,6 +876,12 @@ export async function submitSignedTradeExecution(options: {
   startBackWorkflow?: BackWorkflowStarter;
   attributeBack?: BackAttributionApplier;
   send: SignedTradeSender;
+  /** Enables the confirmed-finality path. Required by the production route. */
+  executionFinalityStore?: ExecutionFinalityStore;
+  executionWorkflow?: ExecutionWorkflowStarter;
+  /** Optional synchronous first read; the durable workflow remains canonical. */
+  executionReconciler?: ExecutionReconciler;
+  workflowCorrelationId?: string | null;
   activeLeaseId: string | null;
   spendLedger?: AgentSpendLedger;
   onSpend?: (dollarsIn: number) => void | Promise<void>;
@@ -807,14 +931,6 @@ export async function submitSignedTradeExecution(options: {
       "Provide the active MCP leaseId for this process.",
     ).toBody();
   }
-  if (!rootHashSignature.startsWith("0x")) {
-    return invalidInput(
-      "rootHashSignature",
-      "required",
-      "Provide the local rootHash signature for this permit.",
-    ).toBody();
-  }
-
   const idemKey = `${options.agent.agentId}\0${idempotencyKey}`;
   return withLock(permitIdemLocks, idemKey, async () => {
     // ADR 0048: lease before idempotent results.
@@ -825,6 +941,46 @@ export async function submitSignedTradeExecution(options: {
         message:
           "The MCP lease is no longer valid. Restart the server to reconnect.",
       };
+    }
+
+    if (options.executionFinalityStore) {
+      const execution =
+        await options.executionFinalityStore.getByAgentIdempotency(
+          options.agent.agentId,
+          idempotencyKey,
+        );
+      if (execution) {
+        if (execution.permitId !== permitId) {
+          return {
+            ok: false,
+            code: "quote_mismatch",
+            message:
+              "idempotencyKey is already bound to another execution permit.",
+            quoteId: execution.quoteId,
+          };
+        }
+        if (options.executionWorkflow && options.agent.address) {
+          return advanceExistingExecution({
+            record: execution,
+            store: options.executionFinalityStore,
+            workflow: options.executionWorkflow,
+            ownerAddress: options.agent.address,
+            ...(options.executionReconciler
+              ? { reconcile: options.executionReconciler }
+              : {}),
+            ...(options.now ? { now: options.now } : {}),
+          });
+        }
+        return executionPendingResult(execution);
+      }
+    }
+
+    if (!rootHashSignature.startsWith("0x")) {
+      return invalidInput(
+        "rootHashSignature",
+        "required",
+        "Provide the local rootHash signature for this permit.",
+      ).toBody();
     }
 
     const prior = await options.idempotencyStore.get(
@@ -1046,6 +1202,18 @@ export async function submitSignedTradeExecution(options: {
         quoteId: permit.quoteId,
       };
     }
+    if (
+      options.executionFinalityStore &&
+      !raw.transactionId?.trim()
+    ) {
+      return {
+        ok: false,
+        code: "unavailable",
+        message:
+          "Stored execution payload is missing its planned Particle transaction identity.",
+        quoteId: permit.quoteId,
+      };
+    }
     try {
       assertTradeDebitWithinCeiling(
         raw.tokenChanges ?? {},
@@ -1118,6 +1286,68 @@ export async function submitSignedTradeExecution(options: {
       };
     }
 
+    let execution: ExecutionFinalityRecord | null = null;
+    if (options.executionFinalityStore) {
+      try {
+        execution = await options.executionFinalityStore.create(
+          createPreSubmissionExecution({
+            executionId: options.randomId?.() ?? randomUUID(),
+            agentId: options.agent.agentId,
+            permitId: permit.permitId,
+            quoteId: permit.quoteId,
+            idempotencyKey,
+            rawTransaction: raw,
+            correlationId: options.workflowCorrelationId,
+            createdAt: now.toISOString(),
+          }),
+        );
+      } catch (error) {
+        await options.permitStore.casStatus(permitId, "consumed", "pending");
+        return {
+          ok: false,
+          code: "unavailable",
+          message:
+            error instanceof Error
+              ? `Execution was claimed but its finality record could not be prepared: ${error.message}`
+              : "Execution was claimed but its finality record could not be prepared.",
+          quoteId: permit.quoteId,
+        };
+      }
+
+      if (!options.executionWorkflow) {
+        await options.permitStore.casStatus(permitId, "consumed", "pending");
+        return executionPendingResult(execution, permit.action);
+      }
+      try {
+        const started = await options.executionWorkflow.start(
+          execution.executionId,
+          options.agent.address,
+        );
+        execution = await attachExecutionWorkflowRun({
+          store: options.executionFinalityStore,
+          executionId: execution.executionId,
+          runId: started.runId,
+          at: now.toISOString(),
+        });
+      } catch (error) {
+        await options.permitStore.casStatus(permitId, "consumed", "pending");
+        execution = await markExecutionSubmissionUncertain({
+          store: options.executionFinalityStore,
+          executionId: execution.executionId,
+          error:
+            error instanceof Error
+              ? new Error(
+                  `Submission was not attempted because finality workflow start failed: ${error.message}`,
+                )
+              : new Error(
+                  "Submission was not attempted because finality workflow start failed.",
+                ),
+          at: now.toISOString(),
+        });
+        return executionPendingResult(execution, permit.action);
+      }
+    }
+
     const receiptSlug =
       options.randomId?.() ??
       `rcpt_${permit.quoteId.replace(/-/g, "").slice(0, 12)}`;
@@ -1138,6 +1368,15 @@ export async function submitSignedTradeExecution(options: {
     } catch (error) {
       // Uncertain whether the provider accepted the signed payload — record pending.
       await options.permitStore.casStatus(permitId, "consumed", "pending");
+      if (execution && options.executionFinalityStore) {
+        execution = await markExecutionSubmissionUncertain({
+          store: options.executionFinalityStore,
+          executionId: execution.executionId,
+          error,
+          at: (options.now?.() ?? new Date()).toISOString(),
+        });
+        return executionPendingResult(execution, permit.action);
+      }
       return persist({
         ok: false,
         code: "unavailable",
@@ -1151,6 +1390,17 @@ export async function submitSignedTradeExecution(options: {
 
     if (sendResult.uncertain) {
       await options.permitStore.casStatus(permitId, "consumed", "pending");
+      if (execution && options.executionFinalityStore) {
+        execution = await markExecutionSubmissionUncertain({
+          store: options.executionFinalityStore,
+          executionId: execution.executionId,
+          error: new Error(
+            "Particle returned an uncertain submission response.",
+          ),
+          at: (options.now?.() ?? new Date()).toISOString(),
+        });
+        return executionPendingResult(execution, permit.action);
+      }
       return persist({
         ok: false,
         code: "unavailable",
@@ -1158,6 +1408,34 @@ export async function submitSignedTradeExecution(options: {
           "Trade submission is uncertain and recorded for reconciliation. Do not resign or submit another transaction.",
         quoteId: permit.quoteId,
       });
+    }
+
+    if (execution && options.executionFinalityStore) {
+      execution = await markExecutionSubmitted({
+        store: options.executionFinalityStore,
+        executionId: execution.executionId,
+        transactionId: sendResult.transactionId,
+        at: (options.now?.() ?? new Date()).toISOString(),
+      });
+      await options.permitStore.casStatus(permitId, "consumed", "pending");
+      if (
+        options.executionReconciler &&
+        execution.outcome !== "needs_attention"
+      ) {
+        execution = await options.executionReconciler.reconcile(
+          execution.executionId,
+        );
+      }
+      return executionPendingResult(execution, permit.action);
+    }
+
+    if (!sendResult.receipt || !sendResult.summary) {
+      return {
+        ok: false,
+        code: "unavailable",
+        message: "Execution submission did not return a legacy receipt.",
+        quoteId: permit.quoteId,
+      };
     }
 
     const countedDebitUsd = sendResult.receipt.dollarsIn;

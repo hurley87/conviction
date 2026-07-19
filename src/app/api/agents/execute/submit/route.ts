@@ -16,6 +16,9 @@ import {
   executeErrorStatus,
   submitSignedTradeExecution,
 } from "@/lib/agent-permit";
+import { createExecutionReconciler } from "@/lib/agent-execution-reconciliation";
+import { getExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
+import { createExecutionWorkflowStarter } from "@/lib/agent-execution-workflow";
 import { createSignedTradeSender } from "@/lib/agent-permit-send";
 import {
   getAgentExecuteIdempotencyStore,
@@ -33,6 +36,7 @@ import {
 import { getPublicAgentProvisioningStore } from "@/lib/agent-provisioning-store";
 import { getAgentQuoteStore } from "@/lib/agent-quote-store";
 import { getAgentTradeReceiptStore } from "@/lib/agent-trade-receipt-store";
+import { getUAClient } from "@/lib/ua";
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
@@ -84,6 +88,7 @@ export async function POST(request: Request) {
 
     const permitStore = getAgentPermitStore();
     const spendLedger = getAgentSpendLedger();
+    const executionFinalityStore = getExecutionFinalityStore();
     const result = await submitSignedTradeExecution({
       agent: verified.agent,
       input: {
@@ -106,6 +111,15 @@ export async function POST(request: Request) {
       startBackWorkflow: createBackWorkflowStarter(),
       attributeBack: createConvictionBackAttributionApplier(),
       send: createSignedTradeSender(verified.agent.address),
+      executionFinalityStore,
+      executionWorkflow: createExecutionWorkflowStarter(),
+      executionReconciler: createExecutionReconciler({
+        store: executionFinalityStore,
+        ua: getUAClient(verified.agent.address),
+        now: () => now,
+      }),
+      workflowCorrelationId:
+        request.headers.get("x-conviction-correlation-id") ?? null,
       activeLeaseId: activeLease?.leaseId ?? null,
       spendLedger,
       now: () => now,

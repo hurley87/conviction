@@ -11,6 +11,7 @@ import {
   issueTradeExecutionPermit,
   submitSignedTradeExecution,
 } from "@/lib/agent-permit";
+import { MemoryExecutionFinalityStore } from "@/lib/agent-execution-finality";
 import { createSignedTradeSender } from "@/lib/agent-permit-send";
 import {
   MemoryAgentQuoteStore,
@@ -558,6 +559,195 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     expect((await permitStore.get(permit.permitId))?.status).toBe("pending");
   });
 
+  it("reuses the pre-bound execution after provider acceptance times out", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
+    const permitStore = new MemoryAgentPermitStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const receipts = new MemoryAgentReceiptPersist();
+    const spendLedger = new MemorySpendLedger();
+    const executionStore = new MemoryExecutionFinalityStore();
+    let sends = 0;
+    let workflowStarts = 0;
+
+    const permit = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-finality-timeout",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+    });
+    if (!permit.ok || !("permitId" in permit)) throw new Error("expected permit");
+
+    const common = {
+      agent,
+      permitStore,
+      idempotencyStore,
+      receipts,
+      quoteStore,
+      spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: {
+        async start(executionId: string) {
+          workflowStarts += 1;
+          return { runId: `run_${executionId}` };
+        },
+      },
+      activeLeaseId: "lease-1",
+      now: () => FIXED_NOW,
+      randomId: () => "80000000-0000-4000-8000-000000000083",
+      send: async () => {
+        sends += 1;
+        throw new Error("timeout after Particle accepted the payload");
+      },
+    };
+    const first = await submitSignedTradeExecution({
+      ...common,
+      input: {
+        permitId: permit.permitId,
+        idempotencyKey: "idem-finality-timeout",
+        leaseId: "lease-1",
+        rootHashSignature: await signPermitRoot(wallet, permit.rawTransaction),
+      },
+    });
+    expect(first).toMatchObject({
+      ok: false,
+      code: "unavailable",
+      execution: {
+        outcome: "pending",
+        particleTransactionId: permit.transactionId,
+      },
+    });
+
+    const permitRetry = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-finality-timeout",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: common.executionWorkflow,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+    });
+    expect(permitRetry).toMatchObject({
+      ok: false,
+      execution: {
+        executionId: "80000000-0000-4000-8000-000000000083",
+      },
+    });
+    expect(JSON.stringify(permitRetry)).not.toContain("rawTransaction");
+
+    const retry = await submitSignedTradeExecution({
+      ...common,
+      input: {
+        permitId: permit.permitId,
+        idempotencyKey: "idem-finality-timeout",
+        leaseId: "lease-1",
+        rootHashSignature: "",
+      },
+    });
+    expect(retry).toMatchObject({
+      ok: false,
+      execution: {
+        executionId: "80000000-0000-4000-8000-000000000083",
+        outcome: "pending",
+      },
+    });
+    expect(sends).toBe(1);
+    expect(workflowStarts).toBe(1);
+    expect(spendLedger.reservedUsd(agent.agentId)).toBe(quote.dollarsIn);
+    expect(await idempotencyStore.get(agent.agentId, "idem-finality-timeout")).toBeNull();
+  });
+
+  it("submits at most once across concurrent and repeated calls", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({ wallet });
+    const permitStore = new MemoryAgentPermitStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const receipts = new MemoryAgentReceiptPersist();
+    const spendLedger = new MemorySpendLedger();
+    const executionStore = new MemoryExecutionFinalityStore();
+    let sends = 0;
+    let settledSpend = 0;
+
+    const permit = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-finality-concurrent",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+    });
+    if (!permit.ok || !("permitId" in permit)) throw new Error("expected permit");
+    const signature = await signPermitRoot(wallet, permit.rawTransaction);
+    const submit = () =>
+      submitSignedTradeExecution({
+        agent,
+        input: {
+          permitId: permit.permitId,
+          idempotencyKey: "idem-finality-concurrent",
+          leaseId: "lease-1",
+          rootHashSignature: signature,
+        },
+        permitStore,
+        idempotencyStore,
+        receipts,
+        quoteStore,
+        spendLedger,
+        onSpend: (dollarsIn) => {
+          settledSpend += dollarsIn;
+        },
+        executionFinalityStore: executionStore,
+        executionWorkflow: {
+          async start(executionId) {
+            return { runId: `run_${executionId}` };
+          },
+        },
+        activeLeaseId: "lease-1",
+        now: () => FIXED_NOW,
+        randomId: () => "90000000-0000-4000-8000-000000000083",
+        send: async () => {
+          sends += 1;
+          await Promise.resolve();
+          return { transactionId: permit.transactionId };
+        },
+      });
+
+    const results = await Promise.all([submit(), submit(), submit()]);
+    expect(sends).toBe(1);
+    expect(
+      results.map((result) =>
+        result.ok ? null : result.execution?.executionId,
+      ),
+    ).toEqual([
+      "90000000-0000-4000-8000-000000000083",
+      "90000000-0000-4000-8000-000000000083",
+      "90000000-0000-4000-8000-000000000083",
+    ]);
+    expect((await permitStore.get(permit.permitId))?.status).toBe("pending");
+    expect(spendLedger.reservedUsd(agent.agentId)).toBe(quote.dollarsIn);
+    expect(settledSpend).toBe(0);
+    expect(
+      await receipts.get("90000000-0000-4000-8000-000000000083"),
+    ).toBeNull();
+  });
+
   it("rejects disabled trade before reserving spend", async () => {
     const wallet = Wallet.createRandom();
     const agent = testAgent(wallet, {
@@ -897,8 +1087,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
         sizeUsd: 20,
         receiptSlug: "r-mock",
       });
-      expect(result.receipt.dollarsIn).toBe(20);
-      expect(result.receipt.dollarsOut).toBe(19.9);
+      expect(result).toMatchObject({ transactionId: "tx" });
+      expect(result.receipt).toBeUndefined();
     } finally {
       if (previous.projectId) {
         process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID = previous.projectId;

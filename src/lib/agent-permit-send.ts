@@ -3,9 +3,6 @@
 
 import { createParticleAccount } from "@/lib/ua/particle";
 import { hasParticleEnv } from "@/lib/ua";
-import { MockUAClient } from "@/lib/ua/mock";
-import { buildReceipt, inferSpentSymbol } from "@/lib/verbs/receipt";
-import { narrateResult } from "@/lib/verbs/intent";
 import { assertTradeDebitWithinCeiling } from "@/lib/verbs/quote";
 import type { SignedTradeSender } from "@/lib/agent-permit";
 import type { RawTransaction } from "@/lib/ua/trade";
@@ -45,7 +42,7 @@ export function createSignedTradeSender(
     if (!raw?.rootHash) {
       throw new Error("Permit raw transaction is missing rootHash.");
     }
-    const transactionDebitUsd = assertTradeDebitWithinCeiling(
+    assertTradeDebitWithinCeiling(
       raw.tokenChanges ?? {},
       input.agreedQuote.dollarsIn,
     );
@@ -65,32 +62,7 @@ export function createSignedTradeSender(
         result.transactionId ??
         raw.transactionId ??
         input.agreedQuote.transactionId;
-      const receipt = buildReceipt(
-        input.receiptSlug,
-        {
-          dollarsIn: transactionDebitUsd,
-          dollarsOut: input.agreedQuote.dollarsOut,
-          feeUsd: input.agreedQuote.feeUsd,
-          sourceChain: input.agreedQuote.sourceChain,
-          destChain: input.agreedQuote.destChain,
-          toAsset: input.agreedQuote.toAsset,
-          ...(input.agreedQuote.receivedSymbol
-            ? { receivedSymbol: input.agreedQuote.receivedSymbol }
-            : {}),
-          sourceSymbol: inferSpentSymbol(input.intent),
-        },
-        raw.userOps,
-      );
-      return {
-        transactionId,
-        receipt,
-        summary: narrateResult(
-          transactionDebitUsd,
-          input.agreedQuote.dollarsOut,
-          input.agreedQuote.toAsset,
-          input.agreedQuote.receivedSymbol,
-        ),
-      };
+      return { transactionId };
     }
 
     if (!options.allowMock) {
@@ -112,37 +84,9 @@ export function createSignedTradeSender(
       throw new Error("Missing EIP-7702 authorizations for pending userOps.");
     }
 
-    // Use agreed quote economics; MockUAClient may build a fresh mock TX for
-    // transport only. Receipt amounts stay bound to the permit's agreedQuote.
-    const mock = new MockUAClient();
-    const result = await mock.executeTrade({
-      intent: input.intent,
-      sizeUsd: input.sizeUsd,
-      agreedQuote: {
-        ...input.agreedQuote,
-        rawTransaction: raw,
-      },
-      signers: {
-        signRootHash: async () => input.rootHashSignature,
-        sign7702: async () =>
-          input.authorizations?.[0]?.signature ?? "0xmock7702sig",
-      },
-      receiptSlug: input.receiptSlug,
-    });
     return {
-      transactionId: result.transactionId,
-      receipt: {
-        ...result.receipt,
-        dollarsIn: transactionDebitUsd,
-        dollarsOut: input.agreedQuote.dollarsOut,
-        feeUsd: input.agreedQuote.feeUsd,
-      },
-      summary: narrateResult(
-        transactionDebitUsd,
-        input.agreedQuote.dollarsOut,
-        input.agreedQuote.toAsset,
-        input.agreedQuote.receivedSymbol,
-      ),
+      transactionId:
+        raw.transactionId ?? input.agreedQuote.transactionId,
     };
   };
 }

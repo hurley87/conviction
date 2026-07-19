@@ -11,6 +11,9 @@ import {
   executeErrorStatus,
   issueTradeExecutionPermit,
 } from "@/lib/agent-permit";
+import { createExecutionReconciler } from "@/lib/agent-execution-reconciliation";
+import { getExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
+import { createExecutionWorkflowStarter } from "@/lib/agent-execution-workflow";
 import {
   getAgentExecuteIdempotencyStore,
   getAgentPermitStore,
@@ -24,6 +27,7 @@ import {
   verifyAgentRequest,
 } from "@/lib/agent-request-auth";
 import { getPublicAgentProvisioningStore } from "@/lib/agent-provisioning-store";
+import { getUAClient } from "@/lib/ua";
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
@@ -62,6 +66,7 @@ export async function POST(request: Request) {
       now,
     );
     const status = await loadAgentAccountStatus(verified.agent);
+    const executionFinalityStore = getExecutionFinalityStore();
 
     const result = await issueTradeExecutionPermit({
       agent: verified.agent,
@@ -72,6 +77,17 @@ export async function POST(request: Request) {
       quoteStore: getAgentQuoteStore(),
       permitStore: getAgentPermitStore(),
       idempotencyStore: getAgentExecuteIdempotencyStore(),
+      executionFinalityStore,
+      executionWorkflow: createExecutionWorkflowStarter(),
+      ...(verified.agent.address
+        ? {
+            executionReconciler: createExecutionReconciler({
+              store: executionFinalityStore,
+              ua: getUAClient(verified.agent.address),
+              now: () => now,
+            }),
+          }
+        : {}),
       balance: status.balance,
       spendLedger: getAgentSpendLedger(),
       ...(expectedAction ? { expectedAction } : {}),
