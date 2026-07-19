@@ -9,6 +9,8 @@ export type ConvictionPaths = {
   bindingsDir: string;
   /** Durable mock quote / execute / receipt state for serve --mock. */
   mockDir: string;
+  /** Local rotating diagnostic logs (stderr mirror; never MCP stdout). */
+  logsDir: string;
 };
 
 const PROFILE_NAME_RE = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/i;
@@ -35,6 +37,7 @@ export function resolveConvictionPaths(home = process.env.CONVICTION_HOME): Conv
     keystoresDir: path.join(root, "keystores"),
     bindingsDir: path.join(root, "bindings"),
     mockDir: path.join(root, "mock"),
+    logsDir: path.join(root, "logs"),
   };
 }
 

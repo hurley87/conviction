@@ -47,6 +47,8 @@ async function signedFetch<T>(options: {
   path: string;
   body?: unknown;
   fetchImpl?: typeof fetch;
+  /** Propagated from MCP tool calls for observability (PRD §15). */
+  correlationId?: string;
 }): Promise<T> {
   const base = options.apiBaseUrl.replace(/\/$/, "");
   const rawBody =
@@ -63,6 +65,9 @@ async function signedFetch<T>(options: {
   };
   if (rawBody) {
     headers["content-type"] = "application/json";
+  }
+  if (options.correlationId) {
+    headers["x-conviction-correlation-id"] = options.correlationId;
   }
 
   const response = await (options.fetchImpl ?? fetch)(`${base}${options.path}`, {
@@ -107,6 +112,7 @@ export async function fetchAgentStatus(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<AccountStatusResult> {
   const payload = await signedFetch<{ status: AccountStatusResult }>({
     ...options,
@@ -121,6 +127,7 @@ export async function markSetupVerified(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<AccountStatusResult> {
   const payload = await signedFetch<{ status: AccountStatusResult }>({
     apiBaseUrl: options.apiBaseUrl,
@@ -129,6 +136,7 @@ export async function markSetupVerified(options: {
     path: "/api/agents/setup-verify",
     body: {},
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
   return payload.status;
 }
@@ -153,6 +161,7 @@ export async function disableAgentLifecycle(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LifecycleMutationResult> {
   return signedFetch<LifecycleMutationResult>({
     apiBaseUrl: options.apiBaseUrl,
@@ -161,6 +170,7 @@ export async function disableAgentLifecycle(options: {
     path: "/api/agents/lifecycle/disable",
     body: {},
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 }
 
@@ -169,6 +179,7 @@ export async function enableAgentLifecycle(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LifecycleMutationResult> {
   return signedFetch<LifecycleMutationResult>({
     apiBaseUrl: options.apiBaseUrl,
@@ -177,6 +188,7 @@ export async function enableAgentLifecycle(options: {
     path: "/api/agents/lifecycle/enable",
     body: {},
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 }
 
@@ -232,6 +244,7 @@ export async function retireAgentLifecycle(options: {
   wallet: LocalWallet;
   idempotencyKey?: string;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<RetirementMutationResult> {
   return signedFetch<RetirementMutationResult>({
     apiBaseUrl: options.apiBaseUrl,
@@ -244,6 +257,7 @@ export async function retireAgentLifecycle(options: {
         : {}),
     },
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 }
 
@@ -258,6 +272,7 @@ export async function recoverAgentRetirement(options: {
   rootHashSignature?: string;
   authorizations?: Array<{ userOpHash: string; signature: string }>;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<RetirementMutationResult> {
   return signedFetch<RetirementMutationResult>({
     apiBaseUrl: options.apiBaseUrl,
@@ -277,6 +292,7 @@ export async function recoverAgentRetirement(options: {
         : {}),
     },
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 }
 
@@ -286,6 +302,7 @@ export async function fetchConvictionsPage(options: {
   cursor?: string;
   limit?: number;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<ConvictionListResult> {
   return signedFetch<ConvictionListResult>({
     apiBaseUrl: options.apiBaseUrl,
@@ -296,6 +313,7 @@ export async function fetchConvictionsPage(options: {
       ...(options.cursor ? { cursor: options.cursor } : {}),
     }),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 }
 
@@ -304,6 +322,7 @@ export async function fetchConviction(options: {
   wallet: LocalWallet;
   entryId: string;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<ConvictionGetResult> {
   return signedFetch<ConvictionGetResult>({
     apiBaseUrl: options.apiBaseUrl,
@@ -311,6 +330,7 @@ export async function fetchConviction(options: {
     method: "GET",
     path: agentConvictionPath(options.entryId),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 }
 
@@ -318,6 +338,7 @@ export async function fetchFeedSummary(options: {
   apiBaseUrl: string;
   wallet: LocalWallet;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<FeedSummaryResult> {
   return signedFetch<FeedSummaryResult>({
     ...options,
@@ -331,6 +352,7 @@ export async function fetchReceipt(options: {
   wallet: LocalWallet;
   receiptId: string;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<ReceiptGetResult> {
   return signedFetch<ReceiptGetResult>({
     apiBaseUrl: options.apiBaseUrl,
@@ -338,6 +360,7 @@ export async function fetchReceipt(options: {
     method: "GET",
     path: agentReceiptPath(options.receiptId),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 }
 
@@ -346,6 +369,7 @@ export async function acquireAgentLease(options: {
   wallet: LocalWallet;
   replace?: boolean;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LiveLease> {
   const payload = await signedFetch<{ lease: LiveLease }>({
     apiBaseUrl: options.apiBaseUrl,
@@ -354,6 +378,7 @@ export async function acquireAgentLease(options: {
     path: "/api/agents/lease",
     body: options.replace ? { replace: true } : {},
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
   return payload.lease;
 }
@@ -363,6 +388,7 @@ export async function renewAgentLease(options: {
   wallet: LocalWallet;
   leaseId: string;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LiveLease> {
   const payload = await signedFetch<{ lease: LiveLease }>({
     apiBaseUrl: options.apiBaseUrl,
@@ -371,6 +397,7 @@ export async function renewAgentLease(options: {
     path: "/api/agents/lease/renew",
     body: { leaseId: options.leaseId },
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
   return payload.lease;
 }
@@ -380,6 +407,7 @@ export async function releaseAgentLease(options: {
   wallet: LocalWallet;
   leaseId: string;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<void> {
   await signedFetch<{ ok: true }>({
     apiBaseUrl: options.apiBaseUrl,
@@ -388,6 +416,7 @@ export async function releaseAgentLease(options: {
     path: "/api/agents/lease",
     body: { leaseId: options.leaseId },
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 }
 
@@ -429,6 +458,7 @@ export async function requestTradeQuote(options: {
   wallet: LocalWallet;
   input: StructuredTradeQuoteRequest;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LiveTradeQuote> {
   const payload = await signedFetch<{ quote: LiveTradeQuote }>({
     apiBaseUrl: options.apiBaseUrl,
@@ -437,6 +467,7 @@ export async function requestTradeQuote(options: {
     path: "/api/agents/quote/trade",
     body: options.input,
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
   return payload.quote;
 }
@@ -524,6 +555,7 @@ export async function requestExecutionPermit(options: {
   /** When set, only this quote action may receive a permit. */
   expectedAction?: "trade" | "back";
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LiveExecutionPermit | LiveExecuteResult> {
   const payload = await signedFetch<{
     permit?: LiveExecutionPermit;
@@ -543,6 +575,7 @@ export async function requestExecutionPermit(options: {
         : {}),
     },
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 
   if (payload.permit) return payload.permit;
@@ -565,6 +598,7 @@ export async function submitSignedExecution(options: {
   rootHashSignature: string;
   authorizations?: Array<{ userOpHash: string; signature: string }>;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LiveExecuteResult> {
   const payload = await signedFetch<{
     result?: LiveExecuteResult;
@@ -584,6 +618,7 @@ export async function submitSignedExecution(options: {
         : {}),
     },
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 
   if (payload.result) return payload.result;
@@ -628,6 +663,7 @@ export async function publishConviction(options: {
   wallet: LocalWallet;
   input: LivePublishRequest;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LivePublishResult> {
   const payload = await signedFetch<{
     result?: LivePublishSuccess;
@@ -639,6 +675,7 @@ export async function publishConviction(options: {
     path: "/api/agents/publish",
     body: options.input,
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
 
   if (payload.result) return payload.result;
@@ -686,6 +723,7 @@ export async function requestBackQuote(options: {
   wallet: LocalWallet;
   input: StructuredBackQuoteRequest;
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LiveBackQuote> {
   const payload = await signedFetch<{ quote: LiveBackQuote }>({
     apiBaseUrl: options.apiBaseUrl,
@@ -694,6 +732,7 @@ export async function requestBackQuote(options: {
     path: "/api/agents/quote/back",
     body: options.input,
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   });
   return payload.quote;
 }

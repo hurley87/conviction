@@ -39,10 +39,11 @@ key environment variables are rejected.
 conviction-mcp doctor --profile <name> --api-base https://your-conviction-host
 ```
 
-Doctor checks profile integrity, keystore access, backend authentication, and
-account status without moving funds. On success it records setup verification
-and only then suggests funding. Optional `--report <path>` writes a redacted
-local support bundle and never uploads it.
+Doctor checks profile integrity, keystore access, Particle configuration, tool
+discovery (`tools/list` v1 contract), backend authentication, and account status
+without moving funds. On success it records setup verification and only then
+suggests funding. Optional `--report <path>` writes a redacted local support
+bundle and never uploads it.
 
 ```sh
 conviction-mcp status --profile <name>
@@ -109,8 +110,20 @@ Prefer Agent Settings (Privy session) when you want operator-only web auth.
 Live `conviction_execute_trade` obtains a backend execution permit, signs with
 the local ethers Particle-compatible signer (rootHash + EIP-7702), then submits
 the signatures. Backend unavailability fails closed before signing. A manually
-gated minimal-value smoke lives at `scripts/smoke-mcp-execute.ts` and must pass
-before release enablement (ADR 0045).
+gated minimal-value smoke lives at `scripts/smoke-mcp-execute.ts`. The full
+release-candidate journey (inspect → trade → publish → back → pause → optional
+retire) is `scripts/smoke-mcp-rc.ts` (issue #61). Both must stay out of CI
+(ADR 0014 / 0045).
+
+Diagnostics use stderr plus rotating files under `~/.conviction/logs` (30-day
+retention). Each tool call gets a correlation ID propagated as
+`x-conviction-correlation-id`. Stdout remains MCP protocol only.
+
+Release docs: `docs/mcp-install.md`, `docs/mcp-security.md`,
+`docs/mcp-troubleshooting.md`, `docs/mcp-error-codes.md`,
+`docs/mcp-compatibility-matrix.md`, `docs/mcp-semver-migration.md`,
+`docs/mcp-workflow-ops.md`, `docs/mcp-privacy-retention.md`, and
+`CHANGELOG.md`.
 
 ## Connect a host
 

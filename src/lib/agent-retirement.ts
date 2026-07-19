@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { getAddress, isAddress } from "ethers";
 
+import { emitOperatorEvent } from "@/lib/agent-operator-events";
 import {
   buildAuditEvent,
   type AgentAuditStore,
@@ -38,6 +39,18 @@ export const RETIREMENT_DUST_THRESHOLD_USD = 1;
 
 /** Recovery claim TTL — prevents stuck locks from blocking operator retry forever. */
 export const RECOVERY_CLAIM_TTL_MS = 120_000;
+
+function emitRetirementNeedsAttention(retirement: AgentRetirementRecord): void {
+  emitOperatorEvent({
+    type: "reconciliation_escalated",
+    agentId: retirement.agentId,
+    ownerUserId: retirement.ownerUserId,
+    resource: "retirement",
+    resourceId: retirement.retirementId,
+    retirementId: retirement.retirementId,
+    error: retirement.lastError,
+  });
+}
 
 export type RetirementReconciliationState =
   | "complete"
@@ -2090,7 +2103,9 @@ export async function reconcileRetirementResiduals(options: {
       attemptCount: retirement.attemptCount + 1,
       updatedAt: now.toISOString(),
     };
-    return options.retirementStore.update(next);
+    const updated = await options.retirementStore.update(next);
+    emitRetirementNeedsAttention(updated);
+    return updated;
   }
 
   // Without signers the workflow can only complete empty/dust inventories or
@@ -2110,7 +2125,11 @@ export async function reconcileRetirementResiduals(options: {
       lastError: message,
       attemptCount: retirement.attemptCount + 1,
     });
-    return updated ?? retirement;
+    const next = updated ?? retirement;
+    if (next.reconciliationState === "needs_attention") {
+      emitRetirementNeedsAttention(next);
+    }
+    return next;
   }
 
   const residualHoldings = buildResidualHoldings(classifyHoldings(balance)).map(
@@ -2143,7 +2162,9 @@ export async function reconcileRetirementResiduals(options: {
       attemptCount: retirement.attemptCount + 1,
       updatedAt: now.toISOString(),
     };
-    return options.retirementStore.update(next);
+    const updated = await options.retirementStore.update(next);
+    emitRetirementNeedsAttention(updated);
+    return updated;
   }
 
   const completed = await completeRetirementRecord({

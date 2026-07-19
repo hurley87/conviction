@@ -25,7 +25,8 @@
     "dist",
     "src",
     "skills",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -35,6 +36,15 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hurley87/conviction.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://github.com/hurley87/conviction/tree/main/packages/mcp#readme",
+  "bugs": {
+    "url": "https://github.com/hurley87/conviction/issues"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
