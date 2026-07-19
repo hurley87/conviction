@@ -19,7 +19,11 @@ import {
   type RawTransaction,
 } from "@/lib/ua/trade";
 import { buildReceipt, inferSpentSymbol } from "@/lib/verbs/receipt";
-import { shapeQuote, isBelowFloor } from "@/lib/verbs/quote";
+import {
+  assertTradeDebitWithinCeiling,
+  shapeQuote,
+  isBelowFloor,
+} from "@/lib/verbs/quote";
 import { narrateResult } from "@/lib/verbs/intent";
 import {
   isAboveMaxDebit,
@@ -213,6 +217,10 @@ export function createParticleUAClient(config: ParticleConfig): UAClient {
         raw,
       );
 
+      assertTradeDebitWithinCeiling(
+        raw.tokenChanges ?? {},
+        agreedQuote.dollarsIn,
+      );
       if (isBelowFloor(freshQuote.dollarsOut, agreedQuote.floorUsd)) {
         throw new FloorAbortError(
           "The quote moved — please confirm again.",

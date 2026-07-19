@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  assertTradeDebitWithinCeiling,
   computeFloor,
   isBelowFloor,
   shapeQuote,
@@ -32,6 +33,41 @@ describe("isBelowFloor", () => {
 });
 
 describe("shapeQuote", () => {
+  it("fails closed when Particle omits the authoritative debit (issue #84)", () => {
+    expect(() =>
+      shapeQuote(
+        {
+          totalIncrAmountInUSD: "0.995",
+          decr: [{ token: { chainId: 8453 } }],
+        },
+        { toAsset: "eth", fromAsset: "usdc", destChain: "Base" },
+        1,
+        "unsafe-convert",
+        {
+          feeQuotes: [
+            { fees: { totals: { feeTokenAmountInUSD: "0.1604" } } },
+          ],
+        },
+      ),
+    ).toThrow(/authoritative debit/i);
+  });
+
+  it("fails closed when Particle builds a quote above the requested debit", () => {
+    expect(() =>
+      shapeQuote(
+        {
+          totalDecrAmountInUSD: "5.00",
+          totalIncrAmountInUSD: "4.80",
+          decr: [{ token: { chainId: 8453 } }],
+        },
+        { toAsset: "eth", fromAsset: "usdc", destChain: "Base" },
+        1,
+        "oversized-convert",
+        {},
+      ),
+    ).toThrow(/debit \$5\.00 exceeds the agreed ceiling of \$1\.01/i);
+  });
+
   it("maps SDK tokenChanges to jargon-free confirm card fields", () => {
     const quote = shapeQuote(
       {
@@ -52,6 +88,24 @@ describe("shapeQuote", () => {
     expect(quote.floorUsd).toBeCloseTo(24.88 * 0.99);
     expect(quote.sourceChain).toBe("Base");
     expect(quote.destChain).toBe("Arbitrum");
+  });
+
+  it("rejects a Particle payload above the agreed debit ceiling", () => {
+    expect(() =>
+      assertTradeDebitWithinCeiling(
+        { totalDecrAmountInUSD: "5.00" },
+        1,
+      ),
+    ).toThrow(/debit \$5\.00 exceeds the agreed ceiling of \$1\.01/i);
+  });
+
+  it("accepts an authoritative debit within the agreed tolerance", () => {
+    expect(
+      assertTradeDebitWithinCeiling(
+        { totalDecrAmountInUSD: "1.005" },
+        1,
+      ),
+    ).toBe(1.005);
   });
 
   it("prefers the SDK feeQuotes breakdown over a zeroed total fee", () => {

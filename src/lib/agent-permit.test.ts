@@ -722,6 +722,113 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     expect((await permitStore.get(permit.permitId))?.status).toBe("released");
   });
 
+  it("rejects an oversized stored Particle debit before submission", async () => {
+    const send = createSignedTradeSender(
+      "0x1111111111111111111111111111111111111111",
+      { allowMock: true },
+    );
+
+    await expect(
+      send({
+        rawTransaction: {
+          rootHash:
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          tokenChanges: { totalDecrAmountInUSD: "5.00" },
+        },
+        rootHashSignature: "0xsig",
+        agreedQuote: {
+          dollarsIn: 1,
+          dollarsOut: 0.995,
+          feeUsd: 0.005,
+          etaSeconds: 1,
+          floorUsd: 0.985,
+          sourceChain: "Base",
+          destChain: "Base",
+          toAsset: "eth",
+          transactionId: "tx-oversized",
+          rawTransaction: {},
+        },
+        intent: {
+          toAsset: "eth",
+          fromAsset: "usdc",
+          destChain: "Base",
+        },
+        sizeUsd: 1,
+        receiptSlug: "r-oversized",
+      }),
+    ).rejects.toThrow(/debit \$5\.00 exceeds the agreed ceiling of \$1\.01/i);
+  });
+
+  it("releases the permit reservation when stored debit validation fails", async () => {
+    const wallet = Wallet.createRandom();
+    const { agent, quoteStore, quote } = await quoteFixture({
+      wallet,
+      sizeUsd: 1,
+    });
+    const stored = await quoteStore.get(quote.quoteId);
+    if (!stored) throw new Error("missing quote");
+    await quoteStore.save({
+      ...stored,
+      rawTransaction: {
+        ...(stored.rawTransaction as RawTransaction),
+        rootHash: VALID_ROOT_HASH,
+        tokenChanges: { totalDecrAmountInUSD: "5.00" },
+      },
+    });
+
+    const permitStore = new MemoryAgentPermitStore();
+    const idempotencyStore = new MemoryAgentIdempotencyStore();
+    const receipts = new MemoryAgentReceiptPersist();
+    const spendLedger = new MemorySpendLedger();
+    const permit = await issueTradeExecutionPermit({
+      agent,
+      quoteId: quote.quoteId,
+      idempotencyKey: "idem-oversized-debit",
+      leaseId: "lease-1",
+      activeLeaseId: "lease-1",
+      quoteStore,
+      permitStore,
+      idempotencyStore,
+      balance: FUNDED_BALANCE,
+      spendLedger,
+      now: () => FIXED_NOW,
+    });
+    if (!permit.ok || !("permitId" in permit)) {
+      throw new Error("expected permit");
+    }
+    let didSend = false;
+
+    const result = await submitSignedTradeExecution({
+      agent,
+      input: {
+        permitId: permit.permitId,
+        idempotencyKey: "idem-oversized-debit",
+        leaseId: "lease-1",
+        rootHashSignature: await signPermitRoot(wallet, permit.rawTransaction),
+      },
+      permitStore,
+      idempotencyStore,
+      receipts,
+      quoteStore,
+      spendLedger,
+      activeLeaseId: "lease-1",
+      now: () => FIXED_NOW,
+      send: async () => {
+        didSend = true;
+        throw new Error("oversized payload must not be sent");
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "quote_mismatch",
+      quoteId: quote.quoteId,
+    });
+    expect(didSend).toBe(false);
+    expect((await permitStore.get(permit.permitId))?.status).toBe("released");
+    expect(spendLedger.reservedUsd(agent.agentId)).toBe(0);
+  });
+
   it("fails closed when Particle is missing unless mock submit is allowed", async () => {
     const previous = {
       projectId: process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID,
@@ -741,6 +848,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
           rawTransaction: {
             rootHash:
               "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            tokenChanges: { totalDecrAmountInUSD: "1.00" },
           },
           rootHashSignature: "0xsig",
           agreedQuote: {
@@ -769,6 +877,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
         rawTransaction: {
           rootHash:
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          tokenChanges: { totalDecrAmountInUSD: "20.00" },
           userOps: [{ chainId: 42161, userOpHash: "0xop" }],
         },
         rootHashSignature: "0xsig",

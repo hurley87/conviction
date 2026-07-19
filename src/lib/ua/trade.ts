@@ -34,14 +34,20 @@ export function buildBuyPayload(intent: TradeIntent, sizeUsd: number) {
   };
 }
 
-/** A sell/convert: turning a specific held token (not cash) into the target.
- * The SDK rejects offloading a primary token via createBuyTransaction — these
- * must go through createConvertTransaction ("the Convert function"). */
+/** A sell/convert into a dollar-denominated stable target. Particle's
+ * createConvertTransaction `expectToken.amount` is denominated in destination
+ * token units, not USD. Non-stable targets must stay on createBuyTransaction's
+ * amountInUSD path or a $1 ETH intent becomes a request for 1 ETH. */
 export function isSellIntent(intent: TradeIntent): boolean {
+  const hasDollarDenominatedTarget =
+    intent.toAsset === "cash" ||
+    intent.toAsset === "usdc" ||
+    intent.toAsset === "usdt";
   return (
     !intent.token &&
     intent.fromAsset != null &&
-    intent.fromAsset !== "cash"
+    intent.fromAsset !== "cash" &&
+    hasDollarDenominatedTarget
   );
 }
 
