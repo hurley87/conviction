@@ -197,6 +197,93 @@ export const receiptLegSchema = z.object({
   explorerUrl: z.string(),
 });
 
+export const executionOutcomeSchema = z.enum([
+  "submitted",
+  "pending",
+  "finalized",
+  "partial",
+  "failed",
+  "needs_attention",
+]);
+
+export const executionLegStatusSchema = z.enum([
+  "submitted",
+  "pending",
+  "finalized",
+  "failed",
+  "needs_attention",
+]);
+
+export const executionLifecycleSchema = z.object({
+  executionId: z.string(),
+  quoteId: z.string(),
+  transactionId: z.string().nullable(),
+  outcome: executionOutcomeSchema,
+  settlementStatus: z.enum([
+    "held",
+    "accounting",
+    "persisting",
+    "settled",
+    "released",
+    "needs_attention",
+  ]),
+  attemptCount: z.number().int().nonnegative(),
+  lastProviderStatus: z.string().nullable(),
+  lastError: z.string().nullable(),
+  workflow: z.object({
+    runId: z.string().nullable(),
+    correlationId: z.string().nullable(),
+  }),
+  recovery: z
+    .object({
+      summary: z.string(),
+      affectedLegIds: z.array(z.string()),
+      steps: z.array(z.string()),
+    })
+    .nullable(),
+  legs: z.array(
+    z.object({
+      legId: z.string(),
+      kind: z.string(),
+      chainId: z.number().int().positive(),
+      chainName: z.string(),
+      required: z.boolean(),
+      status: executionLegStatusSchema,
+      confirmedHash: z.string().nullable(),
+      explorerUrl: z.string().nullable(),
+      attemptCount: z.number().int().nonnegative(),
+      lastProviderStatus: z.string().nullable(),
+      lastError: z.string().nullable(),
+      submittedAt: z.string().nullable(),
+      confirmedAt: z.string().nullable(),
+    }),
+  ),
+  evidence: z.array(
+    z.object({
+      observedAt: z.string(),
+      attempt: z.number().int().nonnegative(),
+      providerStatus: z.string().nullable(),
+      normalizedStatus: executionOutcomeSchema.nullable(),
+      legId: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+  ),
+}).superRefine((execution, context) => {
+  for (const [index, leg] of execution.legs.entries()) {
+    if (
+      leg.status !== "finalized" &&
+      (leg.confirmedHash !== null || leg.explorerUrl !== null)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["legs", index, "confirmedHash"],
+        message:
+          "Only finalized legs may expose confirmed hashes or explorer links.",
+      });
+    }
+  }
+});
+
 export const receiptSchema = z.object({
   slug: z.string(),
   summary: z.string(),
@@ -209,9 +296,96 @@ export const receiptSchema = z.object({
 export const receiptGetResultSchema = z.object({
   ok: z.literal(true),
   receiptId: z.string(),
-  receipt: receiptSchema,
-  entryAt: z.string(),
+  outcome: executionOutcomeSchema,
+  receipt: receiptSchema.nullable(),
+  entryAt: z.string().nullable(),
+  execution: executionLifecycleSchema.nullable(),
+}).superRefine((result, context) => {
+  if (result.execution && result.execution.outcome !== result.outcome) {
+    context.addIssue({
+      code: "custom",
+      path: ["execution", "outcome"],
+      message: "Receipt and execution outcomes must match.",
+    });
+  }
+  if (result.outcome === "finalized") {
+    const hasReceipt = result.receipt !== null && result.entryAt !== null;
+    const awaitingSettlement =
+      result.receipt === null &&
+      result.entryAt === null &&
+      result.execution !== null &&
+      result.execution.settlementStatus !== "settled";
+    if (!hasReceipt && !awaitingSettlement) {
+      context.addIssue({
+        code: "custom",
+        path: ["receipt"],
+        message:
+          "Finalized lookup requires receipt evidence or an execution still awaiting settlement.",
+      });
+    }
+  }
+  if (
+    result.outcome !== "finalized" &&
+    (result.receipt !== null ||
+      result.entryAt !== null ||
+      result.execution === null)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["receipt"],
+      message:
+        "Non-finalized receipt lookup must return lifecycle evidence without a receipt.",
+    });
+  }
 });
+
+export const executeFinalizedResultSchema = z.object({
+  ok: z.literal(true),
+  outcome: z.literal("finalized"),
+  receiptId: z.string(),
+  quoteId: z.string(),
+  quoteFingerprint: z.string(),
+  transactionId: z.string(),
+  summary: z.string(),
+  receipt: receiptSchema,
+  dollarsIn: z.number(),
+  dollarsOut: z.number(),
+  feeUsd: z.number(),
+  idempotencyKey: z.string(),
+  action: z.enum(["trade", "back"]).optional(),
+  entryId: z.string().optional(),
+  backRecordId: z.string().optional(),
+  reconciliationState: z
+    .enum(["complete", "pending_sync", "needs_attention"])
+    .optional(),
+  code: z.literal("executed_pending_sync").optional(),
+});
+
+export const executeLifecycleResultSchema = z.object({
+  ok: z.literal(false),
+  code: executionOutcomeSchema,
+  outcome: executionOutcomeSchema,
+  message: z.string(),
+  action: z.enum(["trade", "back"]).optional(),
+  quoteId: z.string(),
+  execution: executionLifecycleSchema,
+}).superRefine((result, context) => {
+  if (
+    result.code !== result.outcome ||
+    result.execution.outcome !== result.outcome
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["outcome"],
+      message: "Execute lifecycle code, outcome, and execution must match.",
+    });
+  }
+});
+
+export const executeResultSchema = z.discriminatedUnion("ok", [
+  executeFinalizedResultSchema,
+  executeLifecycleResultSchema,
+]);
 
 /** Shared structured error payload returned by live read tools (`isError: true`). */
 export const structuredErrorResultSchema = z.object({
@@ -230,4 +404,6 @@ export type ConvictionListResult = z.infer<typeof convictionListResultSchema>;
 export type ConvictionGetResult = z.infer<typeof convictionGetResultSchema>;
 export type FeedSummaryResult = z.infer<typeof feedSummaryResultSchema>;
 export type ReceiptGetResult = z.infer<typeof receiptGetResultSchema>;
+export type ExecutionLifecycle = z.infer<typeof executionLifecycleSchema>;
+export type ExecuteResult = z.infer<typeof executeResultSchema>;
 export type StructuredErrorResult = z.infer<typeof structuredErrorResultSchema>;

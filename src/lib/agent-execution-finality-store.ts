@@ -312,6 +312,19 @@ export class NeonExecutionFinalityStore implements ExecutionFinalityStore {
     `);
   }
 
+  async getByReceiptId(
+    agentId: string,
+    receiptId: string,
+  ): Promise<ExecutionFinalityRecord | null> {
+    await ensureSchema(this.sql);
+    return this.one(this.sql`
+      SELECT * FROM agent_execution_finality
+      WHERE agent_id = ${agentId}::uuid
+        AND settlement_result ->> 'receiptId' = ${receiptId}
+      LIMIT 1
+    `);
+  }
+
   async bindParticleTransaction(
     input: BindParticleTransactionInput,
   ): Promise<ExecutionFinalityRecord | null> {

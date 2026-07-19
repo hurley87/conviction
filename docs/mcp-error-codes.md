@@ -11,6 +11,12 @@ signed agent HTTP routes. Messages may change; codes are part of the v1 contract
 | `arbitrary_token_rejected` | Caller supplied contract/TokenRef fields; named assets only. |
 | `conviction_not_found` | Canonical conviction entry missing. |
 | `executed_pending_sync` | Onchain succeeded; social attribution still reconciling. |
+| `submitted` | Particle accepted or may have accepted the durable transaction; finality is unresolved and this is not success. |
+| `pending` | Read-only reconciliation has not observed terminal finality; retry only with the same idempotency key. |
+| `finalized` | Provider finality is confirmed but receipt/accounting settlement is still completing; no re-sign or resubmit. |
+| `partial` | At least one required leg confirmed and another failed or remains unresolved; not publishable and operator review is required. |
+| `failed` | Execution reached a confirmed all-leg failure; not a successful execution or receipt. |
+| `needs_attention` | Automatic reconciliation or settlement exhausted or found a non-retryable condition; follow Agent Access recovery guidance. |
 | `forbidden_field` | Input field is not allowed on this tool. |
 | `gate_failed` | Publication-intent gate did not pass. |
 | `handle_unavailable` | Requested agent handle is taken. |

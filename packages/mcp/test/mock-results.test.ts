@@ -4,6 +4,7 @@ import {
   MOCK_ACCOUNT_STATUS,
   MOCK_INTERACTION_ERROR,
   MOCK_INTERACTION_SUCCESS,
+  MOCK_FINALITY_RECEIPT_FIXTURES,
   accountStatusResult,
   mockInteractionResult,
 } from "../src/mock-fixtures.js";
@@ -31,6 +32,24 @@ describe("mock result builders", () => {
     expect(toolResult(result, !result.ok)).toMatchObject({
       isError: true,
       structuredContent: MOCK_INTERACTION_ERROR,
+    });
+  });
+
+  it("provides deterministic pending and partial lifecycle fixtures", () => {
+    expect(MOCK_FINALITY_RECEIPT_FIXTURES["mock-execution-pending"]).toMatchObject({
+      outcome: "pending",
+      receipt: null,
+      execution: { legs: [{ status: "pending", confirmedHash: null }] },
+    });
+    expect(MOCK_FINALITY_RECEIPT_FIXTURES["mock-execution-partial"]).toMatchObject({
+      outcome: "partial",
+      receipt: null,
+      execution: {
+        legs: [
+          { status: "finalized", confirmedHash: "0xmockconfirmedsource" },
+          { status: "failed", confirmedHash: null },
+        ],
+      },
     });
   });
 });

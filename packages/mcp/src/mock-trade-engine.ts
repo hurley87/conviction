@@ -6,6 +6,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { MOCK_FINALITY_RECEIPT_FIXTURES } from "./mock-fixtures.js";
+import type { ExecutionLifecycle } from "./agent-reads-contract.js";
+
 export const MOCK_QUOTE_TTL_MS = 60_000;
 export const MOCK_FEE_RATE = 0.005;
 export const MOCK_FLOOR_TOLERANCE = 0.01;
@@ -72,6 +75,7 @@ export type MockReceipt = {
 
 export type MockExecuteSuccess = {
   ok: true;
+  outcome: "finalized";
   mode: "mock";
   receiptId: string;
   quoteId: string;
@@ -138,8 +142,24 @@ export type MockReceiptGetResult =
       ok: true;
       mode: "mock";
       receiptId: string;
+      outcome: "finalized";
       receipt: MockReceipt;
       entryAt: string;
+      execution: null;
+    }
+  | {
+      ok: true;
+      mode: "mock";
+      receiptId: string;
+      outcome:
+        | "submitted"
+        | "pending"
+        | "partial"
+        | "failed"
+        | "needs_attention";
+      receipt: null;
+      entryAt: null;
+      execution: ExecutionLifecycle;
     }
   | MockExecuteError;
 
@@ -1197,6 +1217,7 @@ export class MockTradeEngine {
 
     const success: MockBackSuccess = {
       ok: true,
+      outcome: "finalized",
       mode: "mock",
       receiptId,
       quoteId: quote.quoteId,
@@ -1242,6 +1263,13 @@ export class MockTradeEngine {
     }
     const stored = this.state.receipts[id];
     if (!stored) {
+      const fixture =
+        MOCK_FINALITY_RECEIPT_FIXTURES[
+          id as keyof typeof MOCK_FINALITY_RECEIPT_FIXTURES
+      ];
+      if (fixture) {
+        return structuredClone(fixture) as unknown as MockReceiptGetResult;
+      }
       return {
         ok: false,
         mode: "mock",
@@ -1253,8 +1281,10 @@ export class MockTradeEngine {
       ok: true,
       mode: "mock",
       receiptId: id,
+      outcome: "finalized",
       receipt: structuredClone(stored.receipt),
       entryAt: stored.entryAt,
+      execution: null,
     };
   }
 
@@ -1437,6 +1467,7 @@ export class MockTradeEngine {
 
       return persistResult({
         ok: true,
+        outcome: "finalized",
         mode: "mock",
         receiptId,
         quoteId: quote.quoteId,

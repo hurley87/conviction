@@ -266,6 +266,7 @@ describe("createLiveServer", () => {
           JSON.stringify({
             ok: true,
             receiptId: "receipt-1",
+            outcome: "finalized",
             receipt: {
               slug: "receipt-1",
               summary: "Bought ETH",
@@ -281,6 +282,7 @@ describe("createLiveServer", () => {
               ],
             },
             entryAt: "2026-07-15T18:00:00.000Z",
+            execution: null,
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );

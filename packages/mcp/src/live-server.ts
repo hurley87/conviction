@@ -20,6 +20,7 @@ import { executeLiveTrade } from "./live-execute.js";
 import { getConvictionLogger, type ConvictionLogger } from "./logger.js";
 import {
   accountStatusOutputSchema,
+  executeOutputSchema,
   getConvictionOutputSchema,
   getReceiptOutputSchema,
   listConvictionsOutputSchema,
@@ -121,6 +122,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
       instructions: [
         "Conviction MCP live mode for one agent Universal Account.",
         "Quote before execute for all value-moving actions.",
+        "Execution outcomes are submitted, pending, finalized, partial, failed, or needs_attention. Only finalized returns success; same-key retries reconcile without re-signing or resubmitting.",
         "The model never chooses identity, destination addresses, or signing material.",
         "Use conviction_account_status, conviction_list_convictions, conviction_get_conviction, conviction_summarize_feed, and conviction_get_receipt to inspect the network.",
         "Back with conviction_quote_back then conviction_back_conviction; targets come only from canonical convictions.",
@@ -253,7 +255,8 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     "conviction_get_receipt",
     {
       title: "Get a receipt",
-      description: "Retrieve one receipt and explorer links.",
+      description:
+        "Retrieve finalized receipt evidence or the submitted, pending, partial, failed, or needs_attention lifecycle. Explorer links are emitted only for confirmed hashes; raw provider payloads and planned hashes are never returned.",
       inputSchema: {
         receiptId: z.string().min(1),
       },
@@ -453,11 +456,12 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     {
       title: "Execute a trade quote",
       description:
-        "Execute a recent trade quote by quoteId using the local Particle signer. Obtains a live backend execution permit before signing. Never silently requotes or exposes signer material.",
+        "Execute a recent trade quote by quoteId using the local Particle signer. Returns success only with outcome finalized; submitted, pending, partial, failed, and needs_attention remain explicit non-success results. Same-key retries reconcile without re-signing or resubmitting.",
       inputSchema: {
         quoteId: z.string().min(1),
         idempotencyKey: z.string().min(1),
       },
+      outputSchema: executeOutputSchema,
       annotations: idempotentWriteAnnotations,
     },
     async ({ quoteId, idempotencyKey }) => {
@@ -480,7 +484,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     {
       title: "Publish a conviction",
       description:
-        "Publish a completed trade plus thesis, why-now, and what-breaks-it. Requires a successful unique owned receipt. Author, trade metadata, and gate report are server-derived.",
+        "Publish a finalized confirmed trade plus thesis, why-now, and what-breaks-it. Pending, partial, failed, and needs_attention executions are never eligible. Requires a unique owned receipt; author, trade metadata, and gate report are server-derived.",
       inputSchema: {
         receiptId: z.string().min(1),
         thesis: z.string().min(1),
@@ -565,11 +569,12 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     {
       title: "Back a conviction",
       description:
-        "Execute a recent back quote and create durable attribution. Never requotes or re-executes a successful back.",
+        "Execute a recent back quote and create durable attribution only after finalized confirmed execution. Submitted, pending, partial, failed, and needs_attention are explicit non-success results. Same-key retries never re-sign or resubmit.",
       inputSchema: {
         quoteId: z.string().min(1),
         idempotencyKey: z.string().min(1),
       },
+      outputSchema: executeOutputSchema,
       annotations: idempotentWriteAnnotations,
     },
     async ({ quoteId, idempotencyKey }) => {

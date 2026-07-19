@@ -8,6 +8,7 @@ import {
   type ConvictionListResult,
   type FeedSummaryResult,
   type ReceiptGetResult,
+  type ExecutionLifecycle,
 } from "./agent-reads-contract.js";
 import {
   ConvictionApiError,
@@ -501,6 +502,7 @@ export type LiveExecutionPermit = {
 
 export type LiveExecuteSuccess = {
   ok: true;
+  outcome: "finalized";
   receiptId: string;
   quoteId: string;
   quoteFingerprint: string;
@@ -531,51 +533,14 @@ export type LiveExecuteSuccess = {
   code?: "executed_pending_sync";
 };
 
-/** Internal authenticated lifecycle payload; public MCP schemas follow later. */
-export type LiveExecutionLifecycle = {
-  executionId: string;
-  agentId: string;
-  permitId: string;
-  quoteId: string;
-  idempotencyKey: string;
-  particleTransactionId: string | null;
-  outcome:
-    | "submitted"
-    | "pending"
-    | "finalized"
-    | "partial"
-    | "failed"
-    | "needs_attention";
-  legs: Array<{
-    legId: string;
-    kind: string;
-    chainId: number;
-    chainName: string;
-    required: boolean;
-    status: "submitted" | "pending" | "finalized" | "failed" | "needs_attention";
-    confirmedHash: string | null;
-    lastProviderStatus: string | null;
-    lastError: string | null;
-  }>;
-  lastProviderStatus: string | null;
-  lastError: string | null;
-  settlementStatus:
-    | "held"
-    | "accounting"
-    | "persisting"
-    | "settled"
-    | "released"
-    | "needs_attention";
-  settlementError: string | null;
-};
-
 export type LiveExecuteError = {
   ok: false;
   code: string;
   message: string;
+  outcome?: ExecutionLifecycle["outcome"];
   action?: "trade" | "back";
   quoteId?: string;
-  execution?: LiveExecutionLifecycle;
+  execution?: ExecutionLifecycle;
   fields?: Array<{ field: string; code: string; message: string }>;
 };
 

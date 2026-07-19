@@ -95,6 +95,15 @@ export async function POST(request: Request) {
     });
 
     if (!result.ok) {
+      if (result.execution) {
+        return Response.json(
+          { result },
+          {
+            status: 200,
+            headers: { "cache-control": "no-store" },
+          },
+        );
+      }
       return Response.json(
         { error: result },
         {
@@ -113,7 +122,7 @@ export async function POST(request: Request) {
     }
 
     return Response.json(
-      { result },
+      { result: { ...result, outcome: "finalized" as const } },
       { status: 200, headers: { "cache-control": "no-store" } },
     );
   } catch (error) {

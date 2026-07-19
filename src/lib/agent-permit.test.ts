@@ -618,10 +618,11 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     });
     expect(first).toMatchObject({
       ok: false,
-      code: "unavailable",
+      code: "pending",
+      outcome: "pending",
       execution: {
         outcome: "pending",
-        particleTransactionId: permit.transactionId,
+        transactionId: permit.transactionId,
       },
     });
 

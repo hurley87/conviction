@@ -1052,6 +1052,14 @@ export function backErrorStatus(
       return 409;
     case "invalid_input":
       return 422;
+    case "submitted":
+    case "pending":
+    case "finalized":
+      return 202;
+    case "partial":
+    case "failed":
+    case "needs_attention":
+      return 409;
     case "unavailable":
       return 503;
     default: {

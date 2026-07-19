@@ -333,7 +333,12 @@ describe("confirmed execution settlement", () => {
         spends += 1;
       }),
     );
-    expect(result).toMatchObject({ ok: false, execution: { outcome: "partial" } });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "partial",
+      outcome: "partial",
+      execution: { outcome: "partial" },
+    });
     expect(spends).toBe(0);
     expect(state.spendLedger.reservedUsd(AGENT.agentId)).toBe(PERMIT.dollarsIn);
     expect(await state.tradeReceipts.get(state.record.executionId)).toBeNull();
@@ -378,8 +383,18 @@ describe("confirmed execution settlement", () => {
     const latest = (await state.executionStore.get(state.record.executionId))!;
     const second = await settleExecutionFinality({ ...options, record: latest });
 
-    expect(first).toMatchObject({ ok: false, execution: { outcome: "failed" } });
-    expect(second).toMatchObject({ ok: false, execution: { outcome: "failed" } });
+    expect(first).toMatchObject({
+      ok: false,
+      code: "failed",
+      outcome: "failed",
+      execution: { outcome: "failed" },
+    });
+    expect(second).toMatchObject({
+      ok: false,
+      code: "failed",
+      outcome: "failed",
+      execution: { outcome: "failed" },
+    });
     expect(spends).toBe(0);
     expect(state.spendLedger.reservedUsd(AGENT.agentId)).toBe(0);
     expect((await state.permitStore.get(PERMIT.permitId))?.status).toBe("released");

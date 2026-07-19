@@ -16,6 +16,7 @@ import type {
   ExecutionFinalityRecord,
   ExecutionFinalityStore,
 } from "@/lib/agent-execution-finality";
+import { toAgentExecutionLifecycle } from "@/lib/agent-execution-public";
 import { emitOperatorEvent } from "@/lib/agent-operator-events";
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import {
@@ -168,6 +169,12 @@ function isDurablePermitError(code: AgentExecuteErrorBody["code"]): boolean {
     case "price_floor_breached":
     case "spend_limit_exceeded":
       return true;
+    case "submitted":
+    case "pending":
+    case "finalized":
+    case "partial":
+    case "failed":
+    case "needs_attention":
     case "unavailable":
       return false;
     default: {
@@ -222,14 +229,15 @@ function executionPendingResult(
           : "Execution finality is unresolved. The same durable transaction is being reconciled; do not resign or resubmit.";
   return {
     ok: false,
-    code: "unavailable",
+    code: record.outcome,
+    outcome: record.outcome,
     message: terminal
       ? record.settlementError ??
         "Execution is confirmed by Particle and is awaiting finalized receipt settlement."
       : terminalMessage,
     ...(action ? { action } : {}),
     quoteId: record.quoteId,
-    execution: record,
+    execution: toAgentExecutionLifecycle(record),
   };
 }
 
@@ -490,6 +498,7 @@ export async function settleExecutionFinality(
 
   let success: AgentExecuteSuccess & { action: "trade" | "back" } = {
     ok: true,
+    outcome: "finalized",
     receiptId: receipt.slug,
     quoteId: permit.quoteId,
     quoteFingerprint: permit.quoteFingerprint,
@@ -546,7 +555,7 @@ export async function settleExecutionFinality(
       at: (options.now?.() ?? new Date()).toISOString(),
       patch: {
         settlementStatus: "settled",
-        settlementResult: success,
+        settlementResult: { ...success, outcome: "finalized" },
         settlementError: null,
       },
     });
@@ -1826,6 +1835,7 @@ export async function submitSignedTradeExecution(options: {
     const countedDebitUsd = sendResult.receipt.dollarsIn;
     const success: AgentExecuteSuccess = {
       ok: true,
+      outcome: "finalized",
       receiptId: sendResult.receipt.slug,
       quoteId: permit.quoteId,
       quoteFingerprint: permit.quoteFingerprint,
@@ -1939,6 +1949,14 @@ export function executeErrorStatus(
       return 409;
     case "invalid_input":
       return 422;
+    case "submitted":
+    case "pending":
+    case "finalized":
+      return 202;
+    case "partial":
+    case "failed":
+    case "needs_attention":
+      return 409;
     case "unavailable":
       return 503;
     default: {

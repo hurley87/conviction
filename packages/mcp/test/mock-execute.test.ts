@@ -101,6 +101,27 @@ describe("mock trade execute", () => {
       ok: true,
       mode: "mock",
       receiptId: execBody.receiptId,
+      outcome: "finalized",
+    });
+  });
+
+  it.each([
+    ["mock-execution-pending", "pending"],
+    ["mock-execution-partial", "partial"],
+  ] as const)("serves deterministic %s lifecycle evidence", async (receiptId, outcome) => {
+    const client = await connectMock();
+    const result = await client.callTool({
+      name: "conviction_get_receipt",
+      arguments: { receiptId },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      receiptId,
+      outcome,
+      receipt: null,
+      execution: { executionId: receiptId, outcome },
     });
   });
 

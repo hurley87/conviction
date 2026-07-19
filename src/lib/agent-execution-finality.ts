@@ -85,6 +85,7 @@ export type ExecutionSettlementStatus =
 /** Durable successful result. It is populated only from confirmed finality. */
 export type ExecutionFinalizedResult = {
   ok: true;
+  outcome: "finalized";
   receiptId: string;
   quoteId: string;
   quoteFingerprint: string;
@@ -204,6 +205,10 @@ export type ExecutionFinalityStore = {
   getByQuoteId(quoteId: string): Promise<ExecutionFinalityRecord | null>;
   getByParticleTransactionId(
     particleTransactionId: string,
+  ): Promise<ExecutionFinalityRecord | null>;
+  getByReceiptId(
+    agentId: string,
+    receiptId: string,
   ): Promise<ExecutionFinalityRecord | null>;
   bindParticleTransaction(
     input: BindParticleTransactionInput,
@@ -664,6 +669,21 @@ export class MemoryExecutionFinalityStore implements ExecutionFinalityStore {
     particleTransactionId: string,
   ): Promise<ExecutionFinalityRecord | null> {
     return this.recordFor(this.byTransaction, particleTransactionId);
+  }
+
+  async getByReceiptId(
+    agentId: string,
+    receiptId: string,
+  ): Promise<ExecutionFinalityRecord | null> {
+    for (const record of this.records.values()) {
+      if (
+        record.agentId === agentId &&
+        record.settlementResult?.receiptId === receiptId
+      ) {
+        return cloneExecutionFinalityRecord(record);
+      }
+    }
+    return null;
   }
 
   async bindParticleTransaction(

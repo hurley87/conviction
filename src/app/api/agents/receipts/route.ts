@@ -6,6 +6,9 @@ import {
 import { agentReceiptPath } from "@/lib/agent-network-reads";
 import { getStoredReceiptRecord } from "@/lib/receipts";
 import { getExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
+import {
+  toAgentExecutionLifecycle,
+} from "@/lib/agent-execution-public";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -18,34 +21,23 @@ export async function GET(request: Request) {
     request,
     path: agentReceiptPath(receiptId),
     handler: async (agent) => {
-      const execution = await getExecutionFinalityStore().get(receiptId);
+      const finalityStore = getExecutionFinalityStore();
+      const directExecution = await finalityStore.get(receiptId);
+      const execution =
+        directExecution ??
+        (await finalityStore.getByReceiptId(agent.agentId, receiptId));
       if (execution) {
         if (execution.agentId !== agent.agentId) {
           throw new ReceiptNotFoundError();
         }
         if (!execution.settlementResult) {
           return {
-            ok: false as const,
+            ok: true as const,
             receiptId,
-            execution: {
-              executionId: execution.executionId,
-              transactionId: execution.particleTransactionId,
-              outcome: execution.outcome,
-              settlementStatus: execution.settlementStatus,
-              lastProviderStatus: execution.lastProviderStatus,
-              lastError: execution.lastError ?? execution.settlementError,
-              legs: execution.legs.map((leg) => ({
-                legId: leg.legId,
-                kind: leg.kind,
-                chainId: leg.chainId,
-                chainName: leg.chainName,
-                required: leg.required,
-                status: leg.status,
-                confirmedHash: leg.confirmedHash,
-                lastProviderStatus: leg.lastProviderStatus,
-                lastError: leg.lastError,
-              })),
-            },
+            outcome: execution.outcome,
+            receipt: null,
+            entryAt: null,
+            execution: toAgentExecutionLifecycle(execution),
           };
         }
       }
@@ -56,8 +48,12 @@ export async function GET(request: Request) {
       return {
         ok: true as const,
         receiptId,
+        outcome: "finalized" as const,
         receipt: record.receipt,
         entryAt: record.entryAt,
+        execution: execution
+          ? toAgentExecutionLifecycle(execution)
+          : null,
       };
     },
     onError: (error) => {
