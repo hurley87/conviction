@@ -15,11 +15,13 @@ import {
   finalizeRetirementRecovery,
   prepareRetirementRecovery,
   retryRetirementRecovery,
+  startRetirementReconciliationWorkflow,
   submitRetirementLeg,
   type RetirementPrepareResult,
   type RetirementRecoveryResult,
 } from "@/lib/agent-retirement";
 import { getAgentRetirementStore } from "@/lib/agent-retirement-store";
+import { createRetirementWorkflowStarter } from "@/lib/agent-retirement-workflow";
 import { getUAClient, hasParticleEnv } from "@/lib/ua";
 import { mockTradeSigners } from "@/lib/ua/mock";
 
@@ -151,7 +153,19 @@ export async function POST(request: Request) {
             ? { authorizations: body.authorizations }
             : {}),
         });
-        return jsonResult(submitted);
+        const withWorkflow =
+          submitted.retirement.reconciliationState === "pending_sync"
+            ? await startRetirementReconciliationWorkflow({
+                retirementStore,
+                retirementId,
+                workflow: createRetirementWorkflowStarter(),
+              })
+            : null;
+        return jsonResult(
+          withWorkflow
+            ? { ...submitted, retirement: withWorkflow }
+            : submitted,
+        );
       }
 
       if (action === "finalize") {

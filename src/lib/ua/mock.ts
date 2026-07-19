@@ -197,15 +197,24 @@ export class MockUAClient implements UAClient {
   async getTransactionStatus(
     transactionId: string,
   ): Promise<ParticleTransactionStatusRead> {
-    const chainId = transactionId.includes("withdraw")
-      ? ARBITRUM_CHAIN_ID
-      : BASE_CHAIN_ID;
+    const withdrawal = transactionId.includes("withdraw");
     return normalizeParticleTransactionStatus(transactionId, {
       transactionId,
       status: 7,
+      ...(withdrawal
+        ? {}
+        : {
+            depositUserOperations: [
+              {
+                chainId: BASE_CHAIN_ID,
+                status: 3,
+                txHash: `0x${"c".repeat(64)}`,
+              },
+            ],
+          }),
       lendingUserOperations: [
         {
-          chainId,
+          chainId: ARBITRUM_CHAIN_ID,
           status: 3,
           txHash: `0x${"d".repeat(64)}`,
         },

@@ -24,6 +24,7 @@ type RetirementRow = {
   conversion_legs: unknown;
   transfer_leg: unknown;
   residual_holdings: unknown;
+  residual_observation: unknown;
   recovered_usd: number | string;
   dust_usd: number | string;
   attempt_count: number | null;
@@ -40,6 +41,83 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+function residualObservationFromUnknown(
+  value: unknown,
+): AgentRetirementRecord["residualObservation"] {
+  const source =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    consecutiveDustObservations:
+      typeof source.consecutiveDustObservations === "number" &&
+      Number.isInteger(source.consecutiveDustObservations) &&
+      source.consecutiveDustObservations >= 0
+        ? source.consecutiveDustObservations
+        : 0,
+    firstDustObservedAt:
+      typeof source.firstDustObservedAt === "string"
+        ? source.firstDustObservedAt
+        : null,
+    lastObservedAt:
+      typeof source.lastObservedAt === "string"
+        ? source.lastObservedAt
+        : null,
+    lastResidualUsd:
+      typeof source.lastResidualUsd === "number"
+        ? source.lastResidualUsd
+        : null,
+  };
+}
+
+function legFinalityFromUnknown(
+  value: unknown,
+): RetirementConversionLeg["finality"] {
+  const source =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    outcome:
+      typeof source.outcome === "string"
+        ? (source.outcome as RetirementConversionLeg["finality"]["outcome"])
+        : null,
+    providerStatus:
+      typeof source.providerStatus === "string"
+        ? source.providerStatus
+        : null,
+    attemptCount:
+      typeof source.attemptCount === "number" &&
+      Number.isInteger(source.attemptCount) &&
+      source.attemptCount >= 0
+        ? source.attemptCount
+        : 0,
+    submittedAt:
+      typeof source.submittedAt === "string" ? source.submittedAt : null,
+    confirmedAt:
+      typeof source.confirmedAt === "string" ? source.confirmedAt : null,
+    confirmedHashes: Array.isArray(source.confirmedHashes)
+      ? (source.confirmedHashes as RetirementConversionLeg["finality"]["confirmedHashes"])
+      : [],
+    providerEvidence: Array.isArray(source.providerEvidence)
+      ? (source.providerEvidence as RetirementConversionLeg["finality"]["providerEvidence"])
+      : [],
+  };
+}
+
+function conversionLegsFromUnknown(value: unknown): RetirementConversionLeg[] {
+  return asArray<RetirementConversionLeg>(value).map((leg) => ({
+    ...leg,
+    finality: legFinalityFromUnknown(leg.finality),
+  }));
+}
+
+function transferLegFromUnknown(value: unknown): RetirementTransferLeg | null {
+  if (!value || typeof value !== "object") return null;
+  const leg = value as RetirementTransferLeg;
+  return { ...leg, finality: legFinalityFromUnknown(leg.finality) };
+}
+
 function recordFromRow(row: RetirementRow): AgentRetirementRecord {
   return {
     retirementId: row.retirement_id,
@@ -49,13 +127,13 @@ function recordFromRow(row: RetirementRow): AgentRetirementRecord {
     idempotencyKey: row.idempotency_key,
     reconciliationState:
       row.reconciliation_state as RetirementReconciliationState,
-    conversionLegs: asArray<RetirementConversionLeg>(row.conversion_legs),
-    transferLeg:
-      row.transfer_leg && typeof row.transfer_leg === "object"
-        ? (row.transfer_leg as RetirementTransferLeg)
-        : null,
+    conversionLegs: conversionLegsFromUnknown(row.conversion_legs),
+    transferLeg: transferLegFromUnknown(row.transfer_leg),
     residualHoldings: asArray<RetirementResidualHolding>(
       row.residual_holdings,
+    ),
+    residualObservation: residualObservationFromUnknown(
+      row.residual_observation,
     ),
     recoveredUsd: Number(row.recovered_usd),
     dustUsd: Number(row.dust_usd),
@@ -91,6 +169,7 @@ async function ensureSchema(
       conversion_legs jsonb NOT NULL DEFAULT '[]'::jsonb,
       transfer_leg jsonb,
       residual_holdings jsonb NOT NULL DEFAULT '[]'::jsonb,
+      residual_observation jsonb NOT NULL DEFAULT '{}'::jsonb,
       recovered_usd numeric NOT NULL DEFAULT 0,
       dust_usd numeric NOT NULL DEFAULT 0,
       attempt_count integer NOT NULL DEFAULT 0,
@@ -113,6 +192,10 @@ async function ensureSchema(
       ADD COLUMN IF NOT EXISTS recovery_claimed_at timestamptz
   `;
   await sql`
+    ALTER TABLE agent_retirements
+      ADD COLUMN IF NOT EXISTS residual_observation jsonb NOT NULL DEFAULT '{}'::jsonb
+  `;
+  await sql`
     CREATE INDEX IF NOT EXISTS agent_retirements_reconciliation
       ON agent_retirements (reconciliation_state)
   `;
@@ -129,7 +212,7 @@ class NeonAgentRetirementStore implements AgentRetirementStore {
         INSERT INTO agent_retirements (
           retirement_id, agent_id, owner_user_id, return_address,
           idempotency_key, reconciliation_state, conversion_legs, transfer_leg,
-          residual_holdings, recovered_usd, dust_usd, attempt_count,
+          residual_holdings, residual_observation, recovered_usd, dust_usd, attempt_count,
           workflow_run_id, last_error, recovery_claim_token, recovery_claimed_at,
           created_at, updated_at, completed_at
         ) VALUES (
@@ -142,6 +225,7 @@ class NeonAgentRetirementStore implements AgentRetirementStore {
           ${JSON.stringify(record.conversionLegs)}::jsonb,
           ${record.transferLeg ? JSON.stringify(record.transferLeg) : null}::jsonb,
           ${JSON.stringify(record.residualHoldings)}::jsonb,
+          ${JSON.stringify(record.residualObservation)}::jsonb,
           ${record.recoveredUsd},
           ${record.dustUsd},
           ${record.attemptCount},
@@ -219,6 +303,7 @@ class NeonAgentRetirementStore implements AgentRetirementStore {
         conversion_legs = ${JSON.stringify(record.conversionLegs)}::jsonb,
         transfer_leg = ${record.transferLeg ? JSON.stringify(record.transferLeg) : null}::jsonb,
         residual_holdings = ${JSON.stringify(record.residualHoldings)}::jsonb,
+        residual_observation = ${JSON.stringify(record.residualObservation)}::jsonb,
         recovered_usd = ${record.recoveredUsd},
         dust_usd = ${record.dustUsd},
         attempt_count = ${record.attemptCount},
