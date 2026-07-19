@@ -132,7 +132,7 @@ describe("shapeQuote", () => {
         decr: [{ token: { chainId: 8453 } }],
       },
       intent,
-      0.5,
+      0.66,
       "tx-delta",
       {},
     );

@@ -132,21 +132,31 @@ export function shapeQuote(
   rawTransaction: unknown,
   etaSeconds = 45,
 ): TradeQuote {
+  // A buy's amountInUSD excludes separately itemized Particle fees. Include
+  // only authoritative fee data in the initial ceiling; otherwise an unknown
+  // overage must fail closed rather than being inferred as a fee.
+  const sdkFeeUsd = extractFeeUsd(rawTransaction);
+  const reportedFeeUsd = parseUsd(changes.totalFeeInUSD);
+  const authorizedDebitUsd =
+    sizeUsd + (sdkFeeUsd ?? (reportedFeeUsd > 0 ? reportedFeeUsd : 0));
   // Bind the transaction Particle constructed to the amount the caller asked
   // to authorize. This catches both missing economics and oversized payloads
   // before a quote can enter the permit/spend flow.
-  const dollarsIn = assertTradeDebitWithinCeiling(changes, sizeUsd);
+  const dollarsIn = assertTradeDebitWithinCeiling(
+    changes,
+    authorizedDebitUsd,
+  );
   const dollarsOut = parseUsd(
     changes.totalIncrAmountInUSD,
     dollarsIn * 0.995,
   );
   // Prefer the SDK's authoritative fee breakdown; fall back to the reported
   // total, then to the in/out delta — never silently show $0 when it cost money.
-  let feeUsd = extractFeeUsd(rawTransaction);
-  if (feeUsd == null) {
-    const reported = parseUsd(changes.totalFeeInUSD);
-    feeUsd = reported > 0 ? reported : Math.max(0, dollarsIn - dollarsOut);
-  }
+  const feeUsd =
+    sdkFeeUsd ??
+    (reportedFeeUsd > 0
+      ? reportedFeeUsd
+      : Math.max(0, dollarsIn - dollarsOut));
   const floorUsd = computeFloor(dollarsOut);
   if (!intent.destChain) {
     throw new Error("Settlement chain required before quoting");
