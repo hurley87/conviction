@@ -42,8 +42,11 @@ async function reconcileRetirementStep(
  */
 export async function retirementRecoveryWorkflow(
   retirementId: string,
+  correlationId?: string,
 ): Promise<AgentRetirementRecord> {
   "use workflow";
+
+  void correlationId;
 
   let latest = await reconcileRetirementStep(retirementId);
 

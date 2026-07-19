@@ -1,12 +1,17 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+
 import { ConvictionApiError } from "./api-client.js";
 import { writeDoctorReport } from "./doctor-report.js";
 import { formatHostConfigGuide } from "./host-config.js";
-import { loadWalletFromKeystore } from "./keystore.js";
+import { loadWalletFromKeystore, type LocalWallet } from "./keystore.js";
+import { LeaseHandle } from "./lease.js";
 import {
   fetchAgentStatus,
   markSetupVerified,
   type LiveAgentStatus,
 } from "./live-api-client.js";
+import { createLiveServer, LIVE_TOOLS } from "./live-server.js";
 import { profilePath, resolveConvictionPaths } from "./paths.js";
 import { readAgentProfile, type AgentProfile } from "./profile.js";
 import { SETUP_CONTRACT_VERSION } from "./setup-contract.js";
@@ -50,6 +55,12 @@ export type DoctorOptions = {
   recordSetupVerification?: boolean;
 };
 
+const PARTICLE_ENV_KEYS = [
+  "NEXT_PUBLIC_PARTICLE_PROJECT_ID",
+  "NEXT_PUBLIC_PARTICLE_CLIENT_KEY",
+  "NEXT_PUBLIC_PARTICLE_APP_ID",
+] as const;
+
 function check(
   id: string,
   title: string,
@@ -57,6 +68,110 @@ function check(
   detail: string,
 ): DoctorCheck {
   return { id, title, status, detail };
+}
+
+function checkParticleConfig(env: NodeJS.ProcessEnv): DoctorCheck {
+  const missing = PARTICLE_ENV_KEYS.filter((key) => !env[key]?.trim());
+  if (missing.length > 0) {
+    return check(
+      "particle_config",
+      "Particle configuration",
+      "fail",
+      `Missing ${missing.join(", ")}. Live execute requires Particle project credentials.`,
+    );
+  }
+  const malformed = PARTICLE_ENV_KEYS.filter((key) => {
+    const value = env[key]?.trim() ?? "";
+    return value.length < 8 || /\s/.test(value);
+  });
+  if (malformed.length > 0) {
+    return check(
+      "particle_config",
+      "Particle configuration",
+      "fail",
+      `Malformed ${malformed.join(", ")}.`,
+    );
+  }
+  return check(
+    "particle_config",
+    "Particle configuration",
+    "pass",
+    "Particle project, client key, and app id are present.",
+  );
+}
+
+async function checkToolDiscovery(options: {
+  profile: AgentProfile;
+  wallet: LocalWallet;
+  apiBaseUrl: string;
+  fetchImpl?: typeof fetch;
+}): Promise<DoctorCheck> {
+  const now = Date.now();
+  const lease = new LeaseHandle(
+    {
+      leaseId: "doctor-tool-discovery",
+      agentId: options.profile.agentId,
+      expiresAt: new Date(now + 120_000).toISOString(),
+      acquiredAt: new Date(now).toISOString(),
+    },
+    {
+      apiBaseUrl: options.apiBaseUrl,
+      wallet: options.wallet,
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    },
+  );
+
+  const server = createLiveServer({
+    profile: options.profile,
+    wallet: options.wallet,
+    lease,
+    apiBaseUrl: options.apiBaseUrl,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "conviction-doctor", version: "1.0.0" });
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const listed = await client.listTools();
+    const names = listed.tools.map((tool) => tool.name);
+    const expected = [...LIVE_TOOLS];
+    const missing = expected.filter((name) => !names.includes(name));
+    const extra = names.filter(
+      (name) => !(expected as string[]).includes(name),
+    );
+    if (missing.length > 0 || extra.length > 0) {
+      return check(
+        "tool_discovery",
+        "Tool discovery",
+        "fail",
+        [
+          missing.length > 0 ? `Missing: ${missing.join(", ")}.` : null,
+          extra.length > 0 ? `Unexpected: ${extra.join(", ")}.` : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+    }
+    return check(
+      "tool_discovery",
+      "Tool discovery",
+      "pass",
+      `tools/list exposes the complete v1 contract (${LIVE_TOOLS.length} tools).`,
+    );
+  } catch (error) {
+    return check(
+      "tool_discovery",
+      "Tool discovery",
+      "fail",
+      error instanceof Error ? error.message : "Tool discovery failed.",
+    );
+  } finally {
+    await client.close().catch(() => undefined);
+    await server.close().catch(() => undefined);
+  }
 }
 
 function failedResult(
@@ -151,6 +266,17 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
       formatHostConfigGuide({ profileName: profile.profileName }),
     );
   }
+
+  checks.push(checkParticleConfig(env));
+
+  checks.push(
+    await checkToolDiscovery({
+      profile,
+      wallet,
+      apiBaseUrl: options.apiBaseUrl,
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
+  );
 
   let status: LiveAgentStatus | null = null;
   try {

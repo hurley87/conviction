@@ -13,6 +13,14 @@ export const AGENT_AUDIT_EVENT_TYPES = [
   "retirement_started",
   "recovery_attempted",
   "retirement_completed",
+  "provision",
+  "quote",
+  "execute_attempt",
+  "execute_result",
+  "publish",
+  "back",
+  "lease_replaced",
+  "reconciliation_needs_attention",
 ] as const;
 
 export type AgentAuditEventType = (typeof AGENT_AUDIT_EVENT_TYPES)[number];

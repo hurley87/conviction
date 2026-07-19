@@ -53,6 +53,7 @@ export async function executeLiveTrade(options: {
   idempotencyKey: string;
   expectedAction?: "trade" | "back";
   fetchImpl?: typeof fetch;
+  correlationId?: string;
 }): Promise<LiveExecuteToolResult> {
   const quoteId = options.quoteId.trim();
   const idempotencyKey = options.idempotencyKey.trim();
@@ -103,6 +104,9 @@ export async function executeLiveTrade(options: {
         ? { expectedAction: options.expectedAction }
         : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.correlationId
+        ? { correlationId: options.correlationId }
+        : {}),
     });
   } catch (error) {
     // ADR 0020: fail closed before any local signing when backend is unreachable.
@@ -175,6 +179,9 @@ export async function executeLiveTrade(options: {
       rootHashSignature,
       ...(authorizations.length > 0 ? { authorizations } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.correlationId
+        ? { correlationId: options.correlationId }
+        : {}),
     });
     if (!result.ok) {
       return toolResult(result, true);

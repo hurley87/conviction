@@ -288,6 +288,9 @@ async function runLiveServe(args: string[]): Promise<void> {
     wallet,
     lease,
     apiBaseUrl,
+    ...(process.env.CONVICTION_HOME
+      ? { home: process.env.CONVICTION_HOME }
+      : {}),
   });
   const transport = new StdioServerTransport();
 

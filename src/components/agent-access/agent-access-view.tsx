@@ -42,6 +42,16 @@ type Handoff = {
 
 type ApiError = { error?: { code?: string; message?: string } };
 
+type AgentNotification = {
+  notificationId: string;
+  agentId: string;
+  kind: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  body: string;
+  createdAt: string;
+};
+
 const POLL_MS = 4000;
 
 const DEFAULT_FORM = {
@@ -93,6 +103,21 @@ function statusLabel(status: SetupAgent["status"]): string {
   }
 }
 
+function notificationTone(severity: AgentNotification["severity"]): string {
+  switch (severity) {
+    case "info":
+      return "bg-surface-2 text-ink-2";
+    case "warning":
+      return "bg-[#fff3d6] text-warning";
+    case "critical":
+      return "bg-red-50 text-danger";
+    default: {
+      const _exhaustive: never = severity;
+      return _exhaustive;
+    }
+  }
+}
+
 function normalizeAgent(raw: Partial<SetupAgent> & {
   agentId: string;
   handle: string;
@@ -136,6 +161,7 @@ export function AgentAccessView() {
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<AgentNotification[]>([]);
   const skillUrl = useSetupSkillUrl();
 
   const authenticatedFetch = useCallback(
@@ -182,6 +208,21 @@ export function AgentAccessView() {
     [authenticatedFetch],
   );
 
+  const refreshNotifications = useCallback(async () => {
+    try {
+      const response = await authenticatedFetch("/api/agents/notifications?limit=10");
+      const payload = (await response.json()) as {
+        notifications?: AgentNotification[];
+      } & ApiError;
+      if (!response.ok) {
+        throw new Error(payload.error?.message ?? "Could not load notifications.");
+      }
+      setNotifications(payload.notifications ?? []);
+    } catch {
+      // Notifications are supplemental; do not disrupt agent setup on failure.
+    }
+  }, [authenticatedFetch]);
+
   useEffect(() => {
     let cancelled = false;
     void authenticatedFetch("/api/agents")
@@ -211,6 +252,10 @@ export function AgentAccessView() {
       cancelled = true;
     };
   }, [authenticatedFetch]);
+
+  useEffect(() => {
+    void Promise.resolve().then(refreshNotifications);
+  }, [refreshNotifications]);
 
   const phase = useMemo(
     () =>
@@ -372,6 +417,38 @@ export function AgentAccessView() {
               </span>
             </div>
             <SetupActionPanel phase={phase} agent={agent} handoff={handoff} />
+          </section>
+          <section className="app-card p-7 sm:p-9">
+            <div>
+              <p className="pt-eyebrow">Operator notifications</p>
+              <h2 className="mt-2 font-display text-2xl font-semibold text-ink">
+                Recent activity
+              </h2>
+            </div>
+            {notifications.length ? (
+              <ul className="mt-5 divide-y divide-line">
+                {notifications.map((notification) => (
+                  <li key={notification.notificationId} className="py-4 first:pt-0 last:pb-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-extrabold text-ink">{notification.title}</p>
+                        <p className="mt-1 text-sm leading-6 text-ink-2">{notification.body}</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-extrabold capitalize ${notificationTone(notification.severity)}`}>
+                        {notification.severity}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-ink-3">
+                      {new Date(notification.createdAt).toLocaleString()}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-5 text-sm leading-6 text-ink-3">
+                Trade, back, and reconciliation updates will appear here.
+              </p>
+            )}
           </section>
           <AgentSettingsPanel
             key={agentSettingsFormKey(agent)}

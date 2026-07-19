@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 
+import { buildAuditEvent, getAgentAuditStore } from "@/lib/agent-audit";
+import { scheduleOperatorNotification } from "@/lib/agent-notifications";
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import {
   AgentQuoteError,
@@ -48,6 +50,7 @@ export type AgentBackAuthorship = AuthorshipSnapshot;
 export type AgentBackRecord = {
   backRecordId: string;
   agentId: string;
+  ownerUserId: string;
   entryId: string;
   receiptId: string;
   quoteId: string;
@@ -101,6 +104,7 @@ export type AgentBackResult = AgentBackSuccess | AgentBackErrorBody;
 export type AgentBackRecordStore = {
   save(record: AgentBackRecord): Promise<AgentBackRecord>;
   get(backRecordId: string): Promise<AgentBackRecord | null>;
+  getByAgentId(agentId: string): Promise<AgentBackRecord | null>;
   getByReceiptId(receiptId: string): Promise<AgentBackRecord | null>;
   getByIdempotency(
     agentId: string,
@@ -161,6 +165,13 @@ export class MemoryAgentBackRecordStore implements AgentBackRecordStore {
   async get(backRecordId: string): Promise<AgentBackRecord | null> {
     const stored = this.records.get(backRecordId);
     return stored ? structuredClone(stored) : null;
+  }
+
+  async getByAgentId(agentId: string): Promise<AgentBackRecord | null> {
+    const records = [...this.records.values()]
+      .filter((record) => record.agentId === agentId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return records[0] ? structuredClone(records[0]) : null;
   }
 
   async getByReceiptId(receiptId: string): Promise<AgentBackRecord | null> {
@@ -721,6 +732,7 @@ export function buildAgentBackRecord(input: {
   return {
     backRecordId: input.randomId?.() ?? randomUUID(),
     agentId: input.agent.agentId,
+    ownerUserId: input.agent.ownerUserId,
     entryId: input.entryId,
     receiptId: input.receipt.slug,
     quoteId: input.quoteId,
@@ -753,6 +765,26 @@ export function toBackSuccessFromRecord(input: {
   };
 }
 
+function scheduleBackSuccessNotification(
+  agent: OwnedAgent,
+  success: AgentBackSuccess,
+): void {
+  scheduleOperatorNotification({
+    agentId: agent.agentId,
+    ownerUserId: agent.ownerUserId,
+    kind: "back_success",
+    severity: success.reconciliationState === "complete" ? "info" : "warning",
+    title: "Back executed",
+    body:
+      success.reconciliationState === "complete"
+        ? "Your conviction back was executed and attributed."
+        : "Your conviction back was executed; attribution is still syncing.",
+    dedupeKey: success.backRecordId,
+    receiptId: success.receiptId,
+    backRecordId: success.backRecordId,
+  });
+}
+
 /**
  * Atomically persist receipt + one back record, then start attribution.
  * Never re-executes onchain work (ADR 0028 / 0029).
@@ -781,6 +813,7 @@ export async function commitBackExecution(options: {
       options.execute.idempotencyKey,
       success,
     );
+    scheduleBackSuccessNotification(options.agent, success);
     return success;
   }
 
@@ -798,6 +831,7 @@ export async function commitBackExecution(options: {
       options.execute.idempotencyKey,
       success,
     );
+    scheduleBackSuccessNotification(options.agent, success);
     return success;
   }
 
@@ -825,6 +859,7 @@ export async function commitBackExecution(options: {
       options.execute.idempotencyKey,
       success,
     );
+    scheduleBackSuccessNotification(options.agent, success);
     return success;
   }
 
@@ -891,6 +926,22 @@ export async function commitBackExecution(options: {
     options.execute.idempotencyKey,
     success,
   );
+  scheduleBackSuccessNotification(options.agent, success);
+  void getAgentAuditStore()
+    .append(
+      buildAuditEvent({
+        agentId: options.agent.agentId,
+        ownerUserId: options.agent.ownerUserId,
+        type: "back",
+        actor: "system",
+        details: {
+          backRecordId: success.backRecordId,
+          receiptId: success.receiptId,
+          reconciliationState: success.reconciliationState,
+        },
+      }),
+    )
+    .catch(() => undefined);
   return success;
 }
 
@@ -948,7 +999,33 @@ export async function reconcileBackAttribution(options: {
     lastError: attributed.message,
     attemptCount: attempts,
   });
-  return updated ?? ((await options.backStore.get(record.backRecordId)) as AgentBackRecord);
+  const latest =
+    updated ?? ((await options.backStore.get(record.backRecordId)) as AgentBackRecord);
+  if (latest.reconciliationState === "needs_attention") {
+    scheduleOperatorNotification({
+      agentId: latest.agentId,
+      ownerUserId: latest.ownerUserId,
+      kind: "reconciliation_needs_attention",
+      severity: "critical",
+      title: "Back attribution needs attention",
+      body: latest.lastError ?? "Back attribution could not be completed.",
+      dedupeKey: latest.backRecordId,
+      receiptId: latest.receiptId,
+      backRecordId: latest.backRecordId,
+    });
+    void getAgentAuditStore()
+      .append(
+        buildAuditEvent({
+          agentId: latest.agentId,
+          ownerUserId: latest.ownerUserId,
+          type: "reconciliation_needs_attention",
+          actor: "system",
+          details: { backRecordId: latest.backRecordId, error: latest.lastError },
+        }),
+      )
+      .catch(() => undefined);
+  }
+  return latest;
 }
 
 /**

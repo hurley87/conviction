@@ -17,6 +17,7 @@ import {
   requestTradeQuote,
 } from "./live-api-client.js";
 import { executeLiveTrade } from "./live-execute.js";
+import { ConvictionLogger, getConvictionLogger } from "./logger.js";
 import {
   accountStatusOutputSchema,
   getConvictionOutputSchema,
@@ -96,6 +97,9 @@ export type CreateLiveServerOptions = {
   lease: LeaseHandle;
   apiBaseUrl: string;
   fetchImpl?: typeof fetch;
+  logger?: ConvictionLogger;
+  /** Override Conviction home for rotating logs. */
+  home?: string;
 };
 
 /**
@@ -104,6 +108,9 @@ export type CreateLiveServerOptions = {
  * permit-gated trade execute are wired here (#51 / #53 / #54 / #56).
  */
 export function createLiveServer(options: CreateLiveServerOptions): McpServer {
+  const logger =
+    options.logger ??
+    getConvictionLogger(options.home ? { home: options.home } : undefined);
   const server = new McpServer(
     {
       name: "conviction-mcp",
@@ -125,12 +132,18 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     return null;
   };
 
-  const apiOptions = () => ({
+  const apiOptions = (correlationId: string) => ({
     apiBaseUrl: options.apiBaseUrl,
     wallet: options.wallet,
+    correlationId,
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
 
+  const beginTool = async (tool: string) => {
+    const correlationId = ConvictionLogger.newCorrelationId();
+    await logger.info("mcp_tool_start", { tool, correlationId });
+    return correlationId;
+  };
   server.registerTool(
     "conviction_account_status",
     {
@@ -144,8 +157,9 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async () => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_account_status");
       try {
-        const status = await fetchAgentStatus(apiOptions());
+        const status = await fetchAgentStatus(apiOptions(correlationId));
         return toolResult(status);
       } catch (error) {
         return unavailableResult(error, "Could not load agent status.");
@@ -169,9 +183,10 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ cursor, limit }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_list_convictions");
       try {
         const page = await fetchConvictionsPage({
-          ...apiOptions(),
+          ...apiOptions(correlationId),
           ...(cursor ? { cursor } : {}),
           ...(limit !== undefined ? { limit } : {}),
         });
@@ -196,9 +211,10 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ entryId }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_get_conviction");
       try {
         const result = await fetchConviction({
-          ...apiOptions(),
+          ...apiOptions(correlationId),
           entryId,
         });
         return toolResult(result);
@@ -221,8 +237,9 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async () => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_summarize_feed");
       try {
-        const summary = await fetchFeedSummary(apiOptions());
+        const summary = await fetchFeedSummary(apiOptions(correlationId));
         return toolResult(summary);
       } catch (error) {
         return unavailableResult(error, "Could not summarize the feed.");
@@ -244,9 +261,10 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ receiptId }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_get_receipt");
       try {
         const result = await fetchReceipt({
-          ...apiOptions(),
+          ...apiOptions(correlationId),
           receiptId,
         });
         return toolResult(result);
@@ -323,6 +341,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async (args) => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_quote_trade");
 
       const unknownKeys = Object.keys(args).filter(
         (key) => !mcpTradeQuoteKeys.has(key),
@@ -376,8 +395,7 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
 
       try {
         const quote = await requestTradeQuote({
-          apiBaseUrl: options.apiBaseUrl,
-          wallet: options.wallet,
+          ...apiOptions(correlationId),
           input: {
             toAsset: args.toAsset,
             ...(args.fromAsset ? { fromAsset: args.fromAsset } : {}),
@@ -388,7 +406,6 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
               ? { publicationIntent: args.publicationIntent }
               : {}),
           },
-          ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
         });
         return toolResult(quote);
       } catch (error) {
@@ -439,14 +456,13 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ quoteId, idempotencyKey }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_execute_trade");
       return executeLiveTrade({
-        apiBaseUrl: options.apiBaseUrl,
-        wallet: options.wallet,
+        ...apiOptions(correlationId),
         leaseId: options.lease.leaseId,
         quoteId,
         idempotencyKey,
         expectedAction: "trade",
-        ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
       });
     },
   );
@@ -468,10 +484,10 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ receiptId, thesis, whyNow, whatBreaksIt }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_publish_conviction");
       try {
         const result = await publishConviction({
-          apiBaseUrl: options.apiBaseUrl,
-          wallet: options.wallet,
+          ...apiOptions(correlationId),
           input: {
             receiptId,
             thesis,
@@ -479,7 +495,6 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
             whatBreaksIt,
             leaseId: options.lease.leaseId,
           },
-          ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
         });
         return toolResult(result, !result.ok);
       } catch (error) {
@@ -513,9 +528,10 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async (args) => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_quote_back");
       try {
         const quote = await requestBackQuote({
-          ...apiOptions(),
+          ...apiOptions(correlationId),
           input: args as {
             entryId: string;
             dollarsIn?: number;
@@ -549,14 +565,13 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ quoteId, idempotencyKey }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
+      const correlationId = await beginTool("conviction_back_conviction");
       return executeLiveTrade({
-        apiBaseUrl: options.apiBaseUrl,
-        wallet: options.wallet,
+        ...apiOptions(correlationId),
         leaseId: options.lease.leaseId,
         quoteId,
         idempotencyKey,
         expectedAction: "back",
-        ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
       });
     },
   );

@@ -8,6 +8,7 @@ import {
   buildAuditEvent,
   type AgentAuditStore,
 } from "@/lib/agent-audit";
+import { scheduleOperatorNotification } from "@/lib/agent-notifications";
 import {
   releaseIssuedPermits,
   type PermitInvalidator,
@@ -38,6 +39,19 @@ export const RETIREMENT_DUST_THRESHOLD_USD = 1;
 
 /** Recovery claim TTL — prevents stuck locks from blocking operator retry forever. */
 export const RECOVERY_CLAIM_TTL_MS = 120_000;
+
+function notifyRetirementNeedsAttention(retirement: AgentRetirementRecord): void {
+  scheduleOperatorNotification({
+    agentId: retirement.agentId,
+    ownerUserId: retirement.ownerUserId,
+    kind: "reconciliation_needs_attention",
+    severity: "critical",
+    title: "Retirement reconciliation needs attention",
+    body: retirement.lastError ?? "Retirement reconciliation could not be completed.",
+    dedupeKey: retirement.retirementId,
+    retirementId: retirement.retirementId,
+  });
+}
 
 export type RetirementReconciliationState =
   | "complete"
@@ -2090,7 +2104,9 @@ export async function reconcileRetirementResiduals(options: {
       attemptCount: retirement.attemptCount + 1,
       updatedAt: now.toISOString(),
     };
-    return options.retirementStore.update(next);
+    const updated = await options.retirementStore.update(next);
+    notifyRetirementNeedsAttention(updated);
+    return updated;
   }
 
   // Without signers the workflow can only complete empty/dust inventories or
@@ -2110,7 +2126,11 @@ export async function reconcileRetirementResiduals(options: {
       lastError: message,
       attemptCount: retirement.attemptCount + 1,
     });
-    return updated ?? retirement;
+    const next = updated ?? retirement;
+    if (next.reconciliationState === "needs_attention") {
+      notifyRetirementNeedsAttention(next);
+    }
+    return next;
   }
 
   const residualHoldings = buildResidualHoldings(classifyHoldings(balance)).map(
@@ -2143,7 +2163,9 @@ export async function reconcileRetirementResiduals(options: {
       attemptCount: retirement.attemptCount + 1,
       updatedAt: now.toISOString(),
     };
-    return options.retirementStore.update(next);
+    const updated = await options.retirementStore.update(next);
+    notifyRetirementNeedsAttention(updated);
+    return updated;
   }
 
   const completed = await completeRetirementRecord({

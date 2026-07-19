@@ -13,6 +13,7 @@ let neonSchemaReady = false;
 type BackRow = {
   back_record_id: string;
   agent_id: string;
+  owner_user_id: string;
   entry_id: string;
   receipt_id: string;
   quote_id: string;
@@ -32,6 +33,7 @@ function recordFromRow(row: BackRow): AgentBackRecord {
   return {
     backRecordId: row.back_record_id,
     agentId: row.agent_id,
+    ownerUserId: row.owner_user_id,
     entryId: row.entry_id,
     receiptId: row.receipt_id,
     quoteId: row.quote_id,
@@ -58,6 +60,7 @@ async function ensureSchema(
     CREATE TABLE IF NOT EXISTS agent_backs (
       back_record_id uuid PRIMARY KEY,
       agent_id uuid NOT NULL,
+      owner_user_id text NOT NULL,
       entry_id text NOT NULL,
       receipt_id text NOT NULL UNIQUE,
       quote_id uuid NOT NULL,
@@ -81,6 +84,14 @@ async function ensureSchema(
       ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0
   `;
   await sql`
+    ALTER TABLE agent_backs
+      ADD COLUMN IF NOT EXISTS owner_user_id text
+  `;
+  await sql`
+    UPDATE agent_backs AS backs SET owner_user_id = agents.owner_user_id
+    FROM agents WHERE backs.agent_id = agents.agent_id AND backs.owner_user_id IS NULL
+  `;
+  await sql`
     CREATE INDEX IF NOT EXISTS agent_backs_entry_id
       ON agent_backs (entry_id)
   `;
@@ -99,13 +110,14 @@ class NeonAgentBackRecordStore implements AgentBackRecordStore {
     try {
       await this.sql`
         INSERT INTO agent_backs (
-          back_record_id, agent_id, entry_id, receipt_id, quote_id,
+          back_record_id, agent_id, owner_user_id, entry_id, receipt_id, quote_id,
           quote_fingerprint, idempotency_key, authorship, reconciliation_state,
           attempt_count, workflow_run_id, last_error, created_at, updated_at,
           completed_at
         ) VALUES (
           ${record.backRecordId}::uuid,
           ${record.agentId}::uuid,
+          ${record.ownerUserId},
           ${record.entryId},
           ${record.receiptId},
           ${record.quoteId}::uuid,
@@ -149,6 +161,17 @@ class NeonAgentBackRecordStore implements AgentBackRecordStore {
     `) as BackRow[];
     const row = rows[0];
     return row ? recordFromRow(row) : null;
+  }
+
+  async getByAgentId(agentId: string): Promise<AgentBackRecord | null> {
+    await ensureSchema(this.sql);
+    const rows = (await this.sql`
+      SELECT * FROM agent_backs
+      WHERE agent_id = ${agentId}::uuid
+      ORDER BY created_at DESC
+      LIMIT 1
+    `) as BackRow[];
+    return rows[0] ? recordFromRow(rows[0]) : null;
   }
 
   async getByReceiptId(receiptId: string): Promise<AgentBackRecord | null> {

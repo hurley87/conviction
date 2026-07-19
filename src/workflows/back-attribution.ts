@@ -31,8 +31,12 @@ async function attributeBackStep(backRecordId: string): Promise<AgentBackRecord>
  */
 export async function backAttributionWorkflow(
   backRecordId: string,
+  correlationId?: string,
 ): Promise<AgentBackRecord> {
   "use workflow";
+
+  // correlationId is observational only — never used for signing or onchain work.
+  void correlationId;
 
   let latest = await attributeBackStep(backRecordId);
 

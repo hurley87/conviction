@@ -116,7 +116,11 @@ describe("runDoctor", () => {
       unlockStore,
       fetchImpl,
       reportPath,
-      env: {},
+      env: {
+        NEXT_PUBLIC_PARTICLE_PROJECT_ID: "particle-project-id",
+        NEXT_PUBLIC_PARTICLE_CLIENT_KEY: "particle-client-key",
+        NEXT_PUBLIC_PARTICLE_APP_ID: "particle-app-id",
+      },
     });
 
     expect(result.ok).toBe(true);
@@ -126,12 +130,62 @@ describe("runDoctor", () => {
     expect(result.checks.some((check) => check.id === "backend_auth" && check.status === "pass")).toBe(
       true,
     );
+    expect(
+      result.checks.some((entry) => entry.id === "particle_config" && entry.status === "pass"),
+    ).toBe(true);
+    expect(
+      result.checks.some((entry) => entry.id === "tool_discovery" && entry.status === "pass"),
+    ).toBe(true);
 
     const report = await readFile(reportPath, "utf8");
     expect(report).toContain("redactions");
     expect(report).not.toContain(secret);
     expect(report).not.toContain("CONVICTION_KEYSTORE_PASSWORD=");
     expect(report).not.toContain("--code ");
+  });
+
+  it("fails when Particle credentials are missing", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "conviction-doctor-particle-"));
+    cleanup.push(home);
+    const paths = resolveConvictionPaths(home);
+    const unlockStore = new MemoryUnlockSecretStore();
+    const secret = "test-unlock-secret";
+    const generated = await generateEncryptedKeystore(secret);
+    unlockStore.set(unlockAccountForSigner(generated.address), secret);
+
+    const profileName = "signal-scout";
+    await writeKeystoreFile(keystorePath(paths, profileName), generated.keystoreJson);
+    await writeAgentProfile(profilePath(paths, profileName), {
+      version: 1,
+      profileName,
+      agentId: "00000000-0000-4000-8000-000000000111",
+      handle: "signal-scout",
+      operatorHandle: "operator",
+      signerAddress: generated.address,
+      universalAccountAddress: generated.address,
+      keystorePath: keystorePath(paths, profileName),
+      fundingReady: true,
+      actionPolicy: { trade: true, back: true, publish: true },
+      maxTradeUsd: 25,
+      spendBudgetUsd: 100,
+      createdAt: "2026-07-17T12:00:00.000Z",
+    });
+
+    const result = await runDoctor({
+      profileName,
+      apiBaseUrl: "http://127.0.0.1:3000",
+      home,
+      unlockStore,
+      env: {},
+      recordSetupVerification: false,
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ status: { ok: true } }), { status: 200 }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.checks.some((entry) => entry.id === "particle_config" && entry.status === "fail"),
+    ).toBe(true);
   });
 
   it("fails closed when the profile is missing", async () => {

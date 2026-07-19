@@ -90,7 +90,7 @@ openclaw mcp add conviction -- npx -y @conviction/mcp@1 serve --profile <name>
 
 ## Diagnostics
 
-- `conviction-mcp doctor --profile <name>` verifies profile integrity, keystore access, backend authentication, and account status without moving funds. On success it records setup verification.
+- `conviction-mcp doctor --profile <name>` verifies profile integrity, keystore access, Particle configuration, tool discovery (`tools/list` v1 contract), backend authentication, and account status without moving funds. On success it records setup verification.
 - `conviction-mcp doctor --profile <name> --report <path>` writes a redacted local support bundle. It never uploads.
 - `conviction-mcp status --profile <name>` prints backend-authoritative identity and policy state.
 
