@@ -43,6 +43,44 @@ export type OperatorEvent =
       backRecordId?: string;
       retirementId?: string;
       error: string | null;
+    }
+  | {
+      type: "execution_finality_attention";
+      agentId: string;
+      ownerUserId: string;
+      executionId: string;
+      transactionId: string | null;
+      outcome: "partial" | "failed" | "needs_attention";
+      affectedLeg: {
+        legId: string;
+        kind: string;
+        chainName: string;
+        status: string;
+        lastProviderStatus: string | null;
+        confirmedHash: string | null;
+        error: string | null;
+      } | null;
+      lastProviderStatus: string | null;
+      workflowRunId: string | null;
+      correlationId: string | null;
+      recoveryPath: string;
+    }
+  | {
+      type: "retirement_finality_attention";
+      agentId: string;
+      ownerUserId: string;
+      retirementId: string;
+      transactionId: string | null;
+      affectedLeg: {
+        legId: string;
+        kind: string;
+        status: string;
+        lastProviderStatus: string | null;
+        confirmedHash: string | null;
+        error: string | null;
+      } | null;
+      workflowRunId: string | null;
+      recoveryPath: string;
     };
 
 type Projection = {
@@ -60,6 +98,20 @@ type Projection = {
     correlationId?: string;
   };
 };
+
+function operatorAlertText(
+  value: string | null | undefined,
+  fallback = "unknown",
+): string {
+  if (!value?.trim()) return fallback;
+  const redacted = value
+    .trim()
+    .replace(
+      /\b(authorization|bearer|credential|private[_-]?key|signature)\b\s*[:=]?\s*\S+/gi,
+      "$1 [redacted]",
+    );
+  return redacted.length > 300 ? `${redacted.slice(0, 299)}…` : redacted;
+}
 
 function project(event: OperatorEvent): Projection {
   switch (event.type) {
@@ -126,6 +178,72 @@ function project(event: OperatorEvent): Projection {
           ...(event.receiptId ? { receiptId: event.receiptId } : {}),
           ...(event.backRecordId ? { backRecordId: event.backRecordId } : {}),
           ...(event.retirementId ? { retirementId: event.retirementId } : {}),
+        },
+      };
+    }
+    case "execution_finality_attention": {
+      const leg = event.affectedLeg;
+      const evidence = leg
+        ? `${operatorAlertText(leg.kind)} leg ${operatorAlertText(leg.legId)} on ${operatorAlertText(leg.chainName)} is ${operatorAlertText(leg.status)}; provider ${operatorAlertText(leg.lastProviderStatus ?? event.lastProviderStatus)}${leg.confirmedHash ? `; confirmed ${operatorAlertText(leg.confirmedHash)}` : ""}${leg.error ? `; error ${operatorAlertText(leg.error)}` : ""}.`
+        : `Provider state is ${operatorAlertText(event.lastProviderStatus)}.`;
+      const workflow = event.workflowRunId
+        ? ` Workflow ${operatorAlertText(event.workflowRunId)}.`
+        : event.correlationId
+          ? ` Correlation ${operatorAlertText(event.correlationId)}.`
+          : "";
+      return {
+        auditType: "reconciliation_needs_attention",
+        auditDetails: {
+          resource: "execution",
+          executionId: event.executionId,
+          transactionId: event.transactionId,
+          outcome: event.outcome,
+          affectedLeg: event.affectedLeg,
+          lastProviderStatus: event.lastProviderStatus,
+          workflowRunId: event.workflowRunId,
+          correlationId: event.correlationId,
+          recoveryPath: event.recoveryPath,
+        },
+        notification: {
+          kind: "reconciliation_needs_attention",
+          severity: event.outcome === "partial" ? "warning" : "critical",
+          title:
+            event.outcome === "partial"
+              ? "Execution partially confirmed"
+              : "Execution needs attention",
+          body: `Transaction ${operatorAlertText(event.transactionId ?? event.executionId)}: ${evidence}${workflow} Recovery: ${operatorAlertText(event.recoveryPath)}`,
+          dedupeKey: `execution:${event.executionId}`,
+          ...(event.correlationId
+            ? { correlationId: event.correlationId }
+            : {}),
+        },
+      };
+    }
+    case "retirement_finality_attention": {
+      const leg = event.affectedLeg;
+      const evidence = leg
+        ? `${operatorAlertText(leg.kind)} leg ${operatorAlertText(leg.legId)} is ${operatorAlertText(leg.status)}; provider ${operatorAlertText(leg.lastProviderStatus)}${leg.confirmedHash ? `; confirmed ${operatorAlertText(leg.confirmedHash)}` : ""}${leg.error ? `; error ${operatorAlertText(leg.error)}` : ""}.`
+        : "No submitted retirement leg has confirmed finality.";
+      return {
+        auditType: "reconciliation_needs_attention",
+        auditDetails: {
+          resource: "retirement",
+          retirementId: event.retirementId,
+          transactionId: event.transactionId,
+          affectedLeg: event.affectedLeg,
+          workflowRunId: event.workflowRunId,
+          recoveryPath: event.recoveryPath,
+        },
+        notification: {
+          kind: "reconciliation_needs_attention",
+          severity: "critical",
+          title: "Retirement recovery needs attention",
+          body: `Retirement ${operatorAlertText(event.retirementId)}: ${evidence}${event.workflowRunId ? ` Workflow ${operatorAlertText(event.workflowRunId)}.` : ""} Recovery: ${operatorAlertText(event.recoveryPath)}`,
+          dedupeKey: `retirement:${event.retirementId}`,
+          retirementId: event.retirementId,
+          ...(event.workflowRunId
+            ? { correlationId: event.workflowRunId }
+            : {}),
         },
       };
     }

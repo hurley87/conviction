@@ -55,14 +55,38 @@ export const RETIREMENT_RESIDUAL_STABILITY_MS = 2_000;
 export const RETIREMENT_RESIDUAL_STABLE_OBSERVATIONS = 2;
 
 function emitRetirementNeedsAttention(retirement: AgentRetirementRecord): void {
+  const legs = [
+    ...retirement.conversionLegs,
+    ...(retirement.transferLeg ? [retirement.transferLeg] : []),
+  ];
+  const affected =
+    legs.find(
+      (leg) =>
+        leg.status === "failed" ||
+        leg.status === "needs_attention" ||
+        leg.status === "submitted" ||
+        leg.status === "in_flight",
+    ) ?? null;
   emitOperatorEvent({
-    type: "reconciliation_escalated",
+    type: "retirement_finality_attention",
     agentId: retirement.agentId,
     ownerUserId: retirement.ownerUserId,
-    resource: "retirement",
-    resourceId: retirement.retirementId,
     retirementId: retirement.retirementId,
-    error: retirement.lastError,
+    transactionId: affected?.transactionId ?? null,
+    affectedLeg: affected
+      ? {
+          legId: affected.legId,
+          kind: affected.kind,
+          status: affected.status,
+          lastProviderStatus: affected.finality.providerStatus,
+          confirmedHash:
+            affected.finality.confirmedHashes.at(-1)?.confirmedHash ?? null,
+          error: affected.error ?? retirement.lastError,
+        }
+      : null,
+    workflowRunId: retirement.workflowRunId,
+    recoveryPath:
+      "Use conviction-mcp retire --profile <name> with the original local signer for value-moving recovery, then retry read-only reconciliation in Agent Access.",
   });
 }
 
@@ -2960,7 +2984,7 @@ export async function reconcileRetirementResiduals(options: {
   retirementStore: AgentRetirementStore;
   auditStore: AgentAuditStore;
   retirementId: string;
-  ua: UAClient;
+  ua: Pick<UAClient, "getTransactionStatus" | "getUniversalBalance">;
   now?: Date;
 }): Promise<AgentRetirementRecord> {
   const current = await options.retirementStore.get(options.retirementId);
@@ -2996,7 +3020,7 @@ async function reconcileRetirementResidualsClaimed(options: {
   retirementStore: AgentRetirementStore;
   auditStore: AgentAuditStore;
   retirementId: string;
-  ua: UAClient;
+  ua: Pick<UAClient, "getTransactionStatus" | "getUniversalBalance">;
   now?: Date;
   claimToken: string;
 }): Promise<AgentRetirementRecord> {

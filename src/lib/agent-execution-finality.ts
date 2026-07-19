@@ -192,6 +192,10 @@ export type ExecutionFinalityExport = {
 export type ExecutionFinalityStore = {
   create(record: ExecutionFinalityRecord): Promise<ExecutionFinalityRecord>;
   get(executionId: string): Promise<ExecutionFinalityRecord | null>;
+  listByAgentId(
+    agentId: string,
+    limit?: number,
+  ): Promise<ExecutionFinalityRecord[]>;
   getByAgentIdempotency(
     agentId: string,
     idempotencyKey: string,
@@ -620,6 +624,18 @@ export class MemoryExecutionFinalityStore implements ExecutionFinalityStore {
   async get(executionId: string): Promise<ExecutionFinalityRecord | null> {
     const record = this.records.get(executionId);
     return record ? cloneExecutionFinalityRecord(record) : null;
+  }
+
+  async listByAgentId(
+    agentId: string,
+    limit = 100,
+  ): Promise<ExecutionFinalityRecord[]> {
+    const bounded = Math.max(1, Math.min(limit, 500));
+    return [...this.records.values()]
+      .filter((record) => record.agentId === agentId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, bounded)
+      .map(cloneExecutionFinalityRecord);
   }
 
   async getByAgentIdempotency(

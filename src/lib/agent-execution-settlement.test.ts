@@ -25,6 +25,10 @@ import { MemoryAgentQuoteStore } from "@/lib/agent-quote";
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import { MemoryAgentTradeReceiptStore } from "@/lib/agent-trade-receipt";
 import { MemoryAgentBackRecordStore } from "@/lib/agent-back";
+import {
+  getAgentNotificationStore,
+  resetAgentNotificationStoreForTests,
+} from "@/lib/agent-notifications";
 
 const NOW = new Date("2026-07-19T17:00:00.000Z");
 const AGENT: OwnedAgent = {
@@ -204,7 +208,10 @@ function settlementOptions(
 }
 
 describe("confirmed execution settlement", () => {
-  beforeEach(() => resetAgentAuditStoreForTests());
+  beforeEach(() => {
+    resetAgentAuditStoreForTests();
+    resetAgentNotificationStoreForTests();
+  });
 
   it("settles finalized legs once and never uses planned userOp hashes", async () => {
     const state = await fixture("finalized");
@@ -236,6 +243,11 @@ describe("confirmed execution settlement", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     const events = await getAgentAuditStore().listByAgent(AGENT.agentId);
     expect(events.filter((event) => event.type === "execute_result")).toHaveLength(1);
+    const notifications =
+      await getAgentNotificationStore().listByOwner(AGENT.ownerUserId);
+    expect(
+      notifications.filter((item) => item.kind === "trade_success"),
+    ).toHaveLength(1);
   });
 
   it("returns the same durable finalized success on authenticated idempotent retries", async () => {
@@ -282,6 +294,32 @@ describe("confirmed execution settlement", () => {
     expect(spends).toBe(1);
   });
 
+  it("emits back success only after provider-finalized settlement", async () => {
+    const state = await fixture("finalized");
+    await state.permitStore.save({
+      ...PERMIT,
+      action: "back",
+      entryId: "entry-83",
+    });
+    const result = await settleExecutionFinality({
+      ...settlementOptions(state, () => undefined),
+      backStore: new MemoryAgentBackRecordStore(),
+      startBackWorkflow: {
+        async start() {
+          return { runId: "back-attribution-83" };
+        },
+      },
+    });
+    expect(result).toMatchObject({ ok: true, action: "back" });
+    await Promise.resolve();
+    await Promise.resolve();
+    const notifications =
+      await getAgentNotificationStore().listByOwner(AGENT.ownerUserId);
+    expect(
+      notifications.filter((item) => item.kind === "back_success"),
+    ).toHaveLength(1);
+  });
+
   it("keeps partial execution non-success, unpublished, and reserved", async () => {
     const state = await fixture("partial");
     let spends = 0;
@@ -290,10 +328,32 @@ describe("confirmed execution settlement", () => {
         spends += 1;
       }),
     );
+    await settleExecutionFinality(
+      settlementOptions(state, () => {
+        spends += 1;
+      }),
+    );
     expect(result).toMatchObject({ ok: false, execution: { outcome: "partial" } });
     expect(spends).toBe(0);
     expect(state.spendLedger.reservedUsd(AGENT.agentId)).toBe(PERMIT.dollarsIn);
     expect(await state.tradeReceipts.get(state.record.executionId)).toBeNull();
+    await Promise.resolve();
+    await Promise.resolve();
+    const notifications =
+      await getAgentNotificationStore().listByOwner(AGENT.ownerUserId);
+    expect(
+      notifications.filter(
+        (item) =>
+          item.kind === "trade_success" || item.kind === "back_success",
+      ),
+    ).toHaveLength(0);
+    const attention = notifications.filter(
+      (item) => item.kind === "reconciliation_needs_attention",
+    );
+    expect(attention).toHaveLength(1);
+    expect(attention[0]?.body).toContain("particle-83");
+    expect(attention[0]?.body).toContain("destination");
+    expect(attention[0]?.body).toContain("PARTIAL");
 
     const published = await publishAgentConviction({
       agent: AGENT,

@@ -251,6 +251,21 @@ export class NeonExecutionFinalityStore implements ExecutionFinalityStore {
     `);
   }
 
+  async listByAgentId(
+    agentId: string,
+    limit = 100,
+  ): Promise<ExecutionFinalityRecord[]> {
+    await ensureSchema(this.sql);
+    const bounded = Math.max(1, Math.min(limit, 500));
+    const rows = (await this.sql`
+      SELECT * FROM agent_execution_finality
+      WHERE agent_id = ${agentId}::uuid
+      ORDER BY updated_at DESC
+      LIMIT ${bounded}
+    `) as ExecutionRow[];
+    return rows.map(recordFromRow);
+  }
+
   async getByAgentIdempotency(
     agentId: string,
     idempotencyKey: string,
