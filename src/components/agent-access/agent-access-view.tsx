@@ -180,42 +180,18 @@ export function AgentAccessView() {
     [account],
   );
 
-  const refreshAgent = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent === true;
-      if (!silent) setRefreshing(true);
-      try {
-        const response = await authenticatedFetch("/api/agents");
-        const payload = (await response.json()) as {
-          agent?: SetupAgent | null;
-        } & ApiError;
-        if (!response.ok) {
-          throw new Error(payload.error?.message ?? "Could not load Agent Access.");
-        }
-        setAgent(payload.agent ? normalizeAgent(payload.agent) : null);
-        setError(null);
-      } catch (reason) {
-        if (!silent) {
-          setError(
-            reason instanceof Error ? reason.message : "Could not load Agent Access.",
-          );
-        }
-      } finally {
-        setLoading(false);
-        if (!silent) setRefreshing(false);
-      }
-    },
-    [authenticatedFetch],
-  );
-
   const refreshNotifications = useCallback(async () => {
     try {
-      const response = await authenticatedFetch("/api/agents/notifications?limit=10");
+      const response = await authenticatedFetch(
+        "/api/agents/notifications?limit=10",
+      );
       const payload = (await response.json()) as {
         notifications?: AgentNotification[];
       } & ApiError;
       if (!response.ok) {
-        throw new Error(payload.error?.message ?? "Could not load notifications.");
+        throw new Error(
+          payload.error?.message ?? "Could not load notifications.",
+        );
       }
       setNotifications(payload.notifications ?? []);
     } catch {
@@ -223,27 +199,58 @@ export function AgentAccessView() {
     }
   }, [authenticatedFetch]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void authenticatedFetch("/api/agents")
-      .then(async (response) => {
-        const payload = (await response.json()) as {
-          agent?: SetupAgent | null;
-        } & ApiError;
-        if (!response.ok) {
-          throw new Error(payload.error?.message ?? "Could not load Agent Access.");
-        }
-        if (!cancelled) {
-          setAgent(payload.agent ? normalizeAgent(payload.agent) : null);
-          setError(null);
-        }
-      })
-      .catch((reason) => {
-        if (!cancelled) {
+  const fetchAgent = useCallback(async (): Promise<SetupAgent | null> => {
+    const response = await authenticatedFetch("/api/agents");
+    const payload = (await response.json()) as {
+      agent?: SetupAgent | null;
+    } & ApiError;
+    if (!response.ok) {
+      throw new Error(payload.error?.message ?? "Could not load Agent Access.");
+    }
+    return payload.agent ? normalizeAgent(payload.agent) : null;
+  }, [authenticatedFetch]);
+
+  const refreshAgent = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent === true;
+      if (!silent) setRefreshing(true);
+      try {
+        const next = await fetchAgent();
+        setAgent(next);
+        setError(null);
+        void refreshNotifications();
+      } catch (reason) {
+        if (!silent) {
           setError(
-            reason instanceof Error ? reason.message : "Could not load Agent Access.",
+            reason instanceof Error
+              ? reason.message
+              : "Could not load Agent Access.",
           );
         }
+      } finally {
+        setLoading(false);
+        if (!silent) setRefreshing(false);
+      }
+    },
+    [fetchAgent, refreshNotifications],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAgent()
+      .then((next) => {
+        if (cancelled) return;
+        setAgent(next);
+        setError(null);
+        void refreshNotifications();
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not load Agent Access.",
+        );
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -251,11 +258,7 @@ export function AgentAccessView() {
     return () => {
       cancelled = true;
     };
-  }, [authenticatedFetch]);
-
-  useEffect(() => {
-    void Promise.resolve().then(refreshNotifications);
-  }, [refreshNotifications]);
+  }, [fetchAgent, refreshNotifications]);
 
   const phase = useMemo(
     () =>

@@ -3,8 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { buildAuditEvent, getAgentAuditStore } from "@/lib/agent-audit";
-import { scheduleOperatorNotification } from "@/lib/agent-notifications";
+import { emitOperatorEvent } from "@/lib/agent-operator-events";
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import {
   AgentQuoteError,
@@ -765,23 +764,14 @@ export function toBackSuccessFromRecord(input: {
   };
 }
 
-function scheduleBackSuccessNotification(
-  agent: OwnedAgent,
-  success: AgentBackSuccess,
-): void {
-  scheduleOperatorNotification({
+function emitBackExecuted(agent: OwnedAgent, success: AgentBackSuccess): void {
+  emitOperatorEvent({
+    type: "back_executed",
     agentId: agent.agentId,
     ownerUserId: agent.ownerUserId,
-    kind: "back_success",
-    severity: success.reconciliationState === "complete" ? "info" : "warning",
-    title: "Back executed",
-    body:
-      success.reconciliationState === "complete"
-        ? "Your conviction back was executed and attributed."
-        : "Your conviction back was executed; attribution is still syncing.",
-    dedupeKey: success.backRecordId,
     receiptId: success.receiptId,
     backRecordId: success.backRecordId,
+    reconciliationState: success.reconciliationState,
   });
 }
 
@@ -813,7 +803,7 @@ export async function commitBackExecution(options: {
       options.execute.idempotencyKey,
       success,
     );
-    scheduleBackSuccessNotification(options.agent, success);
+    emitBackExecuted(options.agent, success);
     return success;
   }
 
@@ -831,7 +821,7 @@ export async function commitBackExecution(options: {
       options.execute.idempotencyKey,
       success,
     );
-    scheduleBackSuccessNotification(options.agent, success);
+    emitBackExecuted(options.agent, success);
     return success;
   }
 
@@ -859,7 +849,7 @@ export async function commitBackExecution(options: {
       options.execute.idempotencyKey,
       success,
     );
-    scheduleBackSuccessNotification(options.agent, success);
+    emitBackExecuted(options.agent, success);
     return success;
   }
 
@@ -926,22 +916,7 @@ export async function commitBackExecution(options: {
     options.execute.idempotencyKey,
     success,
   );
-  scheduleBackSuccessNotification(options.agent, success);
-  void getAgentAuditStore()
-    .append(
-      buildAuditEvent({
-        agentId: options.agent.agentId,
-        ownerUserId: options.agent.ownerUserId,
-        type: "back",
-        actor: "system",
-        details: {
-          backRecordId: success.backRecordId,
-          receiptId: success.receiptId,
-          reconciliationState: success.reconciliationState,
-        },
-      }),
-    )
-    .catch(() => undefined);
+  emitBackExecuted(options.agent, success);
   return success;
 }
 
@@ -1002,28 +977,16 @@ export async function reconcileBackAttribution(options: {
   const latest =
     updated ?? ((await options.backStore.get(record.backRecordId)) as AgentBackRecord);
   if (latest.reconciliationState === "needs_attention") {
-    scheduleOperatorNotification({
+    emitOperatorEvent({
+      type: "reconciliation_escalated",
       agentId: latest.agentId,
       ownerUserId: latest.ownerUserId,
-      kind: "reconciliation_needs_attention",
-      severity: "critical",
-      title: "Back attribution needs attention",
-      body: latest.lastError ?? "Back attribution could not be completed.",
-      dedupeKey: latest.backRecordId,
+      resource: "back",
+      resourceId: latest.backRecordId,
       receiptId: latest.receiptId,
       backRecordId: latest.backRecordId,
+      error: latest.lastError,
     });
-    void getAgentAuditStore()
-      .append(
-        buildAuditEvent({
-          agentId: latest.agentId,
-          ownerUserId: latest.ownerUserId,
-          type: "reconciliation_needs_attention",
-          actor: "system",
-          details: { backRecordId: latest.backRecordId, error: latest.lastError },
-        }),
-      )
-      .catch(() => undefined);
   }
   return latest;
 }

@@ -4,8 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { getAddress, getBytes, verifyMessage } from "ethers";
 
-import { buildAuditEvent, getAgentAuditStore } from "@/lib/agent-audit";
-import { scheduleOperatorNotification } from "@/lib/agent-notifications";
+import { emitOperatorEvent } from "@/lib/agent-operator-events";
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import {
   AgentExecuteError,
@@ -1156,32 +1155,14 @@ export async function submitSignedTradeExecution(options: {
       await options.onSpend?.(permit.dollarsIn);
       await options.receipts.save(sendResult.receipt);
       if (permit.action === "trade") {
-        scheduleOperatorNotification({
+        emitOperatorEvent({
+          type: "trade_executed",
           agentId: options.agent.agentId,
           ownerUserId: options.agent.ownerUserId,
-          kind: "trade_success",
-          severity: "info",
-          title: "Trade executed",
-          body: sendResult.summary,
-          dedupeKey: success.receiptId,
           receiptId: success.receiptId,
-          correlationId: success.transactionId,
+          transactionId: success.transactionId,
+          summary: sendResult.summary,
         });
-        void getAgentAuditStore()
-          .append(
-            buildAuditEvent({
-              agentId: options.agent.agentId,
-              ownerUserId: options.agent.ownerUserId,
-              type: "execute_result",
-              actor: "system",
-              details: {
-                action: "trade",
-                receiptId: success.receiptId,
-                transactionId: success.transactionId,
-              },
-            }),
-          )
-          .catch(() => undefined);
       }
       await options.spendLedger?.commit(
         options.agent.agentId,

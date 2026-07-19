@@ -4,11 +4,11 @@
 import { randomUUID } from "node:crypto";
 import { getAddress, isAddress } from "ethers";
 
+import { emitOperatorEvent } from "@/lib/agent-operator-events";
 import {
   buildAuditEvent,
   type AgentAuditStore,
 } from "@/lib/agent-audit";
-import { scheduleOperatorNotification } from "@/lib/agent-notifications";
 import {
   releaseIssuedPermits,
   type PermitInvalidator,
@@ -40,16 +40,15 @@ export const RETIREMENT_DUST_THRESHOLD_USD = 1;
 /** Recovery claim TTL — prevents stuck locks from blocking operator retry forever. */
 export const RECOVERY_CLAIM_TTL_MS = 120_000;
 
-function notifyRetirementNeedsAttention(retirement: AgentRetirementRecord): void {
-  scheduleOperatorNotification({
+function emitRetirementNeedsAttention(retirement: AgentRetirementRecord): void {
+  emitOperatorEvent({
+    type: "reconciliation_escalated",
     agentId: retirement.agentId,
     ownerUserId: retirement.ownerUserId,
-    kind: "reconciliation_needs_attention",
-    severity: "critical",
-    title: "Retirement reconciliation needs attention",
-    body: retirement.lastError ?? "Retirement reconciliation could not be completed.",
-    dedupeKey: retirement.retirementId,
+    resource: "retirement",
+    resourceId: retirement.retirementId,
     retirementId: retirement.retirementId,
+    error: retirement.lastError,
   });
 }
 
@@ -2105,7 +2104,7 @@ export async function reconcileRetirementResiduals(options: {
       updatedAt: now.toISOString(),
     };
     const updated = await options.retirementStore.update(next);
-    notifyRetirementNeedsAttention(updated);
+    emitRetirementNeedsAttention(updated);
     return updated;
   }
 
@@ -2128,7 +2127,7 @@ export async function reconcileRetirementResiduals(options: {
     });
     const next = updated ?? retirement;
     if (next.reconciliationState === "needs_attention") {
-      notifyRetirementNeedsAttention(next);
+      emitRetirementNeedsAttention(next);
     }
     return next;
   }
@@ -2164,7 +2163,7 @@ export async function reconcileRetirementResiduals(options: {
       updatedAt: now.toISOString(),
     };
     const updated = await options.retirementStore.update(next);
-    notifyRetirementNeedsAttention(updated);
+    emitRetirementNeedsAttention(updated);
     return updated;
   }
 

@@ -17,7 +17,7 @@ import {
   requestTradeQuote,
 } from "./live-api-client.js";
 import { executeLiveTrade } from "./live-execute.js";
-import { ConvictionLogger, getConvictionLogger } from "./logger.js";
+import { getConvictionLogger, type ConvictionLogger } from "./logger.js";
 import {
   accountStatusOutputSchema,
   getConvictionOutputSchema,
@@ -27,6 +27,7 @@ import {
 } from "./mcp-output-schema.js";
 import type { AgentProfile } from "./profile.js";
 import { toolResult } from "./tool-result.js";
+import { withToolTelemetry } from "./tool-telemetry.js";
 
 const readOnlyAnnotations = {
   readOnlyHint: true,
@@ -139,11 +140,8 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
 
-  const beginTool = async (tool: string) => {
-    const correlationId = ConvictionLogger.newCorrelationId();
-    await logger.info("mcp_tool_start", { tool, correlationId });
-    return correlationId;
-  };
+  const runTool = <T>(tool: string, run: (correlationId: string) => Promise<T>) =>
+    withToolTelemetry({ tool, logger, run });
   server.registerTool(
     "conviction_account_status",
     {
@@ -157,13 +155,14 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async () => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_account_status");
-      try {
-        const status = await fetchAgentStatus(apiOptions(correlationId));
-        return toolResult(status);
-      } catch (error) {
-        return unavailableResult(error, "Could not load agent status.");
-      }
+      return runTool("conviction_account_status", async (correlationId) => {
+        try {
+          const status = await fetchAgentStatus(apiOptions(correlationId));
+          return toolResult(status);
+        } catch (error) {
+          return unavailableResult(error, "Could not load agent status.");
+        }
+      });
     },
   );
 
@@ -183,17 +182,18 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ cursor, limit }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_list_convictions");
-      try {
-        const page = await fetchConvictionsPage({
-          ...apiOptions(correlationId),
-          ...(cursor ? { cursor } : {}),
-          ...(limit !== undefined ? { limit } : {}),
-        });
-        return toolResult(page);
-      } catch (error) {
-        return unavailableResult(error, "Could not list convictions.");
-      }
+      return runTool("conviction_list_convictions", async (correlationId) => {
+        try {
+          const page = await fetchConvictionsPage({
+            ...apiOptions(correlationId),
+            ...(cursor ? { cursor } : {}),
+            ...(limit !== undefined ? { limit } : {}),
+          });
+          return toolResult(page);
+        } catch (error) {
+          return unavailableResult(error, "Could not list convictions.");
+        }
+      });
     },
   );
 
@@ -211,16 +211,17 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ entryId }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_get_conviction");
-      try {
-        const result = await fetchConviction({
-          ...apiOptions(correlationId),
-          entryId,
-        });
-        return toolResult(result);
-      } catch (error) {
-        return unavailableResult(error, "Could not load conviction.");
-      }
+      return runTool("conviction_get_conviction", async (correlationId) => {
+        try {
+          const result = await fetchConviction({
+            ...apiOptions(correlationId),
+            entryId,
+          });
+          return toolResult(result);
+        } catch (error) {
+          return unavailableResult(error, "Could not load conviction.");
+        }
+      });
     },
   );
 
@@ -237,13 +238,14 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async () => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_summarize_feed");
-      try {
-        const summary = await fetchFeedSummary(apiOptions(correlationId));
-        return toolResult(summary);
-      } catch (error) {
-        return unavailableResult(error, "Could not summarize the feed.");
-      }
+      return runTool("conviction_summarize_feed", async (correlationId) => {
+        try {
+          const summary = await fetchFeedSummary(apiOptions(correlationId));
+          return toolResult(summary);
+        } catch (error) {
+          return unavailableResult(error, "Could not summarize the feed.");
+        }
+      });
     },
   );
 
@@ -261,16 +263,17 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ receiptId }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_get_receipt");
-      try {
-        const result = await fetchReceipt({
-          ...apiOptions(correlationId),
-          receiptId,
-        });
-        return toolResult(result);
-      } catch (error) {
-        return unavailableResult(error, "Could not load receipt.");
-      }
+      return runTool("conviction_get_receipt", async (correlationId) => {
+        try {
+          const result = await fetchReceipt({
+            ...apiOptions(correlationId),
+            receiptId,
+          });
+          return toolResult(result);
+        } catch (error) {
+          return unavailableResult(error, "Could not load receipt.");
+        }
+      });
     },
   );
 
@@ -341,103 +344,107 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async (args) => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_quote_trade");
-
-      const unknownKeys = Object.keys(args).filter(
-        (key) => !mcpTradeQuoteKeys.has(key),
-      );
-      if (unknownKeys.length > 0) {
-        const looksLikeToken = unknownKeys.some((key) =>
-          /token|address|contract|chainId/i.test(key),
+      return runTool("conviction_quote_trade", async (correlationId) => {
+        const unknownKeys = Object.keys(args).filter(
+          (key) => !mcpTradeQuoteKeys.has(key),
         );
-        return toolResult(
-          {
-            ok: false,
-            code: looksLikeToken
-              ? "arbitrary_token_rejected"
-              : "invalid_input",
-            message: looksLikeToken
-              ? "Direct MCP trades accept named product assets only. Contract addresses and TokenRef fields are rejected."
-              : "Structured trade fields include unsupported keys.",
-            fields: unknownKeys.map((field) => ({
-              field,
-              code: looksLikeToken ? "forbidden_field" : "unknown_field",
-              message: looksLikeToken
-                ? `Remove "${field}". Use a named product asset instead.`
-                : `Unknown field "${field}".`,
-            })),
-          },
-          true,
-        );
-      }
-
-      const hasSize = args.sizeUsd !== undefined;
-      const hasFraction = args.fraction !== undefined;
-      if (hasSize === hasFraction) {
-        return toolResult(
-          {
-            ok: false,
-            code: "invalid_input",
-            message:
-              "Provide exactly one of sizeUsd (positive dollars) or fraction (0–1 of balance).",
-            fields: [
-              {
-                field: "sizeUsd|fraction",
-                code: "size_required",
-                message:
-                  "Provide exactly one of sizeUsd or fraction — not both, not neither.",
-              },
-            ],
-          },
-          true,
-        );
-      }
-
-      try {
-        const quote = await requestTradeQuote({
-          ...apiOptions(correlationId),
-          input: {
-            toAsset: args.toAsset,
-            ...(args.fromAsset ? { fromAsset: args.fromAsset } : {}),
-            ...(args.sizeUsd !== undefined ? { sizeUsd: args.sizeUsd } : {}),
-            ...(args.fraction !== undefined ? { fraction: args.fraction } : {}),
-            ...(args.destChain ? { destChain: args.destChain } : {}),
-            ...(args.publicationIntent !== undefined
-              ? { publicationIntent: args.publicationIntent }
-              : {}),
-          },
-        });
-        return toolResult(quote);
-      } catch (error) {
-        if (error instanceof ConvictionApiError) {
+        if (unknownKeys.length > 0) {
+          const looksLikeToken = unknownKeys.some((key) =>
+            /token|address|contract|chainId/i.test(key),
+          );
           return toolResult(
             {
               ok: false,
-              code: error.code,
-              message: error.message,
-              ...(error.details.fields ? { fields: error.details.fields } : {}),
-              ...(error.details.gateReport
-                ? { gateReport: error.details.gateReport }
-                : {}),
-              ...(error.details.preview
-                ? { preview: error.details.preview }
-                : {}),
+              code: looksLikeToken
+                ? "arbitrary_token_rejected"
+                : "invalid_input",
+              message: looksLikeToken
+                ? "Direct MCP trades accept named product assets only. Contract addresses and TokenRef fields are rejected."
+                : "Structured trade fields include unsupported keys.",
+              fields: unknownKeys.map((field) => ({
+                field,
+                code: looksLikeToken ? "forbidden_field" : "unknown_field",
+                message: looksLikeToken
+                  ? `Remove "${field}". Use a named product asset instead.`
+                  : `Unknown field "${field}".`,
+              })),
             },
             true,
           );
         }
-        return toolResult(
-          {
-            ok: false,
-            code: "unavailable",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Could not quote structured trade.",
-          },
-          true,
-        );
-      }
+
+        const hasSize = args.sizeUsd !== undefined;
+        const hasFraction = args.fraction !== undefined;
+        if (hasSize === hasFraction) {
+          return toolResult(
+            {
+              ok: false,
+              code: "invalid_input",
+              message:
+                "Provide exactly one of sizeUsd (positive dollars) or fraction (0–1 of balance).",
+              fields: [
+                {
+                  field: "sizeUsd|fraction",
+                  code: "size_required",
+                  message:
+                    "Provide exactly one of sizeUsd or fraction — not both, not neither.",
+                },
+              ],
+            },
+            true,
+          );
+        }
+
+        try {
+          const quote = await requestTradeQuote({
+            ...apiOptions(correlationId),
+            input: {
+              toAsset: args.toAsset,
+              ...(args.fromAsset ? { fromAsset: args.fromAsset } : {}),
+              ...(args.sizeUsd !== undefined ? { sizeUsd: args.sizeUsd } : {}),
+              ...(args.fraction !== undefined
+                ? { fraction: args.fraction }
+                : {}),
+              ...(args.destChain ? { destChain: args.destChain } : {}),
+              ...(args.publicationIntent !== undefined
+                ? { publicationIntent: args.publicationIntent }
+                : {}),
+            },
+          });
+          return toolResult(quote);
+        } catch (error) {
+          if (error instanceof ConvictionApiError) {
+            return toolResult(
+              {
+                ok: false,
+                code: error.code,
+                message: error.message,
+                ...(error.details.fields
+                  ? { fields: error.details.fields }
+                  : {}),
+                ...(error.details.gateReport
+                  ? { gateReport: error.details.gateReport }
+                  : {}),
+                ...(error.details.preview
+                  ? { preview: error.details.preview }
+                  : {}),
+              },
+              true,
+            );
+          }
+          return toolResult(
+            {
+              ok: false,
+              code: "unavailable",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Could not quote structured trade.",
+            },
+            true,
+          );
+        }
+      });
     },
   );
 
@@ -456,13 +463,14 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ quoteId, idempotencyKey }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_execute_trade");
-      return executeLiveTrade({
-        ...apiOptions(correlationId),
-        leaseId: options.lease.leaseId,
-        quoteId,
-        idempotencyKey,
-        expectedAction: "trade",
+      return runTool("conviction_execute_trade", async (correlationId) => {
+        return executeLiveTrade({
+          ...apiOptions(correlationId),
+          leaseId: options.lease.leaseId,
+          quoteId,
+          idempotencyKey,
+          expectedAction: "trade",
+        });
       });
     },
   );
@@ -484,27 +492,28 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ receiptId, thesis, whyNow, whatBreaksIt }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_publish_conviction");
-      try {
-        const result = await publishConviction({
-          ...apiOptions(correlationId),
-          input: {
-            receiptId,
-            thesis,
-            whyNow,
-            whatBreaksIt,
-            leaseId: options.lease.leaseId,
-          },
-        });
-        return toolResult(result, !result.ok);
-      } catch (error) {
-        return unavailableResult(
-          error,
-          error instanceof Error
-            ? error.message
-            : "Could not publish conviction.",
-        );
-      }
+      return runTool("conviction_publish_conviction", async (correlationId) => {
+        try {
+          const result = await publishConviction({
+            ...apiOptions(correlationId),
+            input: {
+              receiptId,
+              thesis,
+              whyNow,
+              whatBreaksIt,
+              leaseId: options.lease.leaseId,
+            },
+          });
+          return toolResult(result, !result.ok);
+        } catch (error) {
+          return unavailableResult(
+            error,
+            error instanceof Error
+              ? error.message
+              : "Could not publish conviction.",
+          );
+        }
+      });
     },
   );
 
@@ -528,25 +537,26 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async (args) => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_quote_back");
-      try {
-        const quote = await requestBackQuote({
-          ...apiOptions(correlationId),
-          input: args as {
-            entryId: string;
-            dollarsIn?: number;
-            fraction?: number;
-          },
-        });
-        return toolResult(quote);
-      } catch (error) {
-        return unavailableResult(
-          error,
-          error instanceof Error
-            ? error.message
-            : "Could not quote backing that conviction.",
-        );
-      }
+      return runTool("conviction_quote_back", async (correlationId) => {
+        try {
+          const quote = await requestBackQuote({
+            ...apiOptions(correlationId),
+            input: args as {
+              entryId: string;
+              dollarsIn?: number;
+              fraction?: number;
+            },
+          });
+          return toolResult(quote);
+        } catch (error) {
+          return unavailableResult(
+            error,
+            error instanceof Error
+              ? error.message
+              : "Could not quote backing that conviction.",
+          );
+        }
+      });
     },
   );
 
@@ -565,13 +575,14 @@ export function createLiveServer(options: CreateLiveServerOptions): McpServer {
     async ({ quoteId, idempotencyKey }) => {
       const blocked = requireLease();
       if (blocked) return blocked;
-      const correlationId = await beginTool("conviction_back_conviction");
-      return executeLiveTrade({
-        ...apiOptions(correlationId),
-        leaseId: options.lease.leaseId,
-        quoteId,
-        idempotencyKey,
-        expectedAction: "back",
+      return runTool("conviction_back_conviction", async (correlationId) => {
+        return executeLiveTrade({
+          ...apiOptions(correlationId),
+          leaseId: options.lease.leaseId,
+          quoteId,
+          idempotencyKey,
+          expectedAction: "back",
+        });
       });
     },
   );

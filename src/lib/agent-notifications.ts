@@ -2,13 +2,17 @@ import { randomUUID } from "node:crypto";
 
 import { getSql } from "@/lib/db";
 
-export type NotificationKind =
-  | "trade_success"
-  | "back_success"
-  | "reconciliation_needs_attention"
-  | "lifecycle"
-  | "policy";
-export type Severity = "info" | "warning" | "critical";
+export const NOTIFICATION_KINDS = [
+  "trade_success",
+  "back_success",
+  "reconciliation_needs_attention",
+  "lifecycle",
+  "policy",
+] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+
+export const NOTIFICATION_SEVERITIES = ["info", "warning", "critical"] as const;
+export type Severity = (typeof NOTIFICATION_SEVERITIES)[number];
 
 export type AgentNotification = {
   notificationId: string;
@@ -110,14 +114,22 @@ function boundedLimit(limit: number): number {
 }
 
 function notificationFromRow(row: Record<string, unknown>): AgentNotification {
+  const kind = String(row.kind ?? "");
+  const severity = String(row.severity ?? "");
+  if (!(NOTIFICATION_KINDS as readonly string[]).includes(kind)) {
+    throw new Error(`Unexpected agent notification kind: ${kind}`);
+  }
+  if (!(NOTIFICATION_SEVERITIES as readonly string[]).includes(severity)) {
+    throw new Error(`Unexpected agent notification severity: ${severity}`);
+  }
   const nullable = (name: string) =>
     row[name] == null ? undefined : String(row[name]);
   return {
     notificationId: String(row.notification_id),
     agentId: String(row.agent_id),
     ownerUserId: String(row.owner_user_id),
-    kind: String(row.kind) as NotificationKind,
-    severity: String(row.severity) as Severity,
+    kind: kind as NotificationKind,
+    severity: severity as Severity,
     title: String(row.title),
     body: String(row.body),
     dedupeKey: String(row.dedupe_key),
