@@ -35,6 +35,7 @@ import {
 } from "@/lib/agent-trade-receipt";
 import type { UniversalBalance } from "@/lib/verbs/types";
 import type { Receipt, TradeIntent, TradeQuote } from "@/lib/verbs/types";
+import { assertTradeDebitWithinCeiling } from "@/lib/verbs/quote";
 import type { RawTransaction } from "@/lib/ua/trade";
 
 /** Persist (or heal) the publishable trade-receipt record for a successful execute. */
@@ -59,7 +60,7 @@ async function ensurePublishableTradeReceipt(options: {
       quoteFingerprint: options.permit.quoteFingerprint,
       intent: options.permit.intent,
       sizeUsd: options.permit.sizeUsd,
-      dollarsIn: options.permit.dollarsIn,
+      dollarsIn: options.receipt.dollarsIn,
       dollarsOut: options.receipt.dollarsOut,
       feeUsd: options.receipt.feeUsd,
       sourceChain: options.permit.agreedQuote.sourceChain,
@@ -1046,6 +1047,38 @@ export async function submitSignedTradeExecution(options: {
       };
     }
     try {
+      assertTradeDebitWithinCeiling(
+        raw.tokenChanges ?? {},
+        permit.agreedQuote.dollarsIn,
+      );
+    } catch (error) {
+      const released = await options.permitStore.casStatus(
+        permitId,
+        "issued",
+        "released",
+      );
+      if (released) {
+        await options.spendLedger?.release(
+          options.agent.agentId,
+          permit.dollarsIn,
+        );
+      }
+      return maybePersist(
+        options.idempotencyStore,
+        options.agent.agentId,
+        idempotencyKey,
+        {
+          ok: false,
+          code: "quote_mismatch",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Stored transaction debit does not match the authorized quote.",
+          quoteId: permit.quoteId,
+        },
+      );
+    }
+    try {
       const recovered = verifyMessage(getBytes(raw.rootHash), rootHashSignature);
       if (getAddress(recovered) !== getAddress(options.agent.address)) {
         return invalidInput(
@@ -1127,6 +1160,7 @@ export async function submitSignedTradeExecution(options: {
       });
     }
 
+    const countedDebitUsd = sendResult.receipt.dollarsIn;
     const success: AgentExecuteSuccess = {
       ok: true,
       receiptId: sendResult.receipt.slug,
@@ -1135,7 +1169,7 @@ export async function submitSignedTradeExecution(options: {
       transactionId: sendResult.transactionId,
       summary: sendResult.summary,
       receipt: sendResult.receipt,
-      dollarsIn: permit.dollarsIn,
+      dollarsIn: countedDebitUsd,
       dollarsOut: sendResult.receipt.dollarsOut,
       feeUsd: sendResult.receipt.feeUsd,
       idempotencyKey,
@@ -1152,7 +1186,7 @@ export async function submitSignedTradeExecution(options: {
     );
 
     try {
-      await options.onSpend?.(permit.dollarsIn);
+      await options.onSpend?.(countedDebitUsd);
       await options.receipts.save(sendResult.receipt);
       if (permit.action === "trade") {
         emitOperatorEvent({

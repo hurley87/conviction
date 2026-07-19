@@ -580,7 +580,7 @@ async function runExecuteAgentTrade(options: {
                 quoteFingerprint: quote.quoteFingerprint,
                 intent: quote.intent,
                 sizeUsd: quote.sizeUsd,
-                dollarsIn: quote.dollarsIn,
+                dollarsIn: tradeResult.receipt.dollarsIn,
                 dollarsOut: tradeResult.receipt.dollarsOut,
                 feeUsd: tradeResult.receipt.feeUsd,
                 sourceChain: quote.sourceChain,
@@ -598,7 +598,7 @@ async function runExecuteAgentTrade(options: {
               }),
             );
           }
-          await options.onSpend?.(quote.dollarsIn);
+          await options.onSpend?.(tradeResult.receipt.dollarsIn);
           options.spendLedger.commit(options.agent.agentId, quote.dollarsIn);
         } catch (error) {
           // Quote already claimed and provider succeeded — do not release for retry.
@@ -622,7 +622,7 @@ async function runExecuteAgentTrade(options: {
           transactionId: tradeResult.transactionId,
           summary: tradeResult.summary,
           receipt: tradeResult.receipt,
-          dollarsIn: quote.dollarsIn,
+          dollarsIn: tradeResult.receipt.dollarsIn,
           dollarsOut: tradeResult.receipt.dollarsOut,
           feeUsd: tradeResult.receipt.feeUsd,
           idempotencyKey: options.input.idempotencyKey,

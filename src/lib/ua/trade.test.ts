@@ -38,6 +38,29 @@ describe("buildBuyPayload", () => {
 });
 
 describe("isSellIntent", () => {
+  it("keeps a USD-sized USDC to ETH trade on the USD-bounded buy path (issue #84)", () => {
+    const intent: TradeIntent = {
+      toAsset: "eth",
+      fromAsset: "usdc",
+      destChain: "Base",
+    };
+
+    // Particle's convert expectToken.amount is denominated in destination-token
+    // units. Routing sizeUsd=1 through convert therefore requests 1 ETH, not $1.
+    const routesThroughConvert = isSellIntent(intent);
+    expect({
+      route: routesThroughConvert ? "convert" : "buy",
+      submittedAmount: routesThroughConvert
+        ? buildConvertPayload(intent, 1).expectToken
+        : { amountInUSD: buildBuyPayload(intent, 1).amountInUSD },
+      tradeConfig: defaultTradeConfig(intent.fromAsset),
+    }).toEqual({
+      route: "buy",
+      submittedAmount: { amountInUSD: "1.00" },
+      tradeConfig: { slippageBps: 100, usePrimaryTokens: ["usdc"] },
+    });
+  });
+
   it("is true when converting a held non-cash asset", () => {
     expect(
       isSellIntent({ toAsset: "cash", fromAsset: "eth", destChain: "Arbitrum" }),

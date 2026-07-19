@@ -6,6 +6,7 @@ import { hasParticleEnv } from "@/lib/ua";
 import { MockUAClient } from "@/lib/ua/mock";
 import { buildReceipt, inferSpentSymbol } from "@/lib/verbs/receipt";
 import { narrateResult } from "@/lib/verbs/intent";
+import { assertTradeDebitWithinCeiling } from "@/lib/verbs/quote";
 import type { SignedTradeSender } from "@/lib/agent-permit";
 import type { RawTransaction } from "@/lib/ua/trade";
 import { userOpsNeeding7702 } from "@/lib/ua/trade";
@@ -44,6 +45,10 @@ export function createSignedTradeSender(
     if (!raw?.rootHash) {
       throw new Error("Permit raw transaction is missing rootHash.");
     }
+    const transactionDebitUsd = assertTradeDebitWithinCeiling(
+      raw.tokenChanges ?? {},
+      input.agreedQuote.dollarsIn,
+    );
 
     const env = particleEnvOrNull();
     if (env && hasParticleEnv()) {
@@ -63,7 +68,7 @@ export function createSignedTradeSender(
       const receipt = buildReceipt(
         input.receiptSlug,
         {
-          dollarsIn: input.agreedQuote.dollarsIn,
+          dollarsIn: transactionDebitUsd,
           dollarsOut: input.agreedQuote.dollarsOut,
           feeUsd: input.agreedQuote.feeUsd,
           sourceChain: input.agreedQuote.sourceChain,
@@ -80,7 +85,7 @@ export function createSignedTradeSender(
         transactionId,
         receipt,
         summary: narrateResult(
-          input.agreedQuote.dollarsIn,
+          transactionDebitUsd,
           input.agreedQuote.dollarsOut,
           input.agreedQuote.toAsset,
           input.agreedQuote.receivedSymbol,
@@ -128,12 +133,12 @@ export function createSignedTradeSender(
       transactionId: result.transactionId,
       receipt: {
         ...result.receipt,
-        dollarsIn: input.agreedQuote.dollarsIn,
+        dollarsIn: transactionDebitUsd,
         dollarsOut: input.agreedQuote.dollarsOut,
         feeUsd: input.agreedQuote.feeUsd,
       },
       summary: narrateResult(
-        input.agreedQuote.dollarsIn,
+        transactionDebitUsd,
         input.agreedQuote.dollarsOut,
         input.agreedQuote.toAsset,
         input.agreedQuote.receivedSymbol,

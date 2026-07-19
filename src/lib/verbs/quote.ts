@@ -6,6 +6,8 @@ import { chainName } from "@/lib/verbs/chains";
 
 /** Default tolerance for the min-received floor (ADR 0011). */
 export const DEFAULT_FLOOR_TOLERANCE = 0.01;
+/** Allowed increase over an agreed authoritative debit before submission. */
+export const TRADE_DEBIT_TOLERANCE = 0.01;
 
 /** Minimal structural subset of SDK tokenChanges we depend on. */
 export type RawTokenChanges = {
@@ -56,6 +58,34 @@ export function parseUsd(value: string | undefined, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Require Particle's authoritative total decrease; requested size is not a
+ * safe substitute because it does not describe the transaction being signed. */
+export function authoritativeTradeDebitUsd(changes: RawTokenChanges): number {
+  const dollarsIn = parseUsd(changes.totalDecrAmountInUSD, Number.NaN);
+  if (!Number.isFinite(dollarsIn) || dollarsIn <= 0) {
+    throw new Error(
+      "Particle transaction is missing an authoritative debit; refusing to continue.",
+    );
+  }
+  return dollarsIn;
+}
+
+/** Validate the stored/fresh Particle payload immediately before submission. */
+export function assertTradeDebitWithinCeiling(
+  changes: RawTokenChanges,
+  agreedDebitUsd: number,
+  tolerance = TRADE_DEBIT_TOLERANCE,
+): number {
+  const transactionDebitUsd = authoritativeTradeDebitUsd(changes);
+  const maxDebitUsd = agreedDebitUsd * (1 + tolerance);
+  if (transactionDebitUsd > maxDebitUsd + 1e-9) {
+    throw new Error(
+      `Particle transaction debit $${transactionDebitUsd.toFixed(2)} exceeds the agreed ceiling of $${maxDebitUsd.toFixed(2)}.`,
+    );
+  }
+  return transactionDebitUsd;
+}
+
 /** Per-quote fee breakdown from the SDK's feeQuotes (IFeeTotals). */
 export type RawFeeTotals = {
   feeTokenAmountInUSD?: string;
@@ -102,18 +132,31 @@ export function shapeQuote(
   rawTransaction: unknown,
   etaSeconds = 45,
 ): TradeQuote {
-  const dollarsIn = parseUsd(changes.totalDecrAmountInUSD, sizeUsd);
+  // A buy's amountInUSD excludes separately itemized Particle fees. Include
+  // only authoritative fee data in the initial ceiling; otherwise an unknown
+  // overage must fail closed rather than being inferred as a fee.
+  const sdkFeeUsd = extractFeeUsd(rawTransaction);
+  const reportedFeeUsd = parseUsd(changes.totalFeeInUSD);
+  const authorizedDebitUsd =
+    sizeUsd + (sdkFeeUsd ?? (reportedFeeUsd > 0 ? reportedFeeUsd : 0));
+  // Bind the transaction Particle constructed to the amount the caller asked
+  // to authorize. This catches both missing economics and oversized payloads
+  // before a quote can enter the permit/spend flow.
+  const dollarsIn = assertTradeDebitWithinCeiling(
+    changes,
+    authorizedDebitUsd,
+  );
   const dollarsOut = parseUsd(
     changes.totalIncrAmountInUSD,
     dollarsIn * 0.995,
   );
   // Prefer the SDK's authoritative fee breakdown; fall back to the reported
   // total, then to the in/out delta — never silently show $0 when it cost money.
-  let feeUsd = extractFeeUsd(rawTransaction);
-  if (feeUsd == null) {
-    const reported = parseUsd(changes.totalFeeInUSD);
-    feeUsd = reported > 0 ? reported : Math.max(0, dollarsIn - dollarsOut);
-  }
+  const feeUsd =
+    sdkFeeUsd ??
+    (reportedFeeUsd > 0
+      ? reportedFeeUsd
+      : Math.max(0, dollarsIn - dollarsOut));
   const floorUsd = computeFloor(dollarsOut);
   if (!intent.destChain) {
     throw new Error("Settlement chain required before quoting");
