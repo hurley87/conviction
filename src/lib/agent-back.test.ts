@@ -26,6 +26,9 @@ import {
   issueTradeExecutionPermit,
   submitSignedTradeExecution,
 } from "@/lib/agent-permit";
+import { isProviderTerminalOutcome } from "@/lib/agent-execution-finality";
+import { MemoryExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
+import type { ExecutionReconciler } from "@/lib/agent-execution-reconciliation";
 import { MemoryAgentQuoteStore } from "@/lib/agent-quote";
 import type { OwnedAgent } from "@/lib/agent-provisioning";
 import { MockUAClient } from "@/lib/ua/mock";
@@ -93,6 +96,45 @@ const BALANCE = {
     { chain: "Arbitrum", asset: "ETH", usd: 42.5 },
   ],
 };
+
+/** Deterministic no-op workflow starter for the required finality path. */
+const noopWorkflow = {
+  async start(executionId: string) {
+    return { runId: `run_${executionId}` };
+  },
+};
+
+/** Test reconciler that confirms every required leg and finalizes the execution. */
+function finalizingReconciler(
+  store: MemoryExecutionFinalityStore,
+  at: string,
+): ExecutionReconciler {
+  return {
+    async reconcile(executionId) {
+      const current = await store.get(executionId);
+      if (!current) throw new Error(`Execution ${executionId} was not found.`);
+      if (isProviderTerminalOutcome(current.outcome)) return current;
+      const legs = current.legs.map((leg, index) => ({
+        ...leg,
+        status: "finalized" as const,
+        confirmedHash: `0x${String(index + 1).repeat(64).slice(0, 64)}`,
+        confirmedAt: at,
+        attemptCount: leg.attemptCount + 1,
+        lastProviderStatus: "FINALIZED",
+      }));
+      const finalized = await store.transition({
+        executionId,
+        expectedVersion: current.version,
+        from: current.outcome,
+        to: "finalized",
+        updatedAt: at,
+        patch: { legs, lastProviderStatus: "FINALIZED" },
+      });
+      if (!finalized) throw new Error("expected finalized execution");
+      return finalized;
+    },
+  };
+}
 
 function receipt(slug = "rcpt_back_1"): Receipt {
   return {
@@ -228,6 +270,7 @@ describe("back permit + durable attribution", () => {
       randomId: () => "00000000-0000-4000-8000-0000000000b2",
     });
 
+    const executionStore = new MemoryExecutionFinalityStore();
     const disabled = await issueTradeExecutionPermit({
       agent: {
         ...AGENT,
@@ -240,6 +283,8 @@ describe("back permit + durable attribution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: BALANCE,
       expectedAction: "back",
     });
@@ -258,6 +303,8 @@ describe("back permit + durable attribution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: BALANCE,
       expectedAction: "back",
     });
@@ -648,6 +695,7 @@ describe("back permit + durable attribution", () => {
       },
     });
 
+    const executionStore = new MemoryExecutionFinalityStore();
     const permit = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
@@ -657,6 +705,8 @@ describe("back permit + durable attribution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: BALANCE,
       spendLedger,
       expectedAction: "back",
@@ -687,6 +737,9 @@ describe("back permit + durable attribution", () => {
         quoteStore,
         spendLedger,
         backStore,
+        executionFinalityStore: executionStore,
+        executionWorkflow: noopWorkflow,
+        executionReconciler: finalizingReconciler(executionStore, now().toISOString()),
         startBackWorkflow: {
           async start(id) {
             return { runId: `run_${id}` };
@@ -700,20 +753,9 @@ describe("back permit + durable attribution", () => {
         activeLeaseId: "lease-1",
         now,
         randomId: () => "live-back-concurrent",
-        send: async ({ receiptSlug, agreedQuote }) => {
+        send: async () => {
           sends += 1;
-          return {
-            transactionId: `tx_${sends}`,
-            summary: "Backed",
-            receipt: {
-              slug: receiptSlug,
-              summary: "Backed",
-              dollarsIn: agreedQuote.dollarsIn,
-              dollarsOut: agreedQuote.dollarsOut,
-              feeUsd: agreedQuote.feeUsd,
-              legs: [],
-            },
-          };
+          return { transactionId: permit.transactionId };
         },
       });
 

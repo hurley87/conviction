@@ -16,14 +16,20 @@ import {
   canUseMockRetirementRecovery,
   classifyHoldings,
   executeRetirementRecovery,
+  finalizeRetirementRecovery,
   MemoryAgentRetirementStore,
+  prepareRetirementRecovery,
+  reconcileRetirementLegFinality,
   reconcileRetirementResiduals,
+  RETIREMENT_RESIDUAL_STABILITY_MS,
   RETIREMENT_DUST_THRESHOLD_USD,
   retryRetirementRecovery,
   startRetirement,
+  submitRetirementLeg,
 } from "@/lib/agent-retirement";
 import { MockUAClient, mockTradeSigners } from "@/lib/ua/mock";
 import { AgentProvisioningError } from "@/lib/agent-provisioning";
+import { normalizeParticleTransactionStatus } from "@/lib/ua/particle-finality";
 
 const OWNER = { userId: "did:privy:retire-owner", operatorHandle: "operator" };
 const FIXED_NOW = new Date("2026-07-18T15:00:00.000Z");
@@ -94,6 +100,113 @@ function issuedPermit(agentId: string): ExecutionPermitRecord {
     issuedAt: FIXED_NOW.toISOString(),
     expiresAt: new Date(FIXED_NOW.getTime() + 30_000).toISOString(),
     status: "issued",
+  };
+}
+
+async function withParticleEnv<T>(run: () => Promise<T>): Promise<T> {
+  const previous = {
+    projectId: process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID,
+    clientKey: process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY,
+    appId: process.env.NEXT_PUBLIC_PARTICLE_APP_ID,
+  };
+  process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID = "test-project";
+  process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY = "test-client";
+  process.env.NEXT_PUBLIC_PARTICLE_APP_ID = "test-app";
+  try {
+    return await run();
+  } finally {
+    if (previous.projectId === undefined) {
+      delete process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID;
+    } else {
+      process.env.NEXT_PUBLIC_PARTICLE_PROJECT_ID = previous.projectId;
+    }
+    if (previous.clientKey === undefined) {
+      delete process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY;
+    } else {
+      process.env.NEXT_PUBLIC_PARTICLE_CLIENT_KEY = previous.clientKey;
+    }
+    if (previous.appId === undefined) {
+      delete process.env.NEXT_PUBLIC_PARTICLE_APP_ID;
+    } else {
+      process.env.NEXT_PUBLIC_PARTICLE_APP_ID = previous.appId;
+    }
+  }
+}
+
+function particlePending(transactionId: string) {
+  return normalizeParticleTransactionStatus(transactionId, {
+    transactionId,
+    status: 5,
+    lendingUserOperations: [
+      { chainId: 42161, status: 1, userOpHash: `0x${"a".repeat(64)}` },
+    ],
+  });
+}
+
+function particleFinalized(transactionId: string, chainId = 42161) {
+  return normalizeParticleTransactionStatus(transactionId, {
+    transactionId,
+    status: 7,
+    lendingUserOperations: [
+      {
+        chainId,
+        status: 3,
+        userOpHash: `0x${"b".repeat(64)}`,
+        txHash: `0x${"c".repeat(64)}`,
+      },
+    ],
+  });
+}
+
+function particlePartial(transactionId: string) {
+  return normalizeParticleTransactionStatus(transactionId, {
+    transactionId,
+    status: 6,
+    depositUserOperations: [
+      {
+        chainId: 8453,
+        status: 3,
+        userOpHash: `0x${"d".repeat(64)}`,
+        txHash: `0x${"e".repeat(64)}`,
+      },
+    ],
+    lendingUserOperations: [
+      {
+        chainId: 42161,
+        status: 2,
+        userOpHash: `0x${"f".repeat(64)}`,
+        error: "destination reverted",
+      },
+    ],
+  });
+}
+
+async function retirementFixture(
+  sources: Parameters<typeof classifyHoldings>[0]["sources"],
+) {
+  const store = new MemoryAgentProvisioningStore();
+  const retirementStore = new MemoryAgentRetirementStore();
+  const auditStore = new MemoryAgentAuditStore();
+  const permitStore = new MemoryAgentPermitStore();
+  const spendLedger = new MemorySpendLedger();
+  const agent = await seedActiveAgent(store);
+  const started = await startRetirement({
+    store,
+    retirementStore,
+    auditStore,
+    permitStore,
+    spendLedger,
+    ownerUserId: OWNER.userId,
+    agentId: agent.agentId,
+    now: FIXED_NOW,
+    idempotencyKey: `fixture:${agent.agentId}`,
+  });
+  return {
+    store,
+    retirementStore,
+    auditStore,
+    started,
+    ua: new MockUAClient({ sources, mutateSourcesOnExecute: true }),
   };
 }
 
@@ -206,7 +319,7 @@ describe("agent retirement", () => {
       ],
     });
 
-    const recovered = await executeRetirementRecovery({
+    const submitted = await executeRetirementRecovery({
       store,
       retirementStore,
       auditStore,
@@ -217,10 +330,26 @@ describe("agent retirement", () => {
       allowMock: true,
       now: FIXED_NOW,
     });
+    expect(submitted.agent.status).toBe("retiring");
+    expect(submitted.retirement.reconciliationState).toBe("pending_sync");
+
+    const recovered = await executeRetirementRecovery({
+      store,
+      retirementStore,
+      auditStore,
+      agent: started.agent,
+      retirementId: started.retirement.retirementId,
+      ua,
+      signers: mockTradeSigners,
+      allowMock: true,
+      now: new Date(FIXED_NOW.getTime() + 2_000),
+    });
 
     expect(recovered.agent.status).toBe("retired");
     expect(recovered.agent.publicStatus).toBe("retired");
-    expect(recovered.agent.retiredAt).toBe(FIXED_NOW.toISOString());
+    expect(recovered.agent.retiredAt).toBe(
+      new Date(FIXED_NOW.getTime() + 2_000).toISOString(),
+    );
     expect(recovered.retirement.reconciliationState).toBe("complete");
     expect(recovered.retirement.transferLeg?.status).toBe("complete");
     expect(recovered.retirement.transferLeg?.destination).toBe(RETURN_ADDRESS);
@@ -239,6 +368,11 @@ describe("agent retirement", () => {
         "retirement_completed",
       ]),
     );
+    expect(
+      auditStore.events.filter(
+        (event) => event.type === "retirement_completed",
+      ),
+    ).toHaveLength(1);
 
     // One-agent slot released — a new agent can be created.
     const second = await createPendingAgent(
@@ -283,7 +417,7 @@ describe("agent retirement", () => {
       sources: [{ chain: "Arbitrum", asset: "USDC", usd: 20 }],
     });
 
-    const first = await executeRetirementRecovery({
+    const firstObservation = await executeRetirementRecovery({
       store,
       retirementStore,
       auditStore,
@@ -293,6 +427,20 @@ describe("agent retirement", () => {
       signers: mockTradeSigners,
       allowMock: true,
       now: FIXED_NOW,
+    });
+    expect(firstObservation.retirement.reconciliationState).toBe(
+      "pending_sync",
+    );
+    const first = await executeRetirementRecovery({
+      store,
+      retirementStore,
+      auditStore,
+      agent: started.agent,
+      retirementId: started.retirement.retirementId,
+      ua,
+      signers: mockTradeSigners,
+      allowMock: true,
+      now: new Date(FIXED_NOW.getTime() + 2_000),
     });
     expect(first.retirement.reconciliationState).toBe("complete");
     const withdrawalCount = ua.withdrawalRecords.length;
@@ -335,7 +483,7 @@ describe("agent retirement", () => {
       sources: [{ chain: "Arbitrum", asset: "ARB", usd: 0.4 }],
     });
 
-    const recovered = await executeRetirementRecovery({
+    await executeRetirementRecovery({
       store,
       retirementStore,
       auditStore,
@@ -345,6 +493,17 @@ describe("agent retirement", () => {
       signers: mockTradeSigners,
       allowMock: true,
       now: FIXED_NOW,
+    });
+    const recovered = await executeRetirementRecovery({
+      store,
+      retirementStore,
+      auditStore,
+      agent: started.agent,
+      retirementId: started.retirement.retirementId,
+      ua,
+      signers: mockTradeSigners,
+      allowMock: true,
+      now: new Date(FIXED_NOW.getTime() + 2_000),
     });
 
     expect(recovered.agent.status).toBe("retired");
@@ -382,7 +541,7 @@ describe("agent retirement", () => {
       sources: [{ chain: "Arbitrum", asset: "ARB", usd: 5 }],
     });
 
-    const recovered = await executeRetirementRecovery({
+    await executeRetirementRecovery({
       store,
       retirementStore,
       auditStore,
@@ -392,6 +551,17 @@ describe("agent retirement", () => {
       signers: mockTradeSigners,
       allowMock: true,
       now: FIXED_NOW,
+    });
+    const recovered = await executeRetirementRecovery({
+      store,
+      retirementStore,
+      auditStore,
+      agent: started.agent,
+      retirementId: started.retirement.retirementId,
+      ua,
+      signers: mockTradeSigners,
+      allowMock: true,
+      now: new Date(FIXED_NOW.getTime() + 2_000),
     });
 
     expect(recovered.agent.status).toBe("retiring");
@@ -445,7 +615,7 @@ describe("agent retirement", () => {
       mutateSourcesOnExecute: true,
       sources: [],
     });
-    const recovered = await executeRetirementRecovery({
+    await executeRetirementRecovery({
       store,
       retirementStore,
       auditStore,
@@ -455,6 +625,17 @@ describe("agent retirement", () => {
       signers: mockTradeSigners,
       allowMock: true,
       now: FIXED_NOW,
+    });
+    const recovered = await executeRetirementRecovery({
+      store,
+      retirementStore,
+      auditStore,
+      agent: started.agent,
+      retirementId: started.retirement.retirementId,
+      ua,
+      signers: mockTradeSigners,
+      allowMock: true,
+      now: new Date(FIXED_NOW.getTime() + 2_000),
     });
     expect(recovered.agent.status).toBe("retired");
 
@@ -605,7 +786,7 @@ describe("agent retirement", () => {
     ).rejects.toMatchObject({ code: "agent_not_found" });
   });
 
-  it("persists completed conversion legs before a later failure so retry skips them", async () => {
+  it("persists confirmed conversions and never automatically resubmits a failed transfer", async () => {
     const store = new MemoryAgentProvisioningStore();
     const retirementStore = new MemoryAgentRetirementStore();
     const auditStore = new MemoryAgentAuditStore();
@@ -674,8 +855,9 @@ describe("agent retirement", () => {
       allowMock: true,
       now: FIXED_NOW,
     });
-    expect(second.retirement.reconciliationState).toBe("complete");
-    expect(second.agent.status).toBe("retired");
+    expect(second.retirement.reconciliationState).toBe("needs_attention");
+    expect(second.agent.status).toBe("retiring");
+    expect(withdrawals).toBe(1);
   });
 
   it("does not complete reconcile from an empty balance without a terminal transfer leg", async () => {
@@ -704,11 +886,352 @@ describe("agent retirement", () => {
       ua: new MockUAClient({ sources: [] }),
       now: FIXED_NOW,
     });
-    expect(reconciled.reconciliationState).toBe("needs_attention");
-    expect(reconciled.lastError).toMatch(/terminal/i);
+    expect(reconciled.reconciliationState).toBe("pending_sync");
+    expect(reconciled.lastError).toMatch(/confirmed finality/i);
     expect(
       (await store.findNonRetiredByOwner(OWNER.userId))?.status,
     ).toBe("retiring");
+  });
+});
+
+describe("confirmed retirement finality", () => {
+  it("keeps an accepted conversion pending and blocks the return transfer", async () => {
+    await withParticleEnv(async () => {
+      const fixture = await retirementFixture([
+        { chain: "Base", asset: "ETH", usd: 20 },
+        { chain: "Arbitrum", asset: "USDC", usd: 5 },
+      ]);
+      const prepared = await prepareRetirementRecovery({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        now: FIXED_NOW,
+      });
+      expect(prepared.signable?.kind).toBe("conversion");
+      const plannedId =
+        prepared.retirement.conversionLegs[0]?.transactionId ?? "";
+      let sends = 0;
+      const submitted = await submitRetirementLeg({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        legId: prepared.signable!.legId,
+        rootHashSignature: "0xsigned",
+        sendRaw: async () => {
+          sends += 1;
+          return plannedId;
+        },
+        statusReader: {
+          getTransactionStatus: async () => particlePending(plannedId),
+        },
+        now: FIXED_NOW,
+      });
+      expect(submitted.retirement.conversionLegs[0]?.status).toBe("submitted");
+      expect(submitted.retirement.conversionLegs[0]?.receiptId).toBeNull();
+      expect(submitted.retirement.recoveredUsd).toBe(0);
+      expect(submitted.agent.status).toBe("retiring");
+
+      fixture.ua.getTransactionStatus = async () => particlePending(plannedId);
+      const blocked = await prepareRetirementRecovery({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        now: new Date(FIXED_NOW.getTime() + 1_000),
+      });
+      expect(blocked.signable).toBeNull();
+      expect(blocked.retirement.transferLeg).toBeNull();
+      expect(blocked.retirement.reconciliationState).toBe("pending_sync");
+      expect(sends).toBe(1);
+    });
+  });
+
+  it("does not account for an accepted return transfer before confirmation", async () => {
+    await withParticleEnv(async () => {
+      const fixture = await retirementFixture([
+        { chain: "Arbitrum", asset: "USDC", usd: 12 },
+      ]);
+      const prepared = await prepareRetirementRecovery({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        now: FIXED_NOW,
+      });
+      expect(prepared.signable?.kind).toBe("transfer");
+      const plannedId = prepared.retirement.transferLeg!.transactionId!;
+      const submitted = await submitRetirementLeg({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        legId: prepared.signable!.legId,
+        rootHashSignature: "0xsigned",
+        sendRaw: async () => plannedId,
+        now: FIXED_NOW,
+      });
+      expect(submitted.retirement.transferLeg?.status).toBe("submitted");
+      expect(submitted.retirement.transferLeg?.receiptId).toBeNull();
+      expect(submitted.retirement.recoveredUsd).toBe(0);
+      expect(submitted.retirement.reconciliationState).toBe("pending_sync");
+      expect(submitted.agent.status).toBe("retiring");
+    });
+  });
+
+  it("marks source-success and destination-failure evidence needs_attention", async () => {
+    await withParticleEnv(async () => {
+      const fixture = await retirementFixture([
+        { chain: "Base", asset: "ETH", usd: 20 },
+      ]);
+      const prepared = await prepareRetirementRecovery({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        now: FIXED_NOW,
+      });
+      const plannedId =
+        prepared.retirement.conversionLegs[0]?.transactionId ?? "";
+      await submitRetirementLeg({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        legId: prepared.signable!.legId,
+        rootHashSignature: "0xsigned",
+        sendRaw: async () => plannedId,
+        now: FIXED_NOW,
+      });
+      const current = (await fixture.retirementStore.get(
+        fixture.started.retirement.retirementId,
+      ))!;
+      const reconciled = await reconcileRetirementLegFinality({
+        retirementStore: fixture.retirementStore,
+        retirement: current,
+        legId: prepared.signable!.legId,
+        ua: {
+          getTransactionStatus: async () => particlePartial(plannedId),
+        },
+        now: new Date(FIXED_NOW.getTime() + 1_000),
+      });
+      const leg = reconciled.conversionLegs[0]!;
+      expect(leg.status).toBe("needs_attention");
+      expect(leg.finality.outcome).toBe("partial");
+      expect(leg.receiptId).toBeNull();
+      expect(leg.finality.confirmedHashes).toHaveLength(1);
+      expect(reconciled.reconciliationState).toBe("needs_attention");
+      expect(reconciled.recoveredUsd).toBe(0);
+    });
+  });
+
+  it("serializes concurrent submits and never sends a leg twice", async () => {
+    await withParticleEnv(async () => {
+      const fixture = await retirementFixture([
+        { chain: "Arbitrum", asset: "USDC", usd: 8 },
+      ]);
+      const prepared = await prepareRetirementRecovery({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        now: FIXED_NOW,
+      });
+      const plannedId = prepared.retirement.transferLeg!.transactionId!;
+      let sends = 0;
+      let releaseSend!: () => void;
+      const sendGate = new Promise<void>((resolve) => {
+        releaseSend = resolve;
+      });
+      const submit = () =>
+        submitRetirementLeg({
+          ...fixture,
+          agent: fixture.started.agent,
+          retirementId: fixture.started.retirement.retirementId,
+          legId: prepared.signable!.legId,
+          rootHashSignature: "0xsigned",
+          sendRaw: async () => {
+            sends += 1;
+            await sendGate;
+            return plannedId;
+          },
+          statusReader: {
+            getTransactionStatus: async () => particlePending(plannedId),
+          },
+          now: FIXED_NOW,
+        });
+      const first = submit();
+      await Promise.resolve();
+      const second = submit();
+      releaseSend();
+      const results = await Promise.allSettled([first, second]);
+      expect(
+        results.some((result) => result.status === "fulfilled"),
+      ).toBe(true);
+      expect(sends).toBe(1);
+
+      await submit();
+      expect(sends).toBe(1);
+    });
+  });
+
+  it("restores submitted finality state and evidence after store restart", async () => {
+    await withParticleEnv(async () => {
+      const fixture = await retirementFixture([
+        { chain: "Arbitrum", asset: "USDC", usd: 7 },
+      ]);
+      const prepared = await prepareRetirementRecovery({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        now: FIXED_NOW,
+      });
+      const plannedId = prepared.retirement.transferLeg!.transactionId!;
+      await submitRetirementLeg({
+        ...fixture,
+        agent: fixture.started.agent,
+        retirementId: fixture.started.retirement.retirementId,
+        legId: prepared.signable!.legId,
+        rootHashSignature: "0xsigned",
+        sendRaw: async () => plannedId,
+        now: FIXED_NOW,
+      });
+
+      const restartedStore = new MemoryAgentRetirementStore(
+        fixture.retirementStore.exportState(),
+      );
+      const restored = (await restartedStore.get(
+        fixture.started.retirement.retirementId,
+      ))!;
+      const reconciled = await reconcileRetirementLegFinality({
+        retirementStore: restartedStore,
+        retirement: restored,
+        legId: prepared.signable!.legId,
+        ua: {
+          getTransactionStatus: async () => particleFinalized(plannedId),
+        },
+        now: new Date(FIXED_NOW.getTime() + 1_000),
+      });
+      expect(reconciled.transferLeg?.status).toBe("complete");
+      expect(reconciled.transferLeg?.receiptId).toBe(
+        `0x${"c".repeat(64)}`,
+      );
+      expect(reconciled.transferLeg?.finality.providerEvidence.length).toBeGreaterThan(
+        1,
+      );
+      expect(reconciled.recoveredUsd).toBe(7);
+    });
+  });
+
+  it("requires stable residual observations and resets them when value returns", async () => {
+    const fixture = await retirementFixture([]);
+    await fixture.retirementStore.update({
+      ...fixture.started.retirement,
+      transferLeg: {
+        legId: `transfer:usdc:Arbitrum:${RETURN_ADDRESS.toLowerCase()}`,
+        kind: "transfer",
+        asset: "usdc",
+        destChain: "Arbitrum",
+        amount: "0",
+        destination: RETURN_ADDRESS,
+        status: "skipped",
+        quote: null,
+        rootHash: null,
+        transactionId: null,
+        receiptId: null,
+        finality: {
+          outcome: null,
+          providerStatus: null,
+          attemptCount: 0,
+          submittedAt: null,
+          confirmedAt: null,
+          confirmedHashes: [],
+          providerEvidence: [],
+        },
+        error: null,
+      },
+    });
+    let sources: Parameters<typeof classifyHoldings>[0]["sources"] = [];
+    fixture.ua.getUniversalBalance = async () => ({
+      totalUsd: sources.reduce((sum, source) => sum + source.usd, 0),
+      sources,
+    });
+
+    const first = await reconcileRetirementResiduals({
+      ...fixture,
+      retirementId: fixture.started.retirement.retirementId,
+      now: FIXED_NOW,
+    });
+    expect(first.reconciliationState).toBe("pending_sync");
+    expect(first.residualObservation.consecutiveDustObservations).toBe(1);
+
+    sources = [{ chain: "Arbitrum", asset: "ARB", usd: 2 }];
+    const contradicted = await reconcileRetirementResiduals({
+      ...fixture,
+      retirementId: fixture.started.retirement.retirementId,
+      now: new Date(FIXED_NOW.getTime() + RETIREMENT_RESIDUAL_STABILITY_MS),
+    });
+    expect(contradicted.reconciliationState).toBe("needs_attention");
+    expect(contradicted.residualObservation.consecutiveDustObservations).toBe(0);
+
+    sources = [];
+    const afterReset = await reconcileRetirementResiduals({
+      ...fixture,
+      retirementId: fixture.started.retirement.retirementId,
+      now: new Date(FIXED_NOW.getTime() + 4_000),
+    });
+    expect(afterReset.reconciliationState).toBe("pending_sync");
+    expect(afterReset.residualObservation.consecutiveDustObservations).toBe(1);
+    const completed = await reconcileRetirementResiduals({
+      ...fixture,
+      retirementId: fixture.started.retirement.retirementId,
+      now: new Date(FIXED_NOW.getTime() + 6_000),
+    });
+    expect(completed.reconciliationState).toBe("complete");
+    expect(
+      fixture.auditStore.events.filter(
+        (event) => event.type === "retirement_completed",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("uses confirmed hashes, never planned userOp hashes, as receipts", async () => {
+    const fixture = await retirementFixture([
+      { chain: "Arbitrum", asset: "USDC", usd: 5 },
+    ]);
+    const first = await executeRetirementRecovery({
+      ...fixture,
+      agent: fixture.started.agent,
+      retirementId: fixture.started.retirement.retirementId,
+      signers: mockTradeSigners,
+      allowMock: true,
+      now: FIXED_NOW,
+    });
+    expect(first.retirement.reconciliationState).toBe("pending_sync");
+    const completed = await executeRetirementRecovery({
+      ...fixture,
+      agent: fixture.started.agent,
+      retirementId: fixture.started.retirement.retirementId,
+      signers: mockTradeSigners,
+      allowMock: true,
+      now: new Date(FIXED_NOW.getTime() + 2_000),
+    });
+    expect(completed.retirement.reconciliationState).toBe("complete");
+    expect(completed.retirement.recoveredUsd).toBeGreaterThan(0);
+    for (const leg of [
+      ...completed.retirement.conversionLegs,
+      completed.retirement.transferLeg!,
+    ]) {
+      if (leg.status !== "complete") continue;
+      expect(leg.receiptId).toMatch(/^0x[0-9a-f]{64}$/);
+      expect(leg.receiptId).not.toContain("mocksource");
+      expect(leg.receiptId).not.toContain("mockdest");
+      expect(leg.finality.confirmedHashes.length).toBeGreaterThan(0);
+    }
+    await finalizeRetirementRecovery({
+      ...fixture,
+      agent: completed.agent,
+      retirementId: fixture.started.retirement.retirementId,
+      now: new Date(FIXED_NOW.getTime() + 4_000),
+    });
+    expect(
+      fixture.auditStore.events.filter(
+        (event) => event.type === "retirement_completed",
+      ),
+    ).toHaveLength(1);
   });
 });
 

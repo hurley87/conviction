@@ -13,6 +13,8 @@ import {
   accountStatusResultSchema,
   convictionGetResultSchema,
   convictionListResultSchema,
+  executeFinalizedResultSchema,
+  executeResultSchema,
   feedSummaryResultSchema,
   receiptGetResultSchema,
   structuredErrorResultSchema,
@@ -46,6 +48,28 @@ export function mcpReadToolOutputSchema<T extends z.ZodRawShape>(
   return schema;
 }
 
+export function mcpResultOutputSchema<T extends z.ZodRawShape>(
+  successSchema: z.ZodObject<T>,
+  advertisedSchema: z.ZodType,
+): z.ZodObject<T> {
+  const schema = z.object(successSchema.shape);
+  const advertisedJsonSchema = omitJsonSchemaId(
+    z.toJSONSchema(advertisedSchema, {
+      target: "draft-7",
+    }) as JsonSchemaObject,
+  );
+  schema._zod.toJSONSchema = () => ({
+    type: "object",
+    oneOf:
+      "oneOf" in advertisedJsonSchema
+        ? advertisedJsonSchema.oneOf
+        : "anyOf" in advertisedJsonSchema
+          ? advertisedJsonSchema.anyOf
+        : [advertisedJsonSchema],
+  });
+  return schema;
+}
+
 export const accountStatusOutputSchema = mcpReadToolOutputSchema(
   accountStatusResultSchema,
 );
@@ -60,4 +84,8 @@ export const summarizeFeedOutputSchema = mcpReadToolOutputSchema(
 );
 export const getReceiptOutputSchema = mcpReadToolOutputSchema(
   receiptGetResultSchema,
+);
+export const executeOutputSchema = mcpResultOutputSchema(
+  executeFinalizedResultSchema,
+  executeResultSchema,
 );

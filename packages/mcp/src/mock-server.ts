@@ -9,6 +9,10 @@ import {
   type MockInteractionScenario,
 } from "./mock-fixtures.js";
 import { MockTradeEngine, type MockTradeEngineOptions } from "./mock-trade-engine.js";
+import {
+  executeOutputSchema,
+  getReceiptOutputSchema,
+} from "./mcp-output-schema.js";
 import { toolResult } from "./tool-result.js";
 
 const mockReadOnlyAnnotations = {
@@ -72,7 +76,7 @@ export async function createMockServer(
     },
     {
       instructions:
-        "Deterministic mock mode only. Quote with conviction_quote_trade, execute with conviction_execute_trade, then optionally publish with conviction_publish_conviction using the receiptId. Back with conviction_quote_back then conviction_back_conviction. It uses no account credentials, signer, signing material, Particle, network services, or real funds.",
+        "Deterministic mock mode only. Quote before execute. Execution outcomes use the same submitted, pending, finalized, partial, failed, and needs_attention lifecycle as live mode; only finalized is successful or publishable, and same-key retries never re-execute. It uses no account credentials, signer, signing material, Particle, network services, or real funds.",
     },
   );
 
@@ -159,11 +163,12 @@ export async function createMockServer(
     {
       title: "Execute a mock trade quote",
       description:
-        "Execute a recent mock trade quote by quoteId. Never silently requotes. Uses no Particle, signer, or real funds.",
+        "Execute a recent mock trade quote by quoteId. Deterministically returns finalized success; lifecycle fixtures use the same submitted, pending, partial, failed, and needs_attention terminology as live mode. Never requotes or re-executes.",
       inputSchema: {
         quoteId: z.string().min(1),
         idempotencyKey: z.string().min(1),
       },
+      outputSchema: executeOutputSchema,
       annotations: idempotentWriteAnnotations,
     },
     async ({ quoteId, idempotencyKey }) => {
@@ -176,10 +181,12 @@ export async function createMockServer(
     "conviction_get_receipt",
     {
       title: "Get a mock receipt",
-      description: "Retrieve one mock receipt and explorer links.",
+      description:
+        "Retrieve deterministic lifecycle evidence using the same contract as live mode. Use mock-execution-pending or mock-execution-partial for representative unresolved fixtures; generated executions finalize. Explorer links represent confirmed mock hashes only.",
       inputSchema: {
         receiptId: z.string().min(1),
       },
+      outputSchema: getReceiptOutputSchema,
       annotations: mockReadOnlyAnnotations,
     },
     async ({ receiptId }) => {
@@ -193,7 +200,7 @@ export async function createMockServer(
     {
       title: "Publish a mock conviction",
       description:
-        "Publish a completed mock trade plus thesis, why-now, and what-breaks-it. Requires a successful unique owned receipt.",
+        "Publish a finalized confirmed mock trade plus thesis, why-now, and what-breaks-it. Non-finalized lifecycle outcomes are never eligible.",
       inputSchema: {
         receiptId: z.string().min(1),
         thesis: z.string().min(1),
@@ -241,11 +248,12 @@ export async function createMockServer(
     {
       title: "Back a mock conviction",
       description:
-        "Execute a recent mock back quote and create durable attribution. Never requotes or re-executes.",
+        "Execute a recent mock back quote and create durable attribution only after finalized confirmed execution. Never requotes, re-signs, or re-executes.",
       inputSchema: {
         quoteId: z.string().min(1),
         idempotencyKey: z.string().min(1),
       },
+      outputSchema: executeOutputSchema,
       annotations: idempotentWriteAnnotations,
     },
     async ({ quoteId, idempotencyKey }) => {

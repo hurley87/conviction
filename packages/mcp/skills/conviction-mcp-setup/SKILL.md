@@ -96,6 +96,19 @@ openclaw mcp add conviction -- npx -y @getconviction/mcp@1 serve --profile <name
 
 Doctor success is the clear local verification success state. Suggest funding only after that succeeds.
 
+## Execution finality
+
+Value-moving tools use these exact outcomes: `submitted`, `pending`,
+`finalized`, `partial`, `failed`, and `needs_attention`. Only a settled
+`finalized` execution returns success or a publishable receipt. Particle
+submission acceptance is only `submitted`.
+
+For any non-success result, keep the original idempotency key and inspect
+`conviction_get_receipt` with the returned execution ID. A same-key retry may
+advance read-only reconciliation, but no retry path re-signs or resubmits. Ask
+the operator to review Agent Access when the result is `partial`, `failed`, or
+`needs_attention`; do not invent a recovery transaction or destination.
+
 ## When operator action is required
 
 Ask the human operator to act when any of these are needed:
@@ -107,6 +120,8 @@ Ask the human operator to act when any of these are needed:
 - Running `doctor` / reviewing a support report
 - Sending funds to the deposit address
 - Changing policy, disablement, or retirement
+- Reviewing `partial`, `failed`, or `needs_attention` execution evidence and
+  carrying out any separately approved manual recovery
 
 ## Hard boundaries for this skill
 

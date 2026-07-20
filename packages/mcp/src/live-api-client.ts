@@ -8,6 +8,7 @@ import {
   type ConvictionListResult,
   type FeedSummaryResult,
   type ReceiptGetResult,
+  type ExecutionLifecycle,
 } from "./agent-reads-contract.js";
 import {
   ConvictionApiError,
@@ -501,6 +502,7 @@ export type LiveExecutionPermit = {
 
 export type LiveExecuteSuccess = {
   ok: true;
+  outcome: "finalized";
   receiptId: string;
   quoteId: string;
   quoteFingerprint: string;
@@ -535,8 +537,10 @@ export type LiveExecuteError = {
   ok: false;
   code: string;
   message: string;
+  outcome?: ExecutionLifecycle["outcome"];
   action?: "trade" | "back";
   quoteId?: string;
+  execution?: ExecutionLifecycle;
   fields?: Array<{ field: string; code: string; message: string }>;
 };
 

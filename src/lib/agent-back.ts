@@ -789,6 +789,8 @@ export async function commitBackExecution(options: {
   attributeNow?: BackAttributionApplier;
   now?: () => Date;
   randomId?: () => string;
+  /** Success notifications require confirmed provider finality. */
+  confirmedFinality?: boolean;
 }): Promise<AgentBackSuccess> {
   const existing = await options.backStore.getByReceiptId(
     options.execute.receiptId,
@@ -803,7 +805,7 @@ export async function commitBackExecution(options: {
       options.execute.idempotencyKey,
       success,
     );
-    emitBackExecuted(options.agent, success);
+    if (options.confirmedFinality) emitBackExecuted(options.agent, success);
     return success;
   }
 
@@ -821,7 +823,7 @@ export async function commitBackExecution(options: {
       options.execute.idempotencyKey,
       success,
     );
-    emitBackExecuted(options.agent, success);
+    if (options.confirmedFinality) emitBackExecuted(options.agent, success);
     return success;
   }
 
@@ -849,7 +851,7 @@ export async function commitBackExecution(options: {
       options.execute.idempotencyKey,
       success,
     );
-    emitBackExecuted(options.agent, success);
+    if (options.confirmedFinality) emitBackExecuted(options.agent, success);
     return success;
   }
 
@@ -916,7 +918,7 @@ export async function commitBackExecution(options: {
     options.execute.idempotencyKey,
     success,
   );
-  emitBackExecuted(options.agent, success);
+  if (options.confirmedFinality) emitBackExecuted(options.agent, success);
   return success;
 }
 
@@ -1050,6 +1052,14 @@ export function backErrorStatus(
       return 409;
     case "invalid_input":
       return 422;
+    case "submitted":
+    case "pending":
+    case "finalized":
+      return 202;
+    case "partial":
+    case "failed":
+    case "needs_attention":
+      return 409;
     case "unavailable":
       return 503;
     default: {

@@ -3,6 +3,10 @@
 // Claim + spend reservation happen before any provider/sign side effect (ADR 0020).
 
 import type { OwnedAgent } from "@/lib/agent-provisioning";
+import type {
+  ExecutionOutcome,
+} from "@/lib/agent-execution-finality";
+import type { AgentExecutionLifecycle } from "@/lib/agent-execution-public";
 import {
   AgentQuoteError,
   loadTradeQuoteForExecute,
@@ -30,6 +34,11 @@ export type AgentExecuteTradeInput = {
 
 export type AgentExecuteSuccess = {
   ok: true;
+  /**
+   * Public lifecycle discriminator. Legacy internal helpers may omit it; the
+   * finality-aware API boundary always emits finalized on success.
+   */
+  outcome?: "finalized";
   receiptId: string;
   quoteId: string;
   quoteFingerprint: string;
@@ -64,6 +73,7 @@ export type AgentExecuteErrorCode =
   | "insufficient_balance"
   | "spend_limit_exceeded"
   | "price_floor_breached"
+  | ExecutionOutcome
   | "unavailable";
 
 export type AgentExecuteErrorBody = {
@@ -72,6 +82,9 @@ export type AgentExecuteErrorBody = {
   message: string;
   action?: "trade" | "back";
   quoteId?: string;
+  /** Authenticated agent-safe finality state; nonterminal, never a receipt. */
+  outcome?: ExecutionOutcome;
+  execution?: AgentExecutionLifecycle;
   fields?: Array<{ field: string; code: string; message: string }>;
 };
 

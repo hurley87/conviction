@@ -13,6 +13,7 @@ import {
   AgentSettingsPanel,
   agentSettingsFormKey,
 } from "@/components/agent-access/agent-settings-panel";
+import { OperatorFinalityPanel } from "@/components/agent-access/operator-finality-panel";
 import { AgentSkillHandoff } from "@/components/agent-access/agent-skill-handoff";
 import { SetupActionPanel, type SetupAgent } from "@/components/agent-access/setup-action-panel";
 import { SetupProgressRail } from "@/components/agent-access/setup-progress-rail";
@@ -21,6 +22,7 @@ import {
   defaultProfileName,
   resolveSetupPhase,
 } from "@getconviction/mcp/setup-contract";
+import type { OperatorFinalityStatus } from "@/lib/agent-operator-finality";
 
 function subscribeNoop() {
   return () => {};
@@ -162,6 +164,7 @@ export function AgentAccessView() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<AgentNotification[]>([]);
+  const [finality, setFinality] = useState<OperatorFinalityStatus | null>(null);
   const skillUrl = useSetupSkillUrl();
 
   const authenticatedFetch = useCallback(
@@ -199,6 +202,20 @@ export function AgentAccessView() {
     }
   }, [authenticatedFetch]);
 
+  const refreshFinality = useCallback(async () => {
+    const response = await authenticatedFetch("/api/agents/finality");
+    const payload = (await response.json()) as OperatorFinalityStatus & ApiError;
+    if (!response.ok) {
+      throw new Error(
+        payload.error?.message ?? "Could not load execution finality.",
+      );
+    }
+    setFinality({
+      executions: payload.executions ?? [],
+      retirement: payload.retirement ?? null,
+    });
+  }, [authenticatedFetch]);
+
   const fetchAgent = useCallback(async (): Promise<SetupAgent | null> => {
     const response = await authenticatedFetch("/api/agents");
     const payload = (await response.json()) as {
@@ -219,6 +236,15 @@ export function AgentAccessView() {
         setAgent(next);
         setError(null);
         void refreshNotifications();
+        void refreshFinality().catch((reason) => {
+          if (!silent) {
+            setError(
+              reason instanceof Error
+                ? reason.message
+                : "Could not load execution finality.",
+            );
+          }
+        });
       } catch (reason) {
         if (!silent) {
           setError(
@@ -232,7 +258,7 @@ export function AgentAccessView() {
         if (!silent) setRefreshing(false);
       }
     },
-    [fetchAgent, refreshNotifications],
+    [fetchAgent, refreshFinality, refreshNotifications],
   );
 
   useEffect(() => {
@@ -243,6 +269,14 @@ export function AgentAccessView() {
         setAgent(next);
         setError(null);
         void refreshNotifications();
+        void refreshFinality().catch((reason) => {
+          if (cancelled) return;
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Could not load execution finality.",
+          );
+        });
       })
       .catch((reason) => {
         if (cancelled) return;
@@ -258,7 +292,7 @@ export function AgentAccessView() {
     return () => {
       cancelled = true;
     };
-  }, [fetchAgent, refreshNotifications]);
+  }, [fetchAgent, refreshFinality, refreshNotifications]);
 
   const phase = useMemo(
     () =>
@@ -286,6 +320,18 @@ export function AgentAccessView() {
     }, POLL_MS);
     return () => window.clearInterval(id);
   }, [shouldPoll, refreshAgent]);
+
+  const shouldPollFinality =
+    finality?.executions.some((execution) => execution.mode === "reconciling") ||
+    finality?.retirement?.mode === "reconciling";
+
+  useEffect(() => {
+    if (!shouldPollFinality) return;
+    const id = window.setInterval(() => {
+      void refreshFinality().catch(() => undefined);
+    }, POLL_MS);
+    return () => window.clearInterval(id);
+  }, [refreshFinality, shouldPollFinality]);
 
   useEffect(() => {
     if (!shouldPoll) return;
@@ -453,6 +499,18 @@ export function AgentAccessView() {
               </p>
             )}
           </section>
+          {finality ? (
+            <OperatorFinalityPanel
+              agentId={agent.agentId}
+              status={finality}
+              authenticatedFetch={authenticatedFetch}
+              onUpdated={setFinality}
+            />
+          ) : (
+            <section className="app-card p-7 text-sm text-ink-3">
+              Loading execution finality…
+            </section>
+          )}
           <AgentSettingsPanel
             key={agentSettingsFormKey(agent)}
             agent={agent}

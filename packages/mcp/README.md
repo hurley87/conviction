@@ -60,7 +60,10 @@ npx -y @getconviction/mcp@1 serve --mock
 Mock mode exposes deterministic `conviction_quote_trade`, `conviction_execute_trade`,
 and `conviction_get_receipt` tools with the same quote-before-execute contract as
 live mode. It never calls remote trading providers, unlocks a signer, or moves
-real funds. Quote, idempotency, and receipt state persist under
+real funds. Its normal execution fixture deterministically finalizes, while its
+schemas and descriptions use the same `submitted`, `pending`, `finalized`,
+`partial`, `failed`, and `needs_attention` lifecycle as live mode. Quote,
+idempotency, and receipt state persist under
 `CONVICTION_HOME/mock` (override with `--home`).
 
 The process speaks MCP over stdio. Its stdout is reserved for protocol messages;
@@ -109,11 +112,23 @@ Prefer Agent Settings (Privy session) when you want operator-only web auth.
 
 Live `conviction_execute_trade` obtains a backend execution permit, signs with
 the local ethers Particle-compatible signer (rootHash + EIP-7702), then submits
-the signatures. Backend unavailability fails closed before signing. A manually
+the signatures. Particle submission acceptance returns `submitted`, not
+success. Only `finalized`—all required legs confirmed—returns `ok: true` and a
+receipt. `pending`, `partial`, `failed`, and `needs_attention` remain explicit
+non-success results; same-key retries reconcile the same durable execution and
+never re-sign or resubmit. `conviction_get_receipt` accepts the execution ID
+while finality is unresolved and returns per-leg status, confirmed hashes only,
+workflow/attempt evidence, and safe recovery guidance. Backend unavailability
+fails closed before signing. A manually
 gated minimal-value smoke lives at `scripts/smoke-mcp-execute.ts`. The full
 release-candidate journey (inspect → trade → publish → back → pause → optional
 retire) is `scripts/smoke-mcp-rc.ts` (issue #61). Both must stay out of CI
 (ADR 0014 / 0045).
+
+Only finalized confirmed trade receipts are publishable, and back attribution
+begins only after the back execution finalizes. Raw provider payloads,
+signatures, credentials, signer material, and planned/unconfirmed userOp hashes
+are not part of MCP lifecycle or receipt output.
 
 Diagnostics use stderr plus rotating files under `~/.conviction/logs` (30-day
 retention). Each tool call gets a correlation ID propagated as

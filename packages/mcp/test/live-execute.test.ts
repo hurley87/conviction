@@ -155,6 +155,7 @@ describe("live conviction_execute_trade", () => {
           JSON.stringify({
             result: {
               ok: true,
+              outcome: "finalized",
               receiptId: "rcpt-live-1",
               quoteId: "quote-1",
               quoteFingerprint: "fp-1",
@@ -278,6 +279,7 @@ describe("live conviction_execute_trade", () => {
           JSON.stringify({
             result: {
               ok: true,
+              outcome: "finalized",
               receiptId: "rcpt-cached",
               quoteId: "quote-1",
               quoteFingerprint: "fp-1",
@@ -321,5 +323,65 @@ describe("live conviction_execute_trade", () => {
       mode: "live",
       receiptId: "rcpt-cached",
     });
+  });
+
+  it("does not present unresolved finality as execution success", async () => {
+    const wallet = Wallet.createRandom();
+    const lease = mockLease(wallet);
+    let submits = 0;
+
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/agents/execute/permit") {
+        return new Response(
+          JSON.stringify({
+            result: {
+              ok: false,
+              code: "pending",
+              outcome: "pending",
+              message:
+                "Execution finality is unresolved. Do not re-sign or resubmit.",
+              quoteId: "quote-1",
+              execution: {
+                executionId: "execution-1",
+                quoteId: "quote-1",
+                transactionId: "particle-1",
+                outcome: "pending",
+                settlementStatus: "held",
+                attemptCount: 1,
+                lastProviderStatus: "processing",
+                lastError: null,
+                workflow: { runId: "workflow-1", correlationId: null },
+                recovery: null,
+                legs: [],
+                evidence: [],
+              },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.pathname === "/api/agents/execute/submit") submits += 1;
+      return new Response("{}", { status: 500 });
+    };
+
+    const client = await connectLive({ wallet, lease, fetchImpl });
+    const result = await client.callTool({
+      name: "conviction_execute_trade",
+      arguments: {
+        quoteId: "quote-1",
+        idempotencyKey: "idem-pending",
+      },
+    });
+
+    expect(submits).toBe(0);
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      code: "pending",
+      outcome: "pending",
+      execution: { executionId: "execution-1", outcome: "pending" },
+    });
+    expect(result.structuredContent).not.toHaveProperty("receipt");
   });
 });

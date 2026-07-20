@@ -12,6 +12,7 @@ import type {
   WithdrawalRequest,
   WithdrawalResult,
 } from "@/lib/verbs/types";
+import type { ParticleTransactionStatusRead } from "@/lib/ua/particle-finality";
 
 export type UpgradeResult = { upgraded: boolean; alreadyUpgraded: boolean };
 
@@ -45,6 +46,10 @@ export interface UAClient {
   getDepositAddresses(): Promise<DepositAddresses>;
   /** One-time EIP-7702 upgrade of the owner EOA in place (ADR 0004). */
   ensureUpgraded(): Promise<UpgradeResult>;
+  /** Read-only Particle finality lookup. Never submits or re-signs. */
+  getTransactionStatus(
+    transactionId: string,
+  ): Promise<ParticleTransactionStatusRead>;
   /** quoteTrade() verb — UA quote shaped for the confirm card (ADR 0011). */
   quoteTrade(params: QuoteTradeParams): Promise<TradeQuote>;
   /** executeTrade() verb — cross-chain move via UA with floor enforcement. */

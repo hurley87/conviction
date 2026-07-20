@@ -26,9 +26,23 @@ export function chainName(chainId: number | undefined): string {
   return CHAINS[chainId]?.name ?? `Chain ${chainId}`;
 }
 
+/** True when we have real metadata (name + explorer) for this chain. */
+export function isKnownChain(chainId: number): boolean {
+  return CHAINS[chainId] !== undefined;
+}
+
 export function explorerUrl(chainId: number, txHash: string): string {
   const base = CHAINS[chainId]?.explorerTxBase ?? "https://etherscan.io/tx/";
   return `${base}${txHash}`;
+}
+
+/** Explorer link, but only for chains we actually recognize — null otherwise,
+ * so callers don't surface an etherscan link for an unknown chain. */
+export function explorerUrlIfKnown(
+  chainId: number,
+  txHash: string,
+): string | null {
+  return isKnownChain(chainId) ? explorerUrl(chainId, txHash) : null;
 }
 
 // Known token contract addresses by UA token type → chain id. Verified against
