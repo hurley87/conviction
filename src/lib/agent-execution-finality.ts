@@ -295,9 +295,24 @@ export function isProviderTerminalOutcome(outcome: ExecutionOutcome): boolean {
   );
 }
 
-/** Outcomes that make an execution eligible for settlement/accounting. */
-export function isSettlementEligibleOutcome(outcome: ExecutionOutcome): boolean {
-  return isProviderTerminalOutcome(outcome);
+/**
+ * What an operator read-only retry may safely do to an execution. `canRead`
+ * means a provider re-read can still advance it; `canSettle` means settlement
+ * accounting can be re-run. `retrySafe` (either is true) gates whether a retry
+ * is offered at all — shared by the operator projection and the retry route so
+ * the UI and the enforcement gate can't drift.
+ */
+export function executionRetryEligibility(
+  record: Pick<ExecutionFinalityRecord, "outcome" | "settlementStatus">,
+): { canRead: boolean; canSettle: boolean; retrySafe: boolean } {
+  const canRead =
+    record.outcome === "submitted" || record.outcome === "pending";
+  const canSettle =
+    (record.outcome === "finalized" &&
+      (record.settlementStatus === "held" ||
+        record.settlementStatus === "persisting")) ||
+    (record.outcome === "failed" && record.settlementStatus !== "released");
+  return { canRead, canSettle, retrySafe: canRead || canSettle };
 }
 
 export function cloneExecutionFinalityRecord(
@@ -306,7 +321,8 @@ export function cloneExecutionFinalityRecord(
   return durableClone(record);
 }
 
-function nonEmpty(value: string, field: string): string {
+/** Trim a required string field, throwing if it is blank. */
+export function nonEmpty(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} must not be empty.`);
   return normalized;

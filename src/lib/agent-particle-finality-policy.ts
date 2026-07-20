@@ -28,7 +28,7 @@ export function decideFinalityFromParticleRead(input: {
   /** Execution path: all required legs terminal (finalized|failed). */
   allRequiredTerminal?: boolean;
   /** Current outcome for the continue branch. */
-  currentOutcome?: "submitted" | "pending" | ExecutionOutcome;
+  currentOutcome?: ExecutionOutcome;
 }): ParticleFinalityDecision {
   const { read, attempt, maxAttempts } = input;
 

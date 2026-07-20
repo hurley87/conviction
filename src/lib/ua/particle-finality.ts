@@ -3,7 +3,7 @@ import type {
   ExecutionLegStatus,
   ExecutionOutcome,
 } from "@/lib/agent-execution-finality";
-import { chainName, explorerUrl } from "@/lib/verbs/chains";
+import { chainName, explorerUrlIfKnown } from "@/lib/verbs/chains";
 
 /**
  * Particle SDK 2.0.3 exposes getTransaction() as Promise<any>. Keep the
@@ -155,12 +155,6 @@ function operationError(operation: RecordLike): string | null {
   );
 }
 
-function confirmedExplorerUrl(chainId: number, hash: string): string | null {
-  return chainName(chainId) === `Chain ${chainId}`
-    ? null
-    : explorerUrl(chainId, hash);
-}
-
 function readActivity(raw: unknown): RecordLike | null {
   if (!isRecord(raw)) return null;
   if (raw.status !== undefined) return raw;
@@ -213,7 +207,7 @@ function normalizeLegs(activity: RecordLike): {
         providerStatus: normalizedProviderStatus,
         confirmedHash,
         explorerUrl: confirmedHash
-          ? confirmedExplorerUrl(chainId, confirmedHash)
+          ? explorerUrlIfKnown(chainId, confirmedHash)
           : null,
         error: operationError(rawOperation),
         raw: rawOperation,

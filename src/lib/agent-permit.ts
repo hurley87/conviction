@@ -1284,6 +1284,19 @@ export async function submitSignedTradeExecution(options: {
       options.randomId?.() ??
       `rcpt_${permit.quoteId.replace(/-/g, "").slice(0, 12)}`;
 
+    // Submission whose acceptance we can't confirm: release the permit back to
+    // pending and mark the execution uncertain so a retry can recover it.
+    const recordUncertainSubmission = async (error: unknown) => {
+      await options.permitStore.casStatus(permitId, "consumed", "pending");
+      execution = await markExecutionSubmissionUncertain({
+        store: options.executionFinalityStore,
+        executionId: execution.executionId,
+        error,
+        at: (options.now?.() ?? new Date()).toISOString(),
+      });
+      return executionPendingResult(execution, permit.action);
+    };
+
     let sendResult: Awaited<ReturnType<SignedTradeSender>>;
     try {
       sendResult = await options.send({
@@ -1299,27 +1312,13 @@ export async function submitSignedTradeExecution(options: {
       });
     } catch (error) {
       // Uncertain whether the provider accepted the signed payload — record pending.
-      await options.permitStore.casStatus(permitId, "consumed", "pending");
-      execution = await markExecutionSubmissionUncertain({
-        store: options.executionFinalityStore,
-        executionId: execution.executionId,
-        error,
-        at: (options.now?.() ?? new Date()).toISOString(),
-      });
-      return executionPendingResult(execution, permit.action);
+      return recordUncertainSubmission(error);
     }
 
     if (sendResult.uncertain) {
-      await options.permitStore.casStatus(permitId, "consumed", "pending");
-      execution = await markExecutionSubmissionUncertain({
-        store: options.executionFinalityStore,
-        executionId: execution.executionId,
-        error: new Error(
-          "Particle returned an uncertain submission response.",
-        ),
-        at: (options.now?.() ?? new Date()).toISOString(),
-      });
-      return executionPendingResult(execution, permit.action);
+      return recordUncertainSubmission(
+        new Error("Particle returned an uncertain submission response."),
+      );
     }
 
     execution = await markExecutionSubmitted({

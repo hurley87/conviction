@@ -1,9 +1,10 @@
 import "server-only";
 
-import type {
-  ExecutionFinalityRecord,
-  ExecutionFinalityStore,
-  ExecutionProviderEvidence,
+import {
+  executionRetryEligibility,
+  type ExecutionFinalityRecord,
+  type ExecutionFinalityStore,
+  type ExecutionProviderEvidence,
 } from "@/lib/agent-execution-finality";
 import type { AgentQuoteStore } from "@/lib/agent-quote";
 import type {
@@ -13,7 +14,7 @@ import type {
   RetirementTransferLeg,
 } from "@/lib/agent-retirement";
 import { AgentProvisioningError } from "@/lib/agent-provisioning";
-import { chainName, explorerUrl } from "@/lib/verbs/chains";
+import { chainName, explorerUrlIfKnown } from "@/lib/verbs/chains";
 
 export type OperatorFinalityMode =
   | "reconciling"
@@ -165,11 +166,10 @@ function confirmedExplorer(
   if (status !== "finalized" && status !== "complete") return [];
   const confirmedHash = safeText(hash, 200);
   if (!confirmedHash) return [];
-  const knownChain = chainName(chainId) !== `Chain ${chainId}`;
   return [
     {
       hash: confirmedHash,
-      explorerUrl: knownChain ? explorerUrl(chainId, confirmedHash) : null,
+      explorerUrl: explorerUrlIfKnown(chainId, confirmedHash),
       chainId,
       chainName: chainName(chainId),
     },
@@ -269,14 +269,7 @@ export async function executionStatusForOperator(
         : record.settlementResult?.action ?? null,
     outcome: record.outcome,
     settlementStatus: record.settlementStatus,
-    retrySafe:
-      record.outcome === "submitted" ||
-      record.outcome === "pending" ||
-      (record.outcome === "finalized" &&
-        (record.settlementStatus === "held" ||
-          record.settlementStatus === "persisting")) ||
-      (record.outcome === "failed" &&
-        record.settlementStatus !== "released"),
+    retrySafe: executionRetryEligibility(record).retrySafe,
     legs: record.legs.map((leg) => {
       const legEvidence = safeEvidence(leg.providerEvidence);
       return {
@@ -334,10 +327,10 @@ function retirementLeg(
     leg.status === "complete"
       ? leg.finality.confirmedHashes.map((confirmed) => ({
           hash: confirmed.confirmedHash,
-          explorerUrl:
-            chainName(confirmed.chainId) === `Chain ${confirmed.chainId}`
-              ? null
-              : explorerUrl(confirmed.chainId, confirmed.confirmedHash),
+          explorerUrl: explorerUrlIfKnown(
+            confirmed.chainId,
+            confirmed.confirmedHash,
+          ),
           chainId: confirmed.chainId,
           chainName: confirmed.chainName,
         }))

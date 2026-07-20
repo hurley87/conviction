@@ -3,6 +3,7 @@ import {
   operatorPolicyErrorResponse,
 } from "@/lib/agent-policy-route";
 import { createExecutionReconciler } from "@/lib/agent-execution-reconciliation";
+import { executionRetryEligibility } from "@/lib/agent-execution-finality";
 import { getExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
 import { settleReconciledExecution } from "@/lib/agent-execution-workflow";
 import {
@@ -76,15 +77,8 @@ export async function POST(request: Request) {
           "No execution matches that identity for this account.",
         );
       }
-      const canRead =
-        record.outcome === "submitted" || record.outcome === "pending";
-      const canSettle =
-        (record.outcome === "finalized" &&
-          (record.settlementStatus === "held" ||
-            record.settlementStatus === "persisting")) ||
-        (record.outcome === "failed" &&
-          record.settlementStatus !== "released");
-      if (!canRead && !canSettle) {
+      const { canRead, retrySafe } = executionRetryEligibility(record);
+      if (!retrySafe) {
         throw new AgentProvisioningError(
           "lifecycle_blocked",
           "This execution requires manual recovery; read-only retry cannot sign or resubmit it.",

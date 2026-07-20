@@ -6,6 +6,7 @@ import {
   assertValidExecutionFinalityRecord,
   cloneExecutionFinalityRecord,
   ExecutionFinalityConflictError,
+  nonEmpty,
   resolveIdempotentCreate,
   type BindParticleTransactionInput,
   type ExecutionFinalityExport,
@@ -19,13 +20,6 @@ import {
 } from "@/lib/agent-execution-finality";
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
-
-/** Local guard mirrored from finality for Memory's Particle-transaction bind. */
-function nonEmpty(value: string, field: string): string {
-  const normalized = value.trim();
-  if (!normalized) throw new Error(`${field} must not be empty.`);
-  return normalized;
-}
 
 /** In-memory store for tests and credential-free local development. */
 export class MemoryExecutionFinalityStore implements ExecutionFinalityStore {
