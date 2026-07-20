@@ -52,6 +52,42 @@ describe("shapeQuote", () => {
     ).toThrow(/authoritative debit/i);
   });
 
+  it("shapes createConvertTransaction payloads that omit aggregate totals", () => {
+    // Live Particle convert quotes return per-leg amountInUSD only — no
+    // totalDecrAmountInUSD / totalIncrAmountInUSD. Debit binding must still work.
+    const quote = shapeQuote(
+      {
+        decr: [
+          {
+            token: { chainId: 8453 },
+            amountInUSD: "0x214e1a82addc000a", // ~$2.3998848
+          },
+        ],
+        incr: [
+          {
+            token: { chainId: 8453, symbol: "USDC" },
+            amountInUSD: "0x214e1a82addc0000",
+          },
+        ],
+      },
+      { toAsset: "usdc", fromAsset: "eth", destChain: "Base" },
+      2.4,
+      "convert-tx",
+      {
+        feeQuotes: [
+          { fees: { totals: { feeTokenAmountInUSD: "0x22d0df96b39a024" } } },
+        ],
+      },
+    );
+
+    expect(quote.dollarsIn).toBeCloseTo(2.3998848, 5);
+    expect(quote.dollarsOut).toBeCloseTo(2.3998848, 5);
+    expect(quote.receivedSymbol).toBe("USDC");
+    expect(quote.sourceChain).toBe("Base");
+    expect(quote.destChain).toBe("Base");
+    expect(quote.feeUsd).toBeGreaterThan(0);
+  });
+
   it("fails closed when Particle builds a quote above the requested debit", () => {
     expect(() =>
       shapeQuote(

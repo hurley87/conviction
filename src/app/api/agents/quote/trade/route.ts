@@ -77,7 +77,10 @@ export async function POST(request: Request) {
       {
         error: {
           code: "unavailable",
-          message: "Trade quoting is temporarily unavailable.",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Trade quoting is temporarily unavailable.",
         },
       },
       { status: 503 },
