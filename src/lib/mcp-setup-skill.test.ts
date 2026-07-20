@@ -20,7 +20,7 @@ describe("mcp setup skill helpers", () => {
       profileName: "signal-scout",
     });
     expect(prompt).toContain("http://localhost:3000/agent-access/skill");
-    expect(prompt).toContain("@getconviction/mcp@1");
+    expect(prompt).toContain("@getconviction/mcp@2");
     expect(prompt).toContain("signal-scout");
     expect(prompt).toMatch(/Do not provision/i);
     expect(prompt).not.toContain("--code");

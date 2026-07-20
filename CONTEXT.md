@@ -133,7 +133,7 @@ The stable `conviction-mcp` command installed by `@getconviction/mcp` and launch
 _Avoid_: per-host command, package-name executable, temporary CLI name
 
 **Major-pinned host config**:
-A generated MCP configuration that resolves `@getconviction/mcp@1` or an equivalent v1 installation. It may receive compatible minor and patch updates but never crosses a major version without explicit operator action.
+A generated MCP configuration that resolves `@getconviction/mcp@2` or an equivalent major-2 installation. It may receive compatible minor and patch updates but never crosses a major version without explicit operator action.
 _Avoid_: latest, exact-version freeze, self-updating config
 
 **Behavioral telemetry**:

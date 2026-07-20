@@ -4,7 +4,7 @@ import { z } from "zod";
 export const SETUP_CONTRACT_VERSION = 1 as const;
 
 /** Package-runner pin for generated host configs (ADR 0046). */
-export const PACKAGE_MAJOR_PIN = "@getconviction/mcp@1" as const;
+export const PACKAGE_MAJOR_PIN = "@getconviction/mcp@2" as const;
 
 /**
  * Operator-facing steps that map 1:1 to observable backend state.

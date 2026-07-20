@@ -31,7 +31,7 @@ describe("generateHostConfigs", () => {
   it("keeps one shared serve contract across hosts", () => {
     const guide = formatHostConfigGuide({ profileName: "signal-scout" });
     expect(guide).toContain("Shared MCP contract");
-    expect(guide).toContain("npx -y @getconviction/mcp@1 serve --profile signal-scout");
+    expect(guide).toContain("npx -y @getconviction/mcp@2 serve --profile signal-scout");
     expect(guide).toContain("Claude Code");
     expect(guide).toContain("Codex");
     expect(guide).toContain("Hermes");
