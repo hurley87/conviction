@@ -14,8 +14,11 @@ export type RawTokenChanges = {
   totalDecrAmountInUSD?: string;
   totalIncrAmountInUSD?: string;
   totalFeeInUSD?: string;
-  decr?: { token?: { chainId?: number } }[];
-  incr?: { token?: { chainId?: number; symbol?: string } }[];
+  decr?: { token?: { chainId?: number }; amountInUSD?: string }[];
+  incr?: {
+    token?: { chainId?: number; symbol?: string };
+    amountInUSD?: string;
+  }[];
 };
 
 /** The token actually received, per the SDK's incr changes (e.g. "wstETH",
@@ -58,16 +61,48 @@ export function parseUsd(value: string | undefined, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/** Require Particle's authoritative total decrease; requested size is not a
- * safe substitute because it does not describe the transaction being signed. */
+/** Sum per-leg USD amounts when Particle omits aggregate totals.
+ * createConvertTransaction returns decr/incr legs with amountInUSD but no
+ * totalDecrAmountInUSD / totalIncrAmountInUSD (buy still populates totals). */
+function sumLegUsd(
+  legs: { amountInUSD?: string }[] | undefined,
+): number {
+  if (!legs?.length) return Number.NaN;
+  let total = 0;
+  let sawPositive = false;
+  for (const leg of legs) {
+    const amount = parseUsd(leg.amountInUSD, Number.NaN);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    total += amount;
+    sawPositive = true;
+  }
+  return sawPositive ? total : Number.NaN;
+}
+
+/** Require Particle's authoritative decrease; requested size is not a safe
+ * substitute because it does not describe the transaction being signed.
+ * Prefers aggregate totals, then falls back to summed decr legs. */
 export function authoritativeTradeDebitUsd(changes: RawTokenChanges): number {
-  const dollarsIn = parseUsd(changes.totalDecrAmountInUSD, Number.NaN);
+  const fromTotal = parseUsd(changes.totalDecrAmountInUSD, Number.NaN);
+  const dollarsIn =
+    Number.isFinite(fromTotal) && fromTotal > 0
+      ? fromTotal
+      : sumLegUsd(changes.decr);
   if (!Number.isFinite(dollarsIn) || dollarsIn <= 0) {
     throw new Error(
       "Particle transaction is missing an authoritative debit; refusing to continue.",
     );
   }
   return dollarsIn;
+}
+
+/** Authoritative credit / output USD from aggregate total or summed incr legs. */
+export function authoritativeTradeCreditUsd(changes: RawTokenChanges): number {
+  const fromTotal = parseUsd(changes.totalIncrAmountInUSD, Number.NaN);
+  if (Number.isFinite(fromTotal) && fromTotal > 0) return fromTotal;
+  const fromLegs = sumLegUsd(changes.incr);
+  if (Number.isFinite(fromLegs) && fromLegs > 0) return fromLegs;
+  return Number.NaN;
 }
 
 /** Validate the stored/fresh Particle payload immediately before submission. */
@@ -146,10 +181,10 @@ export function shapeQuote(
     changes,
     authorizedDebitUsd,
   );
-  const dollarsOut = parseUsd(
-    changes.totalIncrAmountInUSD,
-    dollarsIn * 0.995,
-  );
+  const reportedOut = authoritativeTradeCreditUsd(changes);
+  const dollarsOut = Number.isFinite(reportedOut)
+    ? reportedOut
+    : dollarsIn * 0.995;
   // Prefer the SDK's authoritative fee breakdown; fall back to the reported
   // total, then to the in/out delta — never silently show $0 when it cost money.
   const feeUsd =
