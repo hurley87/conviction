@@ -11,7 +11,7 @@
 | `executed_pending_sync` | Onchain ok; attribution retrying — check Agent Access notifications. |
 | `submitted` / `pending` | Finality is unresolved. Keep the same idempotency key, inspect the execution ID with `conviction_get_receipt`, and never re-sign or resubmit. |
 | `partial` / `failed` / `needs_attention` | This is not successful or publishable. Review confirmed and affected legs in Agent Access and follow operator recovery guidance. |
-| Host missing tools | Ensure config pins `@getconviction/mcp@1` and uses the shared runner. |
+| Host missing tools | Ensure config pins `@getconviction/mcp@2` and uses the shared runner. |
 
 Support reports: `conviction-mcp doctor --profile <name> --report ./doctor-report.json`.
 Never paste keystore passwords, backups, or signed payloads into tickets.

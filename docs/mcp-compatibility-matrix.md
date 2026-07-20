@@ -1,6 +1,6 @@
 # MCP compatibility matrix (v1)
 
-Release checklist for `@getconviction/mcp@1` (issue #61 / PRD §14 / ADR 0046).
+Release checklist for `@getconviction/mcp@2` (issue #61 / PRD §14 / ADR 0046).
 
 ## Platforms
 
@@ -13,7 +13,7 @@ Release checklist for `@getconviction/mcp@1` (issue #61 / PRD §14 / ADR 0046).
 
 ## Hosts (Tier 2)
 
-Run generated configs from `conviction-mcp init` / doctor (major pin `@getconviction/mcp@1`).
+Run generated configs from `conviction-mcp init` / doctor (major pin `@getconviction/mcp@2`).
 
 For each host: add server → `tools/list` shows full v1 contract → account status / mock quote+execute → clean shutdown. Stdout must remain MCP protocol only.
 

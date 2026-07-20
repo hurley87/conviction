@@ -506,7 +506,7 @@ Existing unauthenticated human/API paths must not be reused for trusted agent id
 - Publish a public, versioned npm package with a stable executable.
 - Publish the package as `@getconviction/mcp` with the stable executable `conviction-mcp`.
 - Support global npm installation and package-runner invocation without cloning the repository.
-- Generated package-runner host configurations pin `@getconviction/mcp@1`; they never resolve an unbounded `latest` major.
+- Generated package-runner host configurations pin `@getconviction/mcp@2`; they never resolve an unbounded `latest` major.
 - Support current maintained Node.js LTS releases.
 - Support macOS and Linux in v1, including Windows through WSL. Native Windows is explicitly deferred until encrypted-keystore behavior, process lifecycle, and the four-client compatibility matrix are verified there.
 - Keep stdout exclusively for MCP protocol messages; diagnostics go to stderr.
@@ -821,7 +821,7 @@ These metrics are computed from required server-side domain and API events. The 
 | Diagnostic logs become an accidental permanent transcript | Redact by default, retain for 30 days, and never collect host prompts or conversations |
 | Local diagnostics silently disclose agent-host behavior | Send no CLI behavioral telemetry; generate redacted reports locally and require explicit operator sharing |
 | Client differences fragment the implementation | Stdio-only v1, one tool contract, release matrix across all four hosts |
-| An automatic package update introduces a breaking value-moving contract | Pin generated host configs to `@getconviction/mcp@1`; require explicit operator migration across majors |
+| An automatic package update introduces a breaking value-moving contract | Pin generated host configs to `@getconviction/mcp@2`; require explicit operator migration across majors |
 | MCP logs corrupt protocol output | stdout reserved for JSON-RPC; all logs go to stderr/files |
 | Tool descriptions are treated as security | Enforce all policy in runtime/backend; annotations remain hints |
 | Retirement recovery partially fails | Keep the agent `retiring`, block normal activity, report each leg, and allow operator-only retry |
