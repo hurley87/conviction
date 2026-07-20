@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createExecutionFinalityRecord,
-  MemoryExecutionFinalityStore,
   type ExecutionFinalityRecord,
 } from "@/lib/agent-execution-finality";
+import { MemoryExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
 import { MemoryAgentQuoteStore } from "@/lib/agent-quote";
 import { MemoryAgentRetirementStore } from "@/lib/agent-retirement";
 
@@ -49,7 +49,8 @@ vi.mock("@/lib/agent-policy-route", () => ({
   },
 }));
 
-vi.mock("@/lib/agent-execution-finality-store", () => ({
+vi.mock("@/lib/agent-execution-finality-store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/agent-execution-finality-store")>()),
   getExecutionFinalityStore: () => state.executionStore,
 }));
 

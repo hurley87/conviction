@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   createExecutionFinalityRecord,
-  MemoryExecutionFinalityStore,
   type ExecutionFinalityRecord,
   type ExecutionLeg,
   type ExecutionProviderEvidence,
 } from "@/lib/agent-execution-finality";
+import { MemoryExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
 
 const T0 = "2026-07-19T16:00:00.000Z";
 const T1 = "2026-07-19T16:01:00.000Z";

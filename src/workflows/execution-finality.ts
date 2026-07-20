@@ -4,7 +4,10 @@
 import { sleep } from "workflow";
 
 import { createExecutionReconciler } from "@/lib/agent-execution-reconciliation";
-import type { ExecutionFinalityRecord } from "@/lib/agent-execution-finality";
+import {
+  isProviderTerminalOutcome,
+  type ExecutionFinalityRecord,
+} from "@/lib/agent-execution-finality";
 import { getExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
 import { settleReconciledExecution } from "@/lib/agent-execution-workflow";
 import { getUAClient } from "@/lib/ua";
@@ -33,10 +36,7 @@ export async function executionFinalityWorkflow(
   for (const delay of RETRY_DELAYS_MS) {
     await sleep(delay);
     latest = await reconcileExecutionStep(executionId, ownerAddress);
-    if (
-      latest.outcome === "finalized" ||
-      latest.outcome === "needs_attention"
-    ) {
+    if (isProviderTerminalOutcome(latest.outcome)) {
       return latest;
     }
   }

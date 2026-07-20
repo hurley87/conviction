@@ -10,13 +10,13 @@ import {
   createPreSubmissionExecution,
 } from "@/lib/agent-execution-reconciliation";
 import {
-  MemoryExecutionFinalityStore,
   type ExecutionFinalityRecord,
   type ExecutionOutcome,
 } from "@/lib/agent-execution-finality";
+import { MemoryExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
+import { settleExecutionFinality } from "@/lib/agent-execution-settlement";
 import {
   MemoryAgentPermitStore,
-  settleExecutionFinality,
   submitSignedTradeExecution,
   type ExecutionPermitRecord,
 } from "@/lib/agent-permit";

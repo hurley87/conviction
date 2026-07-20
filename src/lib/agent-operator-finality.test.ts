@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   createExecutionFinalityRecord,
-  MemoryExecutionFinalityStore,
   type ExecutionFinalityRecord,
   type ExecutionLeg,
 } from "@/lib/agent-execution-finality";
+import { MemoryExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
 import {
   createExecutionReconciler,
 } from "@/lib/agent-execution-reconciliation";

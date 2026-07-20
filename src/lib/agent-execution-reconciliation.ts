@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   createExecutionFinalityRecord,
+  isProviderTerminalOutcome,
   type ExecutionFinalityRecord,
   type ExecutionFinalityStore,
   type ExecutionLeg,
@@ -9,6 +10,7 @@ import {
   type ExecutionProviderEvidence,
   type OperatorRecoveryGuidance,
 } from "@/lib/agent-execution-finality";
+import { decideFinalityFromParticleRead } from "@/lib/agent-particle-finality-policy";
 import type { UAClient } from "@/lib/ua/types";
 import type { ParticleTransactionStatusRead } from "@/lib/ua/particle-finality";
 import type { RawTransaction } from "@/lib/ua/trade";
@@ -401,10 +403,6 @@ function transitionForRead(input: {
     lastError: input.read.error,
   };
 
-  if (input.read.outcome === "finalized" && allRequiredFinalized) {
-    return { to: "finalized" as const, patch: basePatch };
-  }
-
   const requiredLegs = legs.filter((leg) => leg.required);
   const hasConfirmedSuccess = requiredLegs.some(
     (leg) => leg.status === "finalized" && Boolean(leg.confirmedHash),
@@ -414,50 +412,43 @@ function transitionForRead(input: {
     requiredLegs.every(
       (leg) => leg.status === "finalized" || leg.status === "failed",
     );
-  if (input.read.outcome === "partial" && hasConfirmedSuccess) {
-    return { to: "partial" as const, patch: basePatch };
-  }
-  if (
-    input.read.outcome === "failed" &&
-    allRequiredTerminal &&
-    !hasConfirmedSuccess
-  ) {
-    return { to: "failed" as const, patch: basePatch };
-  }
 
-  const nonRetryable =
-    !input.read.retrySafe ||
-    input.read.outcome === "partial" ||
-    input.read.outcome === "failed" ||
-    input.read.outcome === "needs_attention" ||
-    (input.read.outcome === "finalized" && !allRequiredFinalized);
-  const exhausted = attempt >= input.maxAttempts;
-  if (nonRetryable || exhausted) {
-    const summary = nonRetryable
-      ? input.read.error ??
-        `Particle returned non-retryable ${input.read.outcome} finality.`
-      : `Particle finality remained unresolved after ${attempt} read-only attempts.`;
-    return {
-      to: "needs_attention" as const,
-      patch: {
-        ...basePatch,
-        lastError: summary,
-        operatorRecovery: recoveryGuidance(
-          { ...input.current, legs },
-          summary,
-        ),
-      },
-    };
-  }
+  const decision = decideFinalityFromParticleRead({
+    read: input.read,
+    attempt,
+    maxAttempts: input.maxAttempts,
+    acceptFinalized: allRequiredFinalized,
+    hasConfirmedSuccess,
+    allRequiredTerminal,
+    currentOutcome: input.current.outcome,
+  });
 
-  return {
-    to:
-      input.current.outcome === "pending" ||
-      input.read.outcome === "pending"
-        ? ("pending" as const)
-        : ("submitted" as const),
-    patch: basePatch,
-  };
+  switch (decision.kind) {
+    case "finalized":
+      return { to: "finalized" as const, patch: basePatch };
+    case "partial":
+      return { to: "partial" as const, patch: basePatch };
+    case "failed":
+      return { to: "failed" as const, patch: basePatch };
+    case "needs_attention":
+      return {
+        to: "needs_attention" as const,
+        patch: {
+          ...basePatch,
+          lastError: decision.reason,
+          operatorRecovery: recoveryGuidance(
+            { ...input.current, legs },
+            decision.reason,
+          ),
+        },
+      };
+    case "continue":
+      return { to: decision.nextOutcome, patch: basePatch };
+    default: {
+      const _exhaustive: never = decision;
+      return _exhaustive;
+    }
+  }
 }
 
 export function createExecutionReconciler(options: {
@@ -472,12 +463,7 @@ export function createExecutionReconciler(options: {
     async reconcile(executionId) {
       const initial = await options.store.get(executionId);
       if (!initial) throw new Error(`Execution ${executionId} was not found.`);
-      if (
-        initial.outcome === "finalized" ||
-        initial.outcome === "partial" ||
-        initial.outcome === "failed" ||
-        initial.outcome === "needs_attention"
-      ) {
+      if (isProviderTerminalOutcome(initial.outcome)) {
         return initial;
       }
       if (!initial.particleTransactionId) {
@@ -544,12 +530,7 @@ export async function runExecutionReconciliationRetries(input: {
   delayMs?: number;
 }): Promise<ExecutionFinalityRecord> {
   let latest = await input.reconcile.reconcile(input.executionId);
-  while (
-    latest.outcome !== "finalized" &&
-    latest.outcome !== "partial" &&
-    latest.outcome !== "failed" &&
-    latest.outcome !== "needs_attention"
-  ) {
+  while (!isProviderTerminalOutcome(latest.outcome)) {
     if (input.delayMs) {
       await new Promise((resolve) => setTimeout(resolve, input.delayMs));
     }

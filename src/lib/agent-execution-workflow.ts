@@ -5,15 +5,18 @@ import {
   runExecutionReconciliationRetries,
   type ExecutionWorkflowStarter,
 } from "@/lib/agent-execution-reconciliation";
-import type { ExecutionFinalityRecord } from "@/lib/agent-execution-finality";
+import {
+  isProviderTerminalOutcome,
+  type ExecutionFinalityRecord,
+} from "@/lib/agent-execution-finality";
 import { getExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
+import { settleExecutionFinality } from "@/lib/agent-execution-settlement";
 import { getAgentAuditStore } from "@/lib/agent-audit";
 import {
   createBackWorkflowStarter,
   createConvictionBackAttributionApplier,
 } from "@/lib/agent-back-attribution";
 import { getAgentBackRecordStore } from "@/lib/agent-back-store";
-import { settleExecutionFinality } from "@/lib/agent-permit";
 import {
   getAgentExecuteIdempotencyStore,
   getAgentPermitStore,
@@ -31,12 +34,7 @@ export async function settleReconciledExecution(
   record: ExecutionFinalityRecord,
   ownerAddress: string,
 ): Promise<ExecutionFinalityRecord> {
-  if (
-    record.outcome !== "finalized" &&
-    record.outcome !== "failed" &&
-    record.outcome !== "partial" &&
-    record.outcome !== "needs_attention"
-  ) {
+  if (!isProviderTerminalOutcome(record.outcome)) {
     return record;
   }
   const agentStore = getPublicAgentProvisioningStore();

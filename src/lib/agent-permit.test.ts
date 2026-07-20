@@ -11,7 +11,9 @@ import {
   issueTradeExecutionPermit,
   submitSignedTradeExecution,
 } from "@/lib/agent-permit";
-import { MemoryExecutionFinalityStore } from "@/lib/agent-execution-finality";
+import { isProviderTerminalOutcome } from "@/lib/agent-execution-finality";
+import { MemoryExecutionFinalityStore } from "@/lib/agent-execution-finality-store";
+import type { ExecutionReconciler } from "@/lib/agent-execution-reconciliation";
 import { createSignedTradeSender } from "@/lib/agent-permit-send";
 import {
   MemoryAgentQuoteStore,
@@ -104,6 +106,47 @@ async function signPermitRoot(
   return wallet.signMessage(getBytes(raw.rootHash));
 }
 
+/** Deterministic no-op workflow starter for the required finality path. */
+const noopWorkflow = {
+  async start(executionId: string) {
+    return { runId: `run_${executionId}` };
+  },
+};
+
+/**
+ * Test reconciler that confirms every required leg and finalizes the execution,
+ * mirroring a provider read that reports all legs finalized on-chain.
+ */
+function finalizingReconciler(
+  store: MemoryExecutionFinalityStore,
+): ExecutionReconciler {
+  return {
+    async reconcile(executionId) {
+      const current = await store.get(executionId);
+      if (!current) throw new Error(`Execution ${executionId} was not found.`);
+      if (isProviderTerminalOutcome(current.outcome)) return current;
+      const legs = current.legs.map((leg, index) => ({
+        ...leg,
+        status: "finalized" as const,
+        confirmedHash: `0x${String(index + 1).repeat(64).slice(0, 64)}`,
+        confirmedAt: FIXED_NOW.toISOString(),
+        attemptCount: leg.attemptCount + 1,
+        lastProviderStatus: "FINALIZED",
+      }));
+      const finalized = await store.transition({
+        executionId,
+        expectedVersion: current.version,
+        from: current.outcome,
+        to: "finalized",
+        updatedAt: FIXED_NOW.toISOString(),
+        patch: { legs, lastProviderStatus: "FINALIZED" },
+      });
+      if (!finalized) throw new Error("expected finalized execution");
+      return finalized;
+    },
+  };
+}
+
 describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
   it("issues a permit bound to the quote, then completes after local signatures", async () => {
     const wallet = Wallet.createRandom();
@@ -112,6 +155,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const receipts = new MemoryAgentReceiptPersist();
     const spendLedger = new MemorySpendLedger();
+    const executionStore = new MemoryExecutionFinalityStore();
     let spent = 0;
 
     const permit = await issueTradeExecutionPermit({
@@ -123,6 +167,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -158,6 +204,9 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       receipts,
       quoteStore,
       spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
+      executionReconciler: finalizingReconciler(executionStore),
       activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       onSpend: (dollarsIn) => {
@@ -165,7 +214,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       },
       randomId: () => "live-receipt-001",
       send: async ({ receiptSlug, agreedQuote }) => ({
-        transactionId: "tx-live-1",
+        transactionId: permit.transactionId,
         summary: "Done",
         receipt: {
           slug: receiptSlug,
@@ -209,6 +258,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const receipts = new MemoryAgentReceiptPersist();
     const spendLedger = new MemorySpendLedger();
+    const executionStore = new MemoryExecutionFinalityStore();
 
     const permit = await issueTradeExecutionPermit({
       agent,
@@ -219,6 +269,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -238,10 +290,13 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       receipts,
       quoteStore,
       spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
+      executionReconciler: finalizingReconciler(executionStore),
       activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       send: async ({ receiptSlug, agreedQuote }) => ({
-        transactionId: "tx-1",
+        transactionId: permit.transactionId,
         summary: "Done",
         receipt: {
           slug: receiptSlug,
@@ -264,6 +319,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -278,6 +335,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const permitStore = new MemoryAgentPermitStore();
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const spendLedger = new MemorySpendLedger();
+    const executionStore = new MemoryExecutionFinalityStore();
 
     const permit = await issueTradeExecutionPermit({
       agent,
@@ -288,6 +346,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -303,6 +363,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -318,6 +380,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const receipts = new MemoryAgentReceiptPersist();
     const spendLedger = new MemorySpendLedger();
 
+    const executionStore = new MemoryExecutionFinalityStore();
     const permit = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
@@ -327,6 +390,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -347,6 +412,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       receipts,
       quoteStore,
       spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       activeLeaseId: "lease-1",
       now: () => new Date(FIXED_NOW.getTime() + 60_000),
       send: async () => {
@@ -408,6 +475,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const receipts = new MemoryAgentReceiptPersist();
     const spendLedger = new MemorySpendLedger();
 
+    const executionStore = new MemoryExecutionFinalityStore();
     const permit = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
@@ -417,6 +485,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -436,30 +506,35 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       receipts,
       quoteStore,
       spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
+      executionReconciler: finalizingReconciler(executionStore),
       activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       onSpend: () => {
         throw new Error("lifetime write failed");
       },
-      send: async ({ receiptSlug, agreedQuote }) => ({
-        transactionId: "tx-ok",
-        summary: "Done",
-        receipt: {
-          slug: receiptSlug,
-          summary: "Done",
-          dollarsIn: agreedQuote.dollarsIn,
-          dollarsOut: agreedQuote.dollarsOut,
-          feeUsd: agreedQuote.feeUsd,
-          legs: [],
-        },
-      }),
+      send: async () => ({ transactionId: permit.transactionId }),
     });
 
-    expect(result).toMatchObject({ ok: true, transactionId: "tx-ok" });
-    expect(await idempotencyStore.get(agent.agentId, "idem-post-send")).toMatchObject({
-      ok: true,
+    // Confirmed settlement accounting failure holds the finalized execution for
+    // operator recovery rather than emitting a durable success (ADR 0040 / 0048).
+    expect(result).toMatchObject({
+      ok: false,
+      code: "finalized",
+      outcome: "finalized",
     });
-    expect((await permitStore.get(permit.permitId))?.status).toBe("pending");
+    expect(result.ok === false && result.message).toMatch(/lifetime write/i);
+    expect(
+      await idempotencyStore.get(agent.agentId, "idem-post-send"),
+    ).toBeNull();
+    expect((await permitStore.get(permit.permitId))?.status).toBe("consumed");
+    const held = await executionStore.getByAgentIdempotency(
+      agent.agentId,
+      "idem-post-send",
+    );
+    expect(held?.settlementStatus).toBe("needs_attention");
+    expect(held?.settlementError).toMatch(/lifetime write/i);
   });
 
   it("rejects submit without the active lease", async () => {
@@ -470,6 +545,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const receipts = new MemoryAgentReceiptPersist();
     const spendLedger = new MemorySpendLedger();
 
+    const executionStore = new MemoryExecutionFinalityStore();
     const permit = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
@@ -479,6 +555,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -498,6 +576,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       receipts,
       quoteStore,
       spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       send: async () => {
@@ -516,6 +596,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const receipts = new MemoryAgentReceiptPersist();
     const spendLedger = new MemorySpendLedger();
 
+    const executionStore = new MemoryExecutionFinalityStore();
     const permit = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
@@ -525,6 +606,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -544,6 +627,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       receipts,
       quoteStore,
       spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       send: async () => {
@@ -551,11 +636,16 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       },
     });
 
+    // An uncertain provider send records the durable execution as pending so
+    // retries reconcile the same transaction instead of resigning (ADR 0048).
     expect(uncertain).toMatchObject({
       ok: false,
-      code: "unavailable",
+      code: "pending",
+      outcome: "pending",
     });
-    expect(uncertain.ok === false && uncertain.message).toMatch(/uncertain/i);
+    expect(uncertain.ok === false && uncertain.message).toMatch(
+      /unresolved|reconcil/i,
+    );
     expect((await permitStore.get(permit.permitId))?.status).toBe("pending");
   });
 
@@ -579,6 +669,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -691,6 +783,12 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: {
+        async start(executionId: string) {
+          return { runId: `run_${executionId}` };
+        },
+      },
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -759,6 +857,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const spendLedger = new MemorySpendLedger();
 
+    const executionStore = new MemoryExecutionFinalityStore();
     const result = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
@@ -768,6 +867,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -789,6 +890,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const receipts = new MemoryAgentReceiptPersist();
     const spendLedger = new MemorySpendLedger();
 
+    const executionStore = new MemoryExecutionFinalityStore();
     const permit = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
@@ -798,6 +900,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -825,6 +929,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       receipts,
       quoteStore,
       spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       reloadAgent: async () =>
@@ -857,6 +963,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const receipts = new MemoryAgentReceiptPersist();
     const spendLedger = new MemorySpendLedger();
 
+    const executionStore = new MemoryExecutionFinalityStore();
     const permit = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
@@ -866,6 +973,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -893,6 +1002,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       receipts,
       quoteStore,
       spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       reloadAgent: async () =>
@@ -971,6 +1082,7 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
     const idempotencyStore = new MemoryAgentIdempotencyStore();
     const receipts = new MemoryAgentReceiptPersist();
     const spendLedger = new MemorySpendLedger();
+    const executionStore = new MemoryExecutionFinalityStore();
     const permit = await issueTradeExecutionPermit({
       agent,
       quoteId: quote.quoteId,
@@ -980,6 +1092,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       quoteStore,
       permitStore,
       idempotencyStore,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       balance: FUNDED_BALANCE,
       spendLedger,
       now: () => FIXED_NOW,
@@ -1002,6 +1116,8 @@ describe("issueTradeExecutionPermit + submitSignedTradeExecution", () => {
       receipts,
       quoteStore,
       spendLedger,
+      executionFinalityStore: executionStore,
+      executionWorkflow: noopWorkflow,
       activeLeaseId: "lease-1",
       now: () => FIXED_NOW,
       send: async () => {
