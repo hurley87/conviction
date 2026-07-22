@@ -102,6 +102,8 @@ describe("setup contract and public skill", () => {
       expect(skill).toContain(snippet.primary);
     }
     expect(skill).toContain("conviction-mcp doctor --profile <name>");
+    expect(skill).toContain("auto-runs");
+    expect(skill).toContain("24 hours");
     expect(skill).not.toContain("--code <");
     expect(skill).not.toMatch(/CONVICTION_PRIVATE_KEY|0x[a-fA-F0-9]{64}/);
   });

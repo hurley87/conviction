@@ -14,7 +14,7 @@ Setup contract version `1` is shared by the CLI, Agent Access UI, and the skill.
 
 ## Provision a local profile
 
-After Agent Access creates a pending agent, redeem the handoff locally:
+After Agent Access creates a pending agent, copy the complete init command and run it:
 
 ```sh
 conviction-mcp init \
@@ -23,27 +23,37 @@ conviction-mcp init \
   --api-base https://your-conviction-host
 ```
 
+`--backup-path` defaults to `~/conviction-signer.backup.json` when omitted. On a
+TTY, missing passphrase prompts interactively (or use `--backup-passphrase` /
+`CONVICTION_BACKUP_PASSPHRASE`). Handoffs are valid for 24 hours and can be
+regenerated from Agent Access until init completes.
+
 `init` generates an ethers v6 encrypted keystore on the machine, proves
 possession of the public address to Conviction, exports a separately
-passphrase-encrypted backup, decrypt-verifies that backup, then prints
-major-pinned host configuration for Claude Code, Codex, Hermes, and OpenClaw.
-The private key never leaves the local process.
+passphrase-encrypted backup, decrypt-verifies that backup, writes `apiBaseUrl`
+into the local profile, prints major-pinned host configuration for Claude Code,
+Codex, Hermes, and OpenClaw, then auto-runs doctor. The private key never leaves
+the local process.
 
-Headless unlock uses `CONVICTION_KEYSTORE_PASSWORD`. Recovery passphrase may be
-passed with `--backup-passphrase` or `CONVICTION_BACKUP_PASSPHRASE`. Raw private
-key environment variables are rejected.
+Headless unlock uses `CONVICTION_KEYSTORE_PASSWORD`. Raw private key environment
+variables are rejected.
 
 ## Verify locally before funding
 
+Successful init already runs doctor. To re-check:
+
 ```sh
-conviction-mcp doctor --profile <name> --api-base https://your-conviction-host
+conviction-mcp doctor --profile <name>
 ```
 
-Doctor checks profile integrity, keystore access, Particle configuration, tool
-discovery (`tools/list` v1 contract), backend authentication, and account status
-without moving funds. On success it records setup verification and only then
-suggests funding. Optional `--report <path>` writes a redacted local support
-bundle and never uploads it.
+Doctor checks profile integrity, keystore access, tool discovery (`tools/list`
+v1 contract), backend authentication, and account status without moving funds.
+Particle credentials belong on the Conviction API host; missing local
+`NEXT_PUBLIC_PARTICLE_*` is not a failure. On success doctor records setup
+verification and only then suggests funding. Optional `--report <path>` writes a
+redacted local support bundle and never uploads it. When `--api-base` and
+`CONVICTION_API_BASE` are unset, doctor/serve/status read `apiBaseUrl` from the
+profile written by init.
 
 ```sh
 conviction-mcp status --profile <name>

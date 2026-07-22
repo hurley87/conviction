@@ -44,6 +44,7 @@ async function seedActiveAgent(
       now: () => FIXED_NOW,
       randomId: () => ids.shift()!,
       randomCode: () => "policy-test-code",
+      apiBaseUrl: "https://app.getconviction.com",
     },
   );
 

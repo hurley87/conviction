@@ -34,10 +34,12 @@ On headless Linux or WSL, the operator may provide `CONVICTION_KEYSTORE_PASSWORD
 These steps map to observable backend state:
 
 1. **Create agent** — Operator creates a pending agent in Agent Access.
-2. **Provision locally** — Operator runs the one-time `conviction-mcp init --code …` handoff from Agent Access.
+2. **Provision locally** — Operator pastes the complete `conviction-mcp init --code … --backup-path … --api-base …` command from Agent Access. The CLI prompts for a recovery passphrase on a TTY (or accepts `CONVICTION_BACKUP_PASSPHRASE`).
 3. **Verify backup** — Init must export and decrypt-verify the encrypted backup before funding is unlocked.
-4. **Verify locally** — Operator configures a host with the shared MCP contract, then runs `conviction-mcp doctor --profile <name>` (non-value-moving). Host configuration is part of this step, not a separate progress gate.
+4. **Verify locally** — Successful init auto-runs `doctor` and prints major-pinned host configs. Paste a host config; re-run `conviction-mcp doctor --profile <name>` only if verification did not complete. The local profile stores `apiBaseUrl`, so host snippets do not need `--api-base`.
 5. **Fund account** — Only after doctor records setup verification should the operator send funds to the deposit address.
+
+Handoffs are valid for 24 hours and can be regenerated from Agent Access until init completes.
 
 ## Host configuration patterns
 
@@ -90,7 +92,8 @@ openclaw mcp add conviction -- npx -y @getconviction/mcp@2 serve --profile <name
 
 ## Diagnostics
 
-- `conviction-mcp doctor --profile <name>` verifies profile integrity, keystore access, Particle configuration, tool discovery (`tools/list` v1 contract), backend authentication, and account status without moving funds. On success it records setup verification.
+- Successful `conviction-mcp init` auto-runs doctor after backup verification.
+- `conviction-mcp doctor --profile <name>` verifies profile integrity, keystore access, tool discovery (`tools/list` v1 contract), backend authentication, and account status without moving funds. On success it records setup verification. Particle credentials belong on the Conviction API host; missing local `NEXT_PUBLIC_PARTICLE_*` is not a failure.
 - `conviction-mcp doctor --profile <name> --report <path>` writes a redacted local support bundle. It never uploads.
 - `conviction-mcp status --profile <name>` prints backend-authoritative identity and policy state.
 
@@ -115,6 +118,7 @@ Ask the human operator to act when any of these are needed:
 
 - Creating or retiring an agent in Agent Access
 - Running or re-running `init` with a one-time code
+- Regenerating a handoff from Agent Access when the code expired or was not copied
 - Choosing/storing a recovery passphrase or unlock secret
 - Adding host configuration on their machine
 - Running `doctor` / reviewing a support report

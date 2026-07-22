@@ -2,33 +2,19 @@ import {
   agentPayload,
   provisioningRouteError,
 } from "@/lib/agent-provisioning-api";
-import { createPendingAgent } from "@/lib/agent-provisioning";
+import { regenerateProvisioningHandoff } from "@/lib/agent-provisioning";
 import { getProvisioningContext } from "@/lib/agent-provisioning-store";
 import { resolvePublicAppOrigin } from "@/lib/public-app-origin";
 import { authenticateRequest } from "@/lib/server-auth";
 
-export async function GET(request: Request) {
-  try {
-    const auth = await authenticateRequest(request);
-    const { store } = await getProvisioningContext(auth.userId, auth.mock);
-    const agent = await store.findNonRetiredByOwner(auth.userId);
-    return Response.json({
-      agent: agent ? agentPayload(agent) : null,
-    });
-  } catch (error) {
-    return provisioningRouteError(error);
-  }
-}
-
 export async function POST(request: Request) {
   try {
     const auth = await authenticateRequest(request);
-    const body = await request.json().catch(() => null);
     const { store, owner } = await getProvisioningContext(
       auth.userId,
       auth.mock,
     );
-    const result = await createPendingAgent(store, owner, body, {
+    const result = await regenerateProvisioningHandoff(store, owner, {
       apiBaseUrl: resolvePublicAppOrigin(request),
     });
     return Response.json(
@@ -37,7 +23,7 @@ export async function POST(request: Request) {
         agent: agentPayload(result.agent),
       },
       {
-        status: 201,
+        status: 200,
         headers: { "cache-control": "no-store" },
       },
     );

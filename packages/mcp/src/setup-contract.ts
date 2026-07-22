@@ -91,8 +91,10 @@ export const SETUP_CONTRACT: SetupContract = setupContractSchema.parse({
     {
       id: "provision",
       title: "Provision locally",
-      summary: "Redeem the one-time handoff into an encrypted local signer profile.",
-      nextAction: "Run the one-time conviction-mcp init command from Agent Access.",
+      summary:
+        "Redeem the one-time handoff into an encrypted local signer profile (complete init command from Agent Access).",
+      nextAction:
+        "Paste and run the copyable conviction-mcp init command from Agent Access (prompts for a recovery passphrase).",
       operatorRequired: true,
     },
     {
@@ -106,9 +108,9 @@ export const SETUP_CONTRACT: SetupContract = setupContractSchema.parse({
       id: "verify",
       title: "Verify locally",
       summary:
-        "Configure a host with the shared MCP contract, then run a non-value-moving doctor check.",
+        "Successful init auto-runs doctor; paste a host config with the shared MCP contract. Re-run doctor only if verification did not complete.",
       nextAction:
-        "Add a major-pinned host config, then run conviction-mcp doctor --profile <name>.",
+        "Add a major-pinned host config from the init output, then fund after doctor records setup verification.",
       operatorRequired: true,
     },
     {

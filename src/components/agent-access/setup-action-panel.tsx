@@ -60,14 +60,43 @@ function statusLabel(status: AgentStatus): string {
   }
 }
 
+function RegenerateButton({
+  regenerating,
+  onClick,
+  variant,
+}: {
+  regenerating: boolean;
+  onClick: () => void;
+  variant: "secondary" | "primary";
+}) {
+  const variantClass =
+    variant === "primary"
+      ? "bg-brand text-brand-on hover:bg-brand-hover"
+      : "border border-line bg-surface text-ink hover:border-brand hover:text-brand";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={regenerating}
+      className={`mt-4 rounded-[14px] px-4 py-2.5 text-sm font-extrabold transition disabled:cursor-not-allowed disabled:opacity-55 ${variantClass}`}
+    >
+      {regenerating ? "Regenerating…" : "Regenerate handoff"}
+    </button>
+  );
+}
+
 export function SetupActionPanel({
   phase,
   agent,
   handoff,
+  regenerating = false,
+  onRegenerateHandoff,
 }: {
   phase: SetupPhase;
   agent: SetupAgent;
   handoff: Handoff | null;
+  regenerating?: boolean;
+  onRegenerateHandoff?: () => void;
 }) {
   const profileName = defaultProfileName(agent.handle);
   const doctorCommand = `conviction-mcp doctor --profile ${profileName}`;
@@ -78,33 +107,50 @@ export function SetupActionPanel({
         <div className="mt-7 rounded-[22px] border border-brand/15 bg-brand-soft/45 p-6">
           <p className="text-sm font-extrabold text-ink">Next: provision locally</p>
           <p className="mt-2 text-sm leading-6 text-ink-2">
-            Run it before{" "}
-            {new Date(handoff.expiresAt).toLocaleTimeString([], {
+            Paste and run this command. It prompts for a recovery passphrase,
+            verifies the encrypted backup, and runs doctor. Valid until{" "}
+            {new Date(handoff.expiresAt).toLocaleString([], {
+              month: "short",
+              day: "numeric",
               hour: "numeric",
               minute: "2-digit",
             })}
-            . It will not be shown again after you leave this page. Export and
-            decrypt-verify the encrypted backup in the CLI before verifying locally.
+            . You can regenerate a fresh code until init completes.
           </p>
           <CopyBlock label="Init command" value={handoff.command} />
+          {onRegenerateHandoff ? (
+            <RegenerateButton
+              regenerating={regenerating}
+              onClick={onRegenerateHandoff}
+              variant="secondary"
+            />
+          ) : null}
         </div>
       ) : (
         <div className="mt-7 rounded-[18px] border border-line bg-surface-2 px-5 py-4 text-sm leading-6 text-ink-2">
-          This account already used its one-time handoff. Return to the local
-          terminal where you began setup, or wait for a future recovery flow.
+          <p>
+            The one-time handoff is not on this page. If init has not finished,
+            regenerate a fresh command below.
+          </p>
+          {onRegenerateHandoff ? (
+            <RegenerateButton
+              regenerating={regenerating}
+              onClick={onRegenerateHandoff}
+              variant="primary"
+            />
+          ) : null}
         </div>
       );
 
     case "backup":
       return (
         <div className="mt-7 rounded-[18px] border border-warning/25 bg-[#fff8e8] px-5 py-4 text-sm leading-6 text-ink-2">
-          Local signer is bound, but setup stays locked until the CLI exports and
-          decrypt-verifies an encrypted backup. Resume{" "}
+          Local signer is bound, but setup stays locked until the CLI finishes
+          backup export and decrypt-verification. Resume{" "}
           <code className="rounded bg-ink/5 px-1.5 py-0.5 text-xs">
             conviction-mcp init
           </code>{" "}
-          with the same code and profile—no host configs or deposit address are
-          shown here yet.
+          with the same code and profile—successful init also runs doctor.
         </div>
       );
 
@@ -114,18 +160,24 @@ export function SetupActionPanel({
         <div className="mt-7 space-y-6">
           <div className="rounded-[18px] border border-brand/15 bg-brand-soft/45 px-5 py-4 text-sm leading-6 text-ink-2">
             <p className="font-extrabold text-ink">
-              Next: configure a host, then run doctor
+              Next: paste a host config (or re-run doctor)
             </p>
             <p className="mt-2">
-              Backup verified. Add one MCP host with the shared v1 contract, then
-              run a non-value-moving doctor check before funding.
+              Backup is verified. Successful{" "}
+              <code className="rounded bg-ink/5 px-1.5 py-0.5 text-xs">
+                conviction-mcp init
+              </code>{" "}
+              already runs doctor—re-run only if verification did not complete.
+              Then add one MCP host with the shared v1 contract.
             </p>
             <p className="mt-2 text-xs leading-5 text-ink-3">
               Snippets default the profile name to{" "}
               <code className="rounded bg-ink/5 px-1 py-0.5">{profileName}</code>
               . If you passed a custom{" "}
               <code className="rounded bg-ink/5 px-1 py-0.5">--profile</code>{" "}
-              during init, substitute that name.
+              during init, substitute that name. The profile stores the API base
+              from init, so host snippets do not need{" "}
+              <code className="rounded bg-ink/5 px-1 py-0.5">--api-base</code>.
             </p>
             <CopyBlock label="Doctor command" value={doctorCommand} />
           </div>

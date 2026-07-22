@@ -15,6 +15,8 @@ export const agentProfileSchema = z.object({
   /** EIP-7702 UA owner address; equals the local signer in v1. */
   universalAccountAddress: z.string().min(1),
   keystorePath: z.string().min(1),
+  /** Conviction API origin used by serve/doctor/status when flags/env are unset. */
+  apiBaseUrl: z.string().min(1).optional(),
   fundingReady: z.boolean(),
   actionPolicy: z.object({
     trade: z.boolean(),

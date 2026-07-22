@@ -19,6 +19,7 @@ import {
   type OwnedAgent,
   type ProvisioningOwner,
   type StoredAgentLease,
+  type StoredHandoff,
 } from "@/lib/agent-provisioning";
 
 let schemaReady = false;
@@ -223,6 +224,101 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     };
   }
 
+  async findHandoffByAgentId(agentId: string): Promise<HandoffLookup | null> {
+    await ensureSchema(this.sql);
+    const rows = await this.sql`
+      SELECT
+        h.handoff_id, h.agent_id, h.code_hash, h.expires_at, h.redeemed_at,
+        a.*
+      FROM agent_provisioning_handoffs h
+      INNER JOIN agents a ON a.agent_id = h.agent_id
+      WHERE h.agent_id = ${agentId}
+      ORDER BY h.created_at DESC
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      handoff: handoffFromRow(row),
+      agent: ownedAgentFromRow(row),
+    };
+  }
+
+  async replaceUnredeemedHandoff(input: {
+    agentId: string;
+    ownerUserId: string;
+    handoff: StoredHandoff;
+  }): Promise<OwnedAgent> {
+    await ensureSchema(this.sql);
+    if (input.handoff.agentId !== input.agentId) {
+      throw new AgentProvisioningError(
+        "invalid_request",
+        "Handoff agent identity does not match the pending agent.",
+      );
+    }
+
+    const rows = await this.sql`
+      SELECT * FROM agents
+      WHERE agent_id = ${input.agentId}
+        AND owner_user_id = ${input.ownerUserId}
+      LIMIT 1
+    `;
+    const agentRow = rows[0] as Record<string, unknown> | undefined;
+    if (!agentRow) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity.",
+      );
+    }
+    const agent = ownedAgentFromRow(agentRow);
+    if (agent.status !== "provisioning" || agent.address !== null) {
+      throw new AgentProvisioningError(
+        "agent_not_pending",
+        "This agent is no longer awaiting local provisioning.",
+      );
+    }
+
+    const existing = await this.findHandoffByAgentId(input.agentId);
+    if (existing?.handoff.redeemedAt) {
+      throw new AgentProvisioningError(
+        "handoff_used",
+        "That provisioning code was already redeemed. Resume from the existing local profile.",
+      );
+    }
+
+    if (existing) {
+      const updated = await this.sql`
+        UPDATE agent_provisioning_handoffs
+        SET
+          code_hash = ${input.handoff.codeHash},
+          expires_at = ${input.handoff.expiresAt},
+          redeemed_at = NULL
+        WHERE agent_id = ${input.agentId}
+          AND redeemed_at IS NULL
+        RETURNING handoff_id
+      `;
+      if (!updated.length) {
+        throw new AgentProvisioningError(
+          "handoff_used",
+          "That provisioning code was already redeemed. Resume from the existing local profile.",
+        );
+      }
+    } else {
+      await this.sql`
+        INSERT INTO agent_provisioning_handoffs (
+          handoff_id, agent_id, code_hash, expires_at
+        ) VALUES (
+          ${input.handoff.handoffId},
+          ${input.agentId},
+          ${input.handoff.codeHash},
+          ${input.handoff.expiresAt}
+        )
+      `;
+    }
+
+    return agent;
+  }
+
   async redeemHandoff(input: {
     codeHash: string;
     signerAddress: string;
@@ -268,7 +364,7 @@ class NeonAgentProvisioningStore implements AgentProvisioningStore {
     if (new Date(handoff.expiresAt).getTime() <= input.now.getTime()) {
       throw new AgentProvisioningError(
         "handoff_expired",
-        "That provisioning code expired. Create a new agent handoff in Agent Access.",
+        "That provisioning code expired. Regenerate a handoff in Agent Access.",
       );
     }
 
