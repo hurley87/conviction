@@ -10,6 +10,7 @@ import {
   ownedAgentFromRow,
   PROVISIONING_HANDOFF_TTL_MS,
   redeemPendingAgent,
+  regenerateProvisioningHandoff,
 } from "@/lib/agent-provisioning";
 
 const OWNER = { userId: "did:privy:owner-1", operatorHandle: "operator" };
@@ -29,11 +30,12 @@ function dependencies() {
     now: () => FIXED_NOW,
     randomId: () => ids.shift()!,
     randomCode: () => "one-time-provisioning-code",
+    apiBaseUrl: "https://app.getconviction.com",
   };
 }
 
 describe("createPendingAgent", () => {
-  it("creates one pending identity and returns a ten-minute one-time handoff", async () => {
+  it("creates one pending identity and returns a 24-hour one-time handoff", async () => {
     const store = new MemoryAgentProvisioningStore();
     const result = await createPendingAgent(store, OWNER, INPUT, dependencies());
 
@@ -50,11 +52,12 @@ describe("createPendingAgent", () => {
     expect(result.handoff).toEqual({
       code: "one-time-provisioning-code",
       command:
-        "conviction-mcp init --code one-time-provisioning-code",
+        "conviction-mcp init --code one-time-provisioning-code --backup-path ~/conviction-signer.backup.json --api-base https://app.getconviction.com",
       expiresAt: new Date(
         FIXED_NOW.getTime() + PROVISIONING_HANDOFF_TTL_MS,
       ).toISOString(),
     });
+    expect(PROVISIONING_HANDOFF_TTL_MS).toBe(24 * 60 * 60 * 1000);
 
     expect(store.records[0]?.handoff.codeHash).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(store.records[0])).not.toContain(
@@ -309,6 +312,58 @@ describe("redeemPendingAgent", () => {
     expect(healed.address).toBe(wallet.address);
     expect(healed.status).toBe("active");
     expect(store.records[0]?.handoff.redeemedAt).toBe(FIXED_NOW.toISOString());
+  });
+});
+
+describe("regenerateProvisioningHandoff", () => {
+  it("issues a fresh complete command while still provisioning", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const created = await createPendingAgent(store, OWNER, INPUT, dependencies());
+    const oldHash = store.records[0]!.handoff.codeHash;
+
+    const regenerated = await regenerateProvisioningHandoff(store, OWNER, {
+      now: () => FIXED_NOW,
+      randomCode: () => "regenerated-provisioning-code",
+      apiBaseUrl: "https://app.getconviction.com",
+    });
+
+    expect(regenerated.agent.agentId).toBe(created.agent.agentId);
+    expect(regenerated.handoff).toEqual({
+      code: "regenerated-provisioning-code",
+      command:
+        "conviction-mcp init --code regenerated-provisioning-code --backup-path ~/conviction-signer.backup.json --api-base https://app.getconviction.com",
+      expiresAt: new Date(
+        FIXED_NOW.getTime() + PROVISIONING_HANDOFF_TTL_MS,
+      ).toISOString(),
+    });
+    expect(store.records[0]?.handoff.codeHash).not.toBe(oldHash);
+    expect(store.records[0]?.handoff.redeemedAt).toBeNull();
+  });
+
+  it("refuses after the handoff was redeemed", async () => {
+    const store = new MemoryAgentProvisioningStore();
+    const created = await createPendingAgent(store, OWNER, INPUT, dependencies());
+    const wallet = Wallet.createRandom();
+    const codeHash = hashProvisioningCode(created.handoff.code);
+    await redeemPendingAgent(
+      store,
+      {
+        code: created.handoff.code,
+        signerAddress: wallet.address,
+        proofSignature: await wallet.signMessage(
+          buildProvisioningProofMessage(codeHash, wallet.address),
+        ),
+      },
+      { now: () => FIXED_NOW },
+    );
+
+    await expect(
+      regenerateProvisioningHandoff(store, OWNER, {
+        now: () => FIXED_NOW,
+        randomCode: () => "should-not-issue",
+        apiBaseUrl: "https://app.getconviction.com",
+      }),
+    ).rejects.toMatchObject({ code: "agent_not_pending" });
   });
 });
 

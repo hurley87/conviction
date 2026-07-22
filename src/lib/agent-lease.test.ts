@@ -38,6 +38,7 @@ async function activeAgent(store: MemoryAgentProvisioningStore, wallet: Wallet) 
         return () => ids.shift()!;
       })(),
       randomCode: () => "lease-provisioning-code",
+      apiBaseUrl: "https://app.getconviction.com",
     },
   );
   const codeHash = hashProvisioningCode(created.handoff.code);

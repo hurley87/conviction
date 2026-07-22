@@ -264,6 +264,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     signerAddress: wallet.address,
     universalAccountAddress: agent.address,
     keystorePath: binding.keystorePath,
+    apiBaseUrl: binding.apiBaseUrl,
     fundingReady: true,
     actionPolicy: agent.actionPolicy,
     maxTradeUsd: agent.maxTradeUsd,
@@ -280,6 +281,9 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       profile.profileName = previous.profileName;
       profile.createdAt = previous.createdAt;
       profile.keystorePath = previous.keystorePath;
+      if (previous.apiBaseUrl) {
+        profile.apiBaseUrl = previous.apiBaseUrl;
+      }
     } catch {
       // Profile file missing; write using finalProfileName below.
     }

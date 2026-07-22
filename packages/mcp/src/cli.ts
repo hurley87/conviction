@@ -1,6 +1,12 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { ConvictionApiError } from "./api-client.js";
+import {
+  DEFAULT_BACKUP_PATH,
+  promptBackupPassphrase,
+  resolveApiBaseUrl,
+  resolveDefaultBackupPath,
+} from "./cli-helpers.js";
 import { formatDoctorOutput, runDoctor } from "./doctor.js";
 import { formatHostConfigGuide } from "./host-config.js";
 import { runInit, describeInitUnlockHint } from "./init.js";
@@ -35,7 +41,7 @@ const HELP = `Conviction MCP
 Usage:
   conviction-mcp serve --mock
   conviction-mcp serve --profile <name> [options]
-  conviction-mcp init --code <one-time-code> --backup-path <file> [options]
+  conviction-mcp init --code <one-time-code> [options]
   conviction-mcp doctor --profile <name> [options]
   conviction-mcp status --profile <name> [options]
   conviction-mcp disable --profile <name> [options]
@@ -59,21 +65,21 @@ Serve --mock options:
 
 Serve --profile options:
   --profile <name>           Local profile name (required)
-  --api-base <url>           Conviction API base URL
+  --api-base <url>           Conviction API base URL (defaults to profile, then env, then localhost)
   --home <dir>               Override ~/.conviction (also CONVICTION_HOME)
   --replace-lease            Explicitly replace an existing MCP lease
 
 Init options:
   --code <value>                 One-time provisioning code from Agent Access
-  --backup-path <file>           Destination for the passphrase-encrypted backup
-  --backup-passphrase <value>    Recovery passphrase (prefer env in scripts)
+  --backup-path <file>           Encrypted backup destination (default ${DEFAULT_BACKUP_PATH})
+  --backup-passphrase <value>    Recovery passphrase (prefer env or interactive prompt)
   --api-base <url>               Conviction API base URL
   --profile <name>               Local profile name (defaults to agent handle)
   --home <dir>                   Override ~/.conviction (also CONVICTION_HOME)
 
 Doctor / status / disable / enable / retire options:
   --profile <name>           Local profile name (required)
-  --api-base <url>           Conviction API base URL
+  --api-base <url>           Conviction API base URL (defaults to profile, then env, then localhost)
   --home <dir>               Override ~/.conviction (also CONVICTION_HOME)
   --report <path>            (doctor) Write a redacted local support bundle
   --idempotency-key <value>  (retire) Durable idempotency key for retries
@@ -83,6 +89,7 @@ Environment:
   ${KEYSTORE_PASSWORD_ENV}       Headless keystore unlock secret
   CONVICTION_API_BASE            Default API base URL for init, serve, doctor, and status
 
+Successful init writes apiBaseUrl into the local profile, prints host configs, and auto-runs doctor.
 Setup contract v${SETUP_CONTRACT_VERSION} pins package-runner configs to ${PACKAGE_MAJOR_PIN}.
 Mock mode uses no account credentials, Particle, signer, or real funds; quote and execute persist under CONVICTION_HOME/mock.
 Live mode authenticates with the local signer and never exposes signing tools.
@@ -106,27 +113,41 @@ function hasFlag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
-function resolveApiBase(args: string[]): string {
-  return (
-    readFlag(args, "--api-base")?.trim() ||
-    process.env.CONVICTION_API_BASE?.trim() ||
-    "http://127.0.0.1:3000"
-  );
+async function resolveProfileApiBase(
+  args: string[],
+  profileName: string,
+  home?: string,
+): Promise<string> {
+  const flagValue = readFlag(args, "--api-base")?.trim();
+  let profileApiBaseUrl: string | undefined;
+  // Only pay the profile disk read when neither flag nor env is set.
+  if (!flagValue && !process.env.CONVICTION_API_BASE?.trim()) {
+    try {
+      const paths = resolveConvictionPaths(home);
+      const profile = await readAgentProfile(profilePath(paths, profileName));
+      profileApiBaseUrl = profile.apiBaseUrl;
+    } catch {
+      // Profile unreadable; fall back to env/localhost.
+    }
+  }
+  return resolveApiBaseUrl({ flagValue, profileApiBaseUrl });
 }
 
 async function runInitCommand(args: string[]): Promise<void> {
   const code = requireFlag(args, "--code", "--code");
-  const backupPath = requireFlag(args, "--backup-path", "--backup-path");
-  const recoveryPassphrase =
+  const backupPath = resolveDefaultBackupPath(
+    readFlag(args, "--backup-path")?.trim(),
+  );
+  let recoveryPassphrase =
     readFlag(args, "--backup-passphrase")?.trim() ||
     process.env.CONVICTION_BACKUP_PASSPHRASE?.trim();
   if (!recoveryPassphrase) {
-    throw new Error(
-      "missing recovery passphrase; pass --backup-passphrase or set CONVICTION_BACKUP_PASSPHRASE",
-    );
+    recoveryPassphrase = await promptBackupPassphrase();
   }
 
-  const apiBaseUrl = resolveApiBase(args);
+  const apiBaseUrl = resolveApiBaseUrl({
+    flagValue: readFlag(args, "--api-base")?.trim(),
+  });
   const profileName = readFlag(args, "--profile")?.trim();
   const home = readFlag(args, "--home")?.trim();
 
@@ -151,21 +172,41 @@ async function runInitCommand(args: string[]): Promise<void> {
   console.error(`Backup verified: ${result.backupPath}`);
   console.error(`Agent @${result.profile.handle} is ready for host setup.`);
   console.error("");
-  console.error(formatHostConfigGuide({ profileName: result.profile.profileName }));
+  console.error(
+    formatHostConfigGuide({ profileName: result.profile.profileName }),
+  );
   console.error("");
   console.error(
-    `Next: run \`conviction-mcp doctor --profile ${result.profile.profileName}\` before funding.`,
+    `Running doctor for profile ${result.profile.profileName}…`,
   );
-  console.error(
-    `(Deposit address will be suggested after doctor succeeds: ${result.depositAddress})`,
-  );
+
+  const doctorResult = await runDoctor({
+    profileName: result.profile.profileName,
+    apiBaseUrl: result.profile.apiBaseUrl ?? apiBaseUrl,
+    ...(home ? { home } : {}),
+    unlockStore,
+  });
+  console.log(formatDoctorOutput(doctorResult));
+
+  if (doctorResult.ok && doctorResult.suggestFunding) {
+    console.error("");
+    console.error(
+      `Local verification recorded. You can fund the Universal Account now: ${doctorResult.depositAddress ?? result.depositAddress}`,
+    );
+  } else if (!doctorResult.ok) {
+    console.error("");
+    console.error(
+      `Doctor did not fully pass. Re-run \`conviction-mcp doctor --profile ${result.profile.profileName}\` before funding.`,
+    );
+    process.exitCode = 1;
+  }
 }
 
 async function runDoctorCommand(args: string[]): Promise<void> {
   const profileName = requireFlag(args, "--profile", "--profile");
-  const apiBaseUrl = resolveApiBase(args);
   const home = readFlag(args, "--home")?.trim();
   const reportPath = readFlag(args, "--report")?.trim();
+  const apiBaseUrl = await resolveProfileApiBase(args, profileName, home);
 
   const result = await runDoctor({
     profileName,
@@ -185,8 +226,8 @@ async function runDoctorCommand(args: string[]): Promise<void> {
 
 async function runStatusCommand(args: string[]): Promise<void> {
   const profileName = requireFlag(args, "--profile", "--profile");
-  const apiBaseUrl = resolveApiBase(args);
   const home = readFlag(args, "--home")?.trim();
+  const apiBaseUrl = await resolveProfileApiBase(args, profileName, home);
 
   const status = await runStatus({
     profileName,
@@ -198,8 +239,8 @@ async function runStatusCommand(args: string[]): Promise<void> {
 
 async function runDisableCommand(args: string[]): Promise<void> {
   const profileName = requireFlag(args, "--profile", "--profile");
-  const apiBaseUrl = resolveApiBase(args);
   const home = readFlag(args, "--home")?.trim();
+  const apiBaseUrl = await resolveProfileApiBase(args, profileName, home);
   const result = await runDisable({
     profileName,
     apiBaseUrl,
@@ -210,8 +251,8 @@ async function runDisableCommand(args: string[]): Promise<void> {
 
 async function runEnableCommand(args: string[]): Promise<void> {
   const profileName = requireFlag(args, "--profile", "--profile");
-  const apiBaseUrl = resolveApiBase(args);
   const home = readFlag(args, "--home")?.trim();
+  const apiBaseUrl = await resolveProfileApiBase(args, profileName, home);
   const result = await runEnable({
     profileName,
     apiBaseUrl,
@@ -222,8 +263,8 @@ async function runEnableCommand(args: string[]): Promise<void> {
 
 async function runRetireCommand(args: string[]): Promise<void> {
   const profileName = requireFlag(args, "--profile", "--profile");
-  const apiBaseUrl = resolveApiBase(args);
   const home = readFlag(args, "--home")?.trim();
+  const apiBaseUrl = await resolveProfileApiBase(args, profileName, home);
   const idempotencyKey = readFlag(args, "--idempotency-key")?.trim();
   const result = await runRetire({
     profileName,
@@ -236,9 +277,9 @@ async function runRetireCommand(args: string[]): Promise<void> {
 
 async function runLiveServe(args: string[]): Promise<void> {
   const profileName = requireFlag(args, "--profile", "--profile");
-  const apiBaseUrl = resolveApiBase(args);
   const home = readFlag(args, "--home")?.trim();
   const replaceLease = hasFlag(args, "--replace-lease");
+  const apiBaseUrl = await resolveProfileApiBase(args, profileName, home);
 
   const paths = resolveConvictionPaths(home);
   const profile = await readAgentProfile(profilePath(paths, profileName));

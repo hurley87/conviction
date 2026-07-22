@@ -4,7 +4,7 @@
 | --- | --- |
 | `lease_conflict` | Another `serve` holds the lease; wait or `--replace-lease`. |
 | `lease_lost` | Restart `conviction-mcp serve --profile …`. |
-| Doctor Particle fail | Set `NEXT_PUBLIC_PARTICLE_PROJECT_ID` / `CLIENT_KEY` / `APP_ID` for the API host. |
+| Doctor Particle warn | Optional local `NEXT_PUBLIC_PARTICLE_*` are unused; Particle lives on the API host. |
 | Doctor tool discovery fail | Rebuild `@getconviction/mcp`; confirm `LIVE_TOOLS` length 10. |
 | Keystore unlock fail | `CONVICTION_KEYSTORE_PASSWORD` or OS keyring entry for the signer. |
 | `lifecycle_blocked` | Agent disabled/capped/retiring — use Agent Settings or CLI enable. |

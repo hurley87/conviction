@@ -3,7 +3,27 @@ import { getAddress, isAddress, verifyMessage } from "ethers";
 import { z } from "zod";
 import { AgentLeaseError, leaseConflictError } from "@/lib/agent-lease";
 
-export const PROVISIONING_HANDOFF_TTL_MS = 10 * 60 * 1000;
+/** Handoff codes remain redeemable for 24 hours (regenerate until init completes). */
+export const PROVISIONING_HANDOFF_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Default encrypted backup destination shown in copyable init commands. */
+export const DEFAULT_BACKUP_PATH = "~/conviction-signer.backup.json";
+
+/** Build the pasteable init command (never embeds the recovery passphrase). */
+export function buildProvisioningInitCommand(options: {
+  code: string;
+  apiBaseUrl: string;
+  backupPath?: string;
+}): string {
+  const backupPath = options.backupPath?.trim() || DEFAULT_BACKUP_PATH;
+  const apiBaseUrl = options.apiBaseUrl.replace(/\/$/, "");
+  return [
+    "conviction-mcp init",
+    `--code ${options.code}`,
+    `--backup-path ${backupPath}`,
+    `--api-base ${apiBaseUrl}`,
+  ].join(" ");
+}
 
 export const PROVISIONING_PROOF_PREFIX = "Conviction MCP provisioning";
 export const BACKUP_VERIFIED_PROOF_PREFIX = "Conviction MCP backup verified";
@@ -275,6 +295,17 @@ export type AgentProvisioningStore = {
   findNonRetiredByOwner(ownerUserId: string): Promise<OwnedAgent | null>;
   findBySignerAddress(signerAddress: string): Promise<OwnedAgent | null>;
   findHandoffByCodeHash(codeHash: string): Promise<HandoffLookup | null>;
+  /** Latest handoff row for an agent (used for regenerate). */
+  findHandoffByAgentId(agentId: string): Promise<HandoffLookup | null>;
+  /**
+   * Replace an unredeemed handoff with a fresh code hash + expiry.
+   * Refuses if the agent is no longer provisioning or the handoff was redeemed.
+   */
+  replaceUnredeemedHandoff(input: {
+    agentId: string;
+    ownerUserId: string;
+    handoff: StoredHandoff;
+  }): Promise<OwnedAgent>;
   redeemHandoff(input: {
     codeHash: string;
     signerAddress: string;
@@ -370,6 +401,33 @@ export class AgentProvisioningError extends Error {
   }
 }
 
+/** Authoritative HTTP status for every provisioning error code. */
+export function provisioningErrorStatus(code: ProvisioningErrorCode): number {
+  switch (code) {
+    case "handoff_not_found":
+    case "agent_not_found":
+    case "profile_missing":
+      return 404;
+    case "agent_exists":
+    case "handle_unavailable":
+    case "identity_unavailable":
+    case "handoff_expired":
+    case "handoff_used":
+    case "agent_not_pending":
+    case "address_mismatch":
+    case "setup_not_ready":
+    case "lifecycle_blocked":
+      return 409;
+    case "invalid_request":
+    case "invalid_proof":
+      return 422;
+    default: {
+      const _exhaustive: never = code;
+      return _exhaustive;
+    }
+  }
+}
+
 export const redeemAgentSchema = z.object({
   code: z.string().trim().min(8, "Provide the full one-time provisioning code."),
   signerAddress: z
@@ -407,7 +465,33 @@ type ProvisioningDependencies = {
   now?: () => Date;
   randomId?: () => string;
   randomCode?: () => string;
+  /** Public Conviction origin used in the copyable init command. */
+  apiBaseUrl?: string;
 };
+
+function resolveHandoffApiBase(apiBaseUrl: string | undefined): string {
+  const trimmed = apiBaseUrl?.trim();
+  if (!trimmed) {
+    throw new AgentProvisioningError(
+      "invalid_request",
+      "apiBaseUrl is required to build the provisioning init command.",
+    );
+  }
+  return trimmed.replace(/\/$/, "");
+}
+
+/** Shared handoff inputs (api base, clock, id/code generators, expiry). */
+function resolveHandoffMaterials(dependencies: ProvisioningDependencies) {
+  const apiBaseUrl = resolveHandoffApiBase(dependencies.apiBaseUrl);
+  const now = dependencies.now?.() ?? new Date();
+  const randomId = dependencies.randomId ?? randomUUID;
+  const code =
+    dependencies.randomCode?.() ?? randomBytes(24).toString("base64url");
+  const expiresAt = new Date(
+    now.getTime() + PROVISIONING_HANDOFF_TTL_MS,
+  ).toISOString();
+  return { apiBaseUrl, now, randomId, code, expiresAt };
+}
 
 export async function createPendingAgent(
   store: AgentProvisioningStore,
@@ -423,13 +507,8 @@ export async function createPendingAgent(
     );
   }
 
-  const now = dependencies.now?.() ?? new Date();
-  const randomId = dependencies.randomId ?? randomUUID;
-  const code =
-    dependencies.randomCode?.() ?? randomBytes(24).toString("base64url");
-  const expiresAt = new Date(
-    now.getTime() + PROVISIONING_HANDOFF_TTL_MS,
-  ).toISOString();
+  const { apiBaseUrl, now, randomId, code, expiresAt } =
+    resolveHandoffMaterials(dependencies);
 
   const agent: PendingAgent = {
     agentId: randomId(),
@@ -469,7 +548,66 @@ export async function createPendingAgent(
     handoff: {
       code,
       expiresAt,
-      command: `conviction-mcp init --code ${code}`,
+      command: buildProvisioningInitCommand({ code, apiBaseUrl }),
+    },
+  };
+}
+
+/**
+ * Issue a fresh one-time handoff for an agent still awaiting local init.
+ * Invalidates the previous code. Refuses after redeem / backup binding.
+ */
+export async function regenerateProvisioningHandoff(
+  store: AgentProvisioningStore,
+  owner: ProvisioningOwner,
+  dependencies: ProvisioningDependencies = {},
+): Promise<CreateAgentResult> {
+  const { apiBaseUrl, randomId, code, expiresAt } =
+    resolveHandoffMaterials(dependencies);
+
+  const agent = await store.findNonRetiredByOwner(owner.userId);
+  if (!agent) {
+    throw new AgentProvisioningError(
+      "agent_not_found",
+      "Create a pending agent in Agent Access before regenerating a handoff.",
+    );
+  }
+
+  if (agent.status !== "provisioning" || agent.address !== null) {
+    throw new AgentProvisioningError(
+      "agent_not_pending",
+      "This agent is no longer awaiting local provisioning. Resume from the existing local profile.",
+    );
+  }
+
+  const existing = await store.findHandoffByAgentId(agent.agentId);
+  if (existing?.handoff.redeemedAt) {
+    throw new AgentProvisioningError(
+      "handoff_used",
+      "That provisioning code was already redeemed. Resume from the existing local profile.",
+    );
+  }
+
+  const handoff: StoredHandoff = {
+    handoffId: existing?.handoff.handoffId ?? randomId(),
+    agentId: agent.agentId,
+    codeHash: hashProvisioningCode(code),
+    expiresAt,
+    redeemedAt: null,
+  };
+
+  const updated = await store.replaceUnredeemedHandoff({
+    agentId: agent.agentId,
+    ownerUserId: owner.userId,
+    handoff,
+  });
+
+  return {
+    agent: updated as PendingAgent,
+    handoff: {
+      code,
+      expiresAt,
+      command: buildProvisioningInitCommand({ code, apiBaseUrl }),
     },
   };
 }
@@ -632,6 +770,54 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
       : null;
   }
 
+  async findHandoffByAgentId(agentId: string): Promise<HandoffLookup | null> {
+    const record = this.records.find(
+      ({ agent }) => agent.agentId === agentId,
+    );
+    return record
+      ? { handoff: record.handoff, agent: record.agent }
+      : null;
+  }
+
+  async replaceUnredeemedHandoff(input: {
+    agentId: string;
+    ownerUserId: string;
+    handoff: StoredHandoff;
+  }): Promise<OwnedAgent> {
+    const record = this.records.find(
+      ({ agent }) => agent.agentId === input.agentId,
+    );
+    if (!record || record.agent.ownerUserId !== input.ownerUserId) {
+      throw new AgentProvisioningError(
+        "agent_not_found",
+        "No agent matches that identity.",
+      );
+    }
+    if (
+      record.agent.status !== "provisioning" ||
+      record.agent.address !== null
+    ) {
+      throw new AgentProvisioningError(
+        "agent_not_pending",
+        "This agent is no longer awaiting local provisioning.",
+      );
+    }
+    if (record.handoff.redeemedAt) {
+      throw new AgentProvisioningError(
+        "handoff_used",
+        "That provisioning code was already redeemed. Resume from the existing local profile.",
+      );
+    }
+    if (input.handoff.agentId !== input.agentId) {
+      throw new AgentProvisioningError(
+        "invalid_request",
+        "Handoff agent identity does not match the pending agent.",
+      );
+    }
+    record.handoff = input.handoff;
+    return record.agent;
+  }
+
   async redeemHandoff(input: {
     codeHash: string;
     signerAddress: string;
@@ -670,7 +856,7 @@ export class MemoryAgentProvisioningStore implements AgentProvisioningStore {
     if (new Date(handoff.expiresAt).getTime() <= input.now.getTime()) {
       throw new AgentProvisioningError(
         "handoff_expired",
-        "That provisioning code expired. Create a new agent handoff in Agent Access.",
+        "That provisioning code expired. Regenerate a handoff in Agent Access.",
       );
     }
 

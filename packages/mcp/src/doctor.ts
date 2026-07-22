@@ -71,32 +71,32 @@ function check(
 }
 
 function checkParticleConfig(env: NodeJS.ProcessEnv): DoctorCheck {
-  const missing = PARTICLE_ENV_KEYS.filter((key) => !env[key]?.trim());
-  if (missing.length > 0) {
+  const present = PARTICLE_ENV_KEYS.filter((key) => env[key]?.trim());
+  if (present.length === 0) {
     return check(
       "particle_config",
       "Particle configuration",
-      "fail",
-      `Missing ${missing.join(", ")}. Live execute requires Particle project credentials.`,
+      "pass",
+      "Particle credentials are configured on the Conviction API host; the local MCP process does not need NEXT_PUBLIC_PARTICLE_*.",
     );
   }
   const malformed = PARTICLE_ENV_KEYS.filter((key) => {
     const value = env[key]?.trim() ?? "";
-    return value.length < 8 || /\s/.test(value);
+    return value.length > 0 && (value.length < 8 || /\s/.test(value));
   });
   if (malformed.length > 0) {
     return check(
       "particle_config",
       "Particle configuration",
-      "fail",
-      `Malformed ${malformed.join(", ")}.`,
+      "warn",
+      `Local ${malformed.join(", ")} look malformed; they are unused by the MCP process (API host owns Particle).`,
     );
   }
   return check(
     "particle_config",
     "Particle configuration",
     "pass",
-    "Particle project, client key, and app id are present.",
+    "Optional local Particle env vars are present but unused by the MCP process.",
   );
 }
 

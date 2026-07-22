@@ -9,6 +9,23 @@ Tool-contract changes that break host compatibility require a **major** bump
 (ADR 0046). Minor and patch releases preserve the current major's tool names,
 schemas, and safety boundaries.
 
+## [Unreleased]
+
+### Added
+
+- Default `--backup-path` (`~/conviction-signer.backup.json`) and interactive
+  TTY recovery-passphrase prompt when flags/env are unset.
+- Init writes `apiBaseUrl` into the local profile and auto-runs doctor after
+  backup verification.
+- Serve/doctor/status/lifecycle resolve API base from flag → env → profile →
+  localhost.
+
+### Changed
+
+- Doctor no longer fails when local `NEXT_PUBLIC_PARTICLE_*` are absent
+  (Particle credentials belong on the Conviction API host).
+- Setup contract verify-step copy reflects init-owned doctor + host paste.
+
 ## [2.0.0] - 2026-07-19
 
 ### Changed

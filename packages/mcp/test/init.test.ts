@@ -125,6 +125,7 @@ describe("runInit", () => {
     const profile = await readAgentProfile(result.profilePath);
     expect(profile.universalAccountAddress).toBe(result.depositAddress);
     expect(profile.profileName).toBe("signal-scout");
+    expect(profile.apiBaseUrl).toBe("http://conviction.test");
 
     const serialized = JSON.stringify({
       profile,

@@ -40,6 +40,7 @@ async function provisionedStore(wallet: Wallet) {
         return () => ids.shift()!;
       })(),
       randomCode: () => "auth-provisioning-code",
+      apiBaseUrl: "https://app.getconviction.com",
     },
   );
 

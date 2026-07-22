@@ -162,6 +162,7 @@ export function AgentAccessView() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<AgentNotification[]>([]);
   const [finality, setFinality] = useState<OperatorFinalityStatus | null>(null);
@@ -342,6 +343,36 @@ export function AgentAccessView() {
     return () => window.removeEventListener("focus", onFocus);
   }, [shouldPoll, refreshAgent]);
 
+  async function regenerateHandoff() {
+    setRegenerating(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(
+        "/api/agents/handoff/regenerate",
+        { method: "POST" },
+      );
+      const payload = (await response.json()) as {
+        agent?: SetupAgent;
+        handoff?: Handoff;
+      } & ApiError;
+      if (!response.ok || !payload.agent || !payload.handoff) {
+        throw new Error(
+          payload.error?.message ?? "Could not regenerate the handoff.",
+        );
+      }
+      setAgent(normalizeAgent(payload.agent));
+      setHandoff(payload.handoff);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not regenerate the handoff.",
+      );
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
@@ -465,7 +496,15 @@ export function AgentAccessView() {
                 {statusLabel(agent.status)}
               </span>
             </div>
-            <SetupActionPanel phase={phase} agent={agent} handoff={handoff} />
+            <SetupActionPanel
+              phase={phase}
+              agent={agent}
+              handoff={handoff}
+              regenerating={regenerating}
+              onRegenerateHandoff={() => {
+                void regenerateHandoff();
+              }}
+            />
           </section>
           <section className="app-card p-7 sm:p-9">
             <div>
@@ -566,7 +605,7 @@ export function AgentAccessView() {
           </div>
 
           <div className="mt-8 flex flex-col items-start justify-between gap-4 border-t border-line pt-6 sm:flex-row sm:items-center">
-            <p className="max-w-xl text-xs leading-5 text-ink-3">Creating reserves your single v1 agent slot and produces a handoff valid for ten minutes. It does not create a wallet or move funds.</p>
+            <p className="max-w-xl text-xs leading-5 text-ink-3">Creating reserves your single v1 agent slot and produces a handoff valid for 24 hours. It does not create a wallet or move funds.</p>
             <button disabled={submitting} type="submit" className="rounded-[15px] bg-brand px-6 py-3 text-sm font-extrabold text-brand-on transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-55">
               {submitting ? "Reserving agent…" : "Create pending agent"}
             </button>

@@ -144,7 +144,7 @@ describe("runDoctor", () => {
     expect(report).not.toContain("--code ");
   });
 
-  it("fails when Particle credentials are missing", async () => {
+  it("passes when Particle credentials are absent from the local process", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "conviction-doctor-particle-"));
     cleanup.push(home);
     const paths = resolveConvictionPaths(home);
@@ -164,6 +164,7 @@ describe("runDoctor", () => {
       signerAddress: generated.address,
       universalAccountAddress: generated.address,
       keystorePath: keystorePath(paths, profileName),
+      apiBaseUrl: "https://app.getconviction.com",
       fundingReady: true,
       actionPolicy: { trade: true, back: true, publish: true },
       maxTradeUsd: 25,
@@ -171,20 +172,80 @@ describe("runDoctor", () => {
       createdAt: "2026-07-17T12:00:00.000Z",
     });
 
+    let setupVerifyCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/agents/status") && (!init?.method || init.method === "GET")) {
+        return new Response(
+          JSON.stringify({
+            status: {
+              ok: true,
+              mode: "live",
+              agentId: "00000000-0000-4000-8000-000000000111",
+              handle: "signal-scout",
+              operatorHandle: "operator",
+              address: generated.address,
+              depositAddress: generated.address,
+              depositAddresses: { evm: generated.address, solana: null },
+              balance: { totalUsd: 0, sources: [] },
+              status: "active",
+              publicStatus: "active",
+              actionPolicy: { trade: true, back: true, publish: true },
+              maxTradeUsd: 25,
+              spendBudgetUsd: 100,
+              lifetimeSpendUsd: 0,
+              remainingBudgetUsd: 100,
+              fundingReady: true,
+              setupVerifiedAt: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/api/agents/setup-verify") && init?.method === "POST") {
+        setupVerifyCalls += 1;
+        return new Response(
+          JSON.stringify({
+            status: {
+              ok: true,
+              mode: "live",
+              agentId: "00000000-0000-4000-8000-000000000111",
+              handle: "signal-scout",
+              operatorHandle: "operator",
+              address: generated.address,
+              depositAddress: generated.address,
+              depositAddresses: { evm: generated.address, solana: null },
+              balance: { totalUsd: 0, sources: [] },
+              status: "active",
+              publicStatus: "active",
+              actionPolicy: { trade: true, back: true, publish: true },
+              maxTradeUsd: 25,
+              spendBudgetUsd: 100,
+              lifetimeSpendUsd: 0,
+              remainingBudgetUsd: 100,
+              fundingReady: true,
+              setupVerifiedAt: "2026-07-17T12:05:00.000Z",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+
     const result = await runDoctor({
       profileName,
-      apiBaseUrl: "http://127.0.0.1:3000",
+      apiBaseUrl: "https://app.getconviction.com",
       home,
       unlockStore,
       env: {},
-      recordSetupVerification: false,
-      fetchImpl: async () =>
-        new Response(JSON.stringify({ status: { ok: true } }), { status: 200 }),
+      fetchImpl,
     });
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(setupVerifyCalls).toBe(1);
     expect(
-      result.checks.some((entry) => entry.id === "particle_config" && entry.status === "fail"),
+      result.checks.some((entry) => entry.id === "particle_config" && entry.status === "pass"),
     ).toBe(true);
   });
 

@@ -57,6 +57,7 @@ async function seedActiveAgent(
       now: () => FIXED_NOW,
       randomId: () => ids.shift()!,
       randomCode: () => "retire-test-code",
+      apiBaseUrl: "https://app.getconviction.com",
     },
   );
   const record = store.records.find(
@@ -389,6 +390,7 @@ describe("agent retirement", () => {
         now: () => FIXED_NOW,
         randomId: () => "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         randomCode: () => "second-agent-code",
+        apiBaseUrl: "https://app.getconviction.com",
       },
     );
     expect(second.agent.handle).toBe("retire-scout-2");
